@@ -35,6 +35,10 @@ Key flags:
 - `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size.
 - `-obsidian-dir`: Output directory when `-format=obsidian` (default `docs/obsidian`).
 - `-generated-at`: Override timestamp for stable diffs.
+- `-run-out`: Write a pipeline-friendly run artifact JSON (entities + meta [+alerts]).
+- `-run-in`: Read a run artifact (or bare entities JSON) and reuse its entities and labels.
+- `-zip-out`: Zip outputs into one artifact (includes `-run-out`, entity/alerts JSON, and Obsidian dir if generated).
+- `-redact`: Redact sensitive details in outputs. Comma/space list supported: `domain,query,cookies,auth,headers,body`.
 
 Examples:
 - Initialize all known plugin definitions without fetching alerts:
@@ -77,6 +81,41 @@ There are two ways to populate the KB in a pipeline after your ZAP stage:
 - Offline: import alerts from a JSON file produced by your ZAP step (`-in` flag).
   - Example: `go run ./cmd/zap-kb -in ./zap-alerts.json -format entities -out docs/data/entities.json`
   - Then publish Obsidian as above using `-entities-in`.
+
+### Run Artifact (recommended for portability)
+To keep pipeline runs self-contained and reproducible, export a single artifact that
+captures the normalized entities and run metadata:
+
+- Produce: `go run ./cmd/zap-kb -format entities -out docs/data/entities.json -run-out run.json -scan-label "$RUN_ID@$BRANCH" -zap-url "$ZAP_URL" -api-key "$ZAP_API_KEY"`
+- Ingest later: `go run ./cmd/zap-kb -run-in run.json -format obsidian -obsidian-dir kb-new/obsidian`
+
+Notes:
+- `-run-in` accepts both the wrapper `run.json` and a bare `entities.json` for convenience.
+- When present, run metadata (scan/site labels, zap-base) is applied to Obsidian output.
+- To ship a single file from your pipeline, add `-zip-out out/run.zip`.
+- Use `-redact domain,cookies,auth` if your artifacts leave the build network.
+
+## End-to-end: Initialize → Update → Triage
+1) Initialize KB definitions (no alerts yet):
+- Seed all known ZAP plugin definitions with detection links and summaries:
+  - `go run ./cmd/zap-kb -init -format entities -out docs/data/entities.init.json -all-plugins -include-detection -detection-details summary`
+  - Optional: publish initial vault: `-format obsidian -entities-in docs/data/entities.init.json -obsidian-dir kb-new/obsidian`
+
+2) Run ZAP in your pipeline and produce a portable artifact:
+- Online mode (ZAP reachable):
+  - `go run ./cmd/zap-kb -format entities -out out/entities.json -zap-url "$ZAP_URL" -api-key "$ZAP_API_KEY" -baseurl "$TARGET_BASE" -include-traffic -traffic-scope first -include-detection -detection-details summary -scan-label "$RUN_ID@$BRANCH" -redact domain,cookies,auth -run-out out/run.json -zip-out out/kb.zip`
+- Offline mode (alerts exported to file):
+  - `go run ./cmd/zap-kb -in out/alerts.json -format entities -out out/entities.json -scan-label "$RUN_ID@$BRANCH" -redact domain,cookies -run-out out/run.json -zip-out out/kb.zip`
+
+3) Import into the KB and publish for triage (can be a separate job or on your workstation):
+- `go run ./cmd/zap-kb -run-in out/run.json -format obsidian -obsidian-dir kb-new/obsidian -site-label "MyApp" -zap-base-url "$ZAP_URL"`
+
+4) Triage in Obsidian:
+- Open `kb-new/obsidian/INDEX.md` for a run summary (status and severity rollups).
+- Drill into definitions → issues → observations. Each page has frontmatter:
+  - `scan.label`, `domain`, and IDs for linking.
+  - Observations include request/response snippets (if included) and a ZAP message link when `-zap-base-url` is set.
+- Use the “Workflow” section on issue pages for status, notes, and governance.
 
 GitHub Actions workflow `zap-kb-run.yml` is included for manual runs with secrets:
 - Set repo secrets: `ZAP_URL`, `ZAP_API_KEY`.
