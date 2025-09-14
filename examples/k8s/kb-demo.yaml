@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kb-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juice-shop
+  namespace: kb-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: juice-shop
+  template:
+    metadata:
+      labels:
+        app: juice-shop
+    spec:
+      containers:
+        - name: juice-shop
+          image: bkimminich/juice-shop:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: juice-shop
+  namespace: kb-demo
+spec:
+  selector:
+    app: juice-shop
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zap
+  namespace: kb-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zap
+  template:
+    metadata:
+      labels:
+        app: zap
+    spec:
+      containers:
+        - name: zap
+          image: ghcr.io/zaproxy/zaproxy:stable
+          ports:
+            - containerPort: 8090
+          env:
+            - name: ZAP_API_KEY
+              value: kb-demo
+            - name: JAVA_OPTS
+              value: -Xmx1g
+          args:
+            - "zap.sh"
+            - "-daemon"
+            - "-host"
+            - "0.0.0.0"
+            - "-port"
+            - "8090"
+            - "-config"
+            - "api.disablekey=false"
+            - "-config"
+            - "api.key=$(ZAP_API_KEY)"
+            - "-config"
+            - "api.addrs.addr.name=.*"
+            - "-config"
+            - "api.addrs.addr.regex=true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zap
+  namespace: kb-demo
+spec:
+  selector:
+    app: zap
+  ports:
+    - port: 8090
+      targetPort: 8090
+      protocol: TCP
+
