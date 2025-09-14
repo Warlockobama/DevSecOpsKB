@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: kb-demo-juice-shop
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: kb-demo-zap
+    ports:
+      - "8090:8090"
+    # Use host env var ZAP_API_KEY; defaults in scripts if unset
+    command: [
+      "zap.sh", "-daemon",
+      "-host", "0.0.0.0",
+      "-port", "8090",
+      "-config", "api.disablekey=false",
+      "-config", "api.key=${ZAP_API_KEY}",
+      "-config", "api.addrs.addr.name=.*",
+      "-config", "api.addrs.addr.regex=true"
+    ]
+    environment:
+      - JAVA_OPTS=-Xmx1g
+    depends_on:
+      - juice-shop
+
