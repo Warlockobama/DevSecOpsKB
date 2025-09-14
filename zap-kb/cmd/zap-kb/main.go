@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"zap-kb/internal/entities"
-	"zap-kb/internal/output/jsondump"
-	"zap-kb/internal/output/obsidian"
-	"zap-kb/internal/zapclient"
-	"zap-kb/internal/zapmeta"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 func main() {

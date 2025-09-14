@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"unicode"
 
-	"zap-kb/internal/zapclient"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
 type Header struct {

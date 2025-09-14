@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode"
 
-	"zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
 
 type Options struct {

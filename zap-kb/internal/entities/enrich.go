@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"zap-kb/internal/zapclient"
-	"zap-kb/internal/zapmeta"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 // EnrichFirstTraffic populates Request/Response snippets for the first occurrence per Finding.
