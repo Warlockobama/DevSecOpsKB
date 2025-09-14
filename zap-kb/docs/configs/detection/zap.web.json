@@ -1,0 +1,1388 @@
+{
+  "1000": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PathTraversalScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PathTraversalScanRule.java"
+  },
+  "100002": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100003": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100004": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100005": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100006": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100007": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100008": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100009": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100010": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100011": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100012": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100013": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100014": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100015": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100016": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100017": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100018": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100019": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100020": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100021": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100022": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100023": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100025": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100026": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100029": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10003": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.retire.RetireScanRule",
+    "rule_source": "zap-extensions/addOns/retire/src/main/java/org/zaproxy/addon/retire/RetireScanRule.java"
+  },
+  "100030": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100034": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100035": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "100036": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10004": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.wappalyzer.ExtensionWappalyzer",
+    "rule_source": "zap-extensions/addOns/wappalyzer/src/main/java/org/zaproxy/zap/extension/wappalyzer/ExtensionWappalyzer.java"
+  },
+  "10009": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.InPageBannerInfoLeakScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/InPageBannerInfoLeakScanRule.java"
+  },
+  "10010": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CookieHttpOnlyScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CookieHttpOnlyScanRule.java"
+  },
+  "10011": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CookieSecureFlagScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CookieSecureFlagScanRule.java"
+  },
+  "10015": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CacheControlScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CacheControlScanRule.java"
+  },
+  "10016": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10017": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CrossDomainScriptInclusionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CrossDomainScriptInclusionScanRule.java"
+  },
+  "10019": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ContentTypeMissingScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ContentTypeMissingScanRule.java"
+  },
+  "10020": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.AntiClickjackingScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/AntiClickjackingScanRule.java"
+  },
+  "10021": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XContentTypeOptionsScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XContentTypeOptionsScanRule.java"
+  },
+  "10023": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InformationDisclosureDebugErrorsScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InformationDisclosureDebugErrorsScanRule.java"
+  },
+  "10024": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InformationDisclosureInUrlScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InformationDisclosureInUrlScanRule.java"
+  },
+  "10025": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InformationDisclosureReferrerScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InformationDisclosureReferrerScanRule.java"
+  },
+  "10026": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.ServletParameterPollutionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/ServletParameterPollutionScanRule.java"
+  },
+  "10027": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InformationDisclosureSuspiciousCommentsScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InformationDisclosureSuspiciousCommentsScanRule.java"
+  },
+  "10028": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UserControlledOpenRedirectScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UserControlledOpenRedirectScanRule.java"
+  },
+  "10029": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UserControlledCookieScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UserControlledCookieScanRule.java"
+  },
+  "10030": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UserControlledCharsetScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UserControlledCharsetScanRule.java"
+  },
+  "10031": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UserControlledHTMLAttributesScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UserControlledHTMLAttributesScanRule.java"
+  },
+  "10032": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ViewstateScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ViewstateScanRule.java"
+  },
+  "10033": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.DirectoryBrowsingScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/DirectoryBrowsingScanRule.java"
+  },
+  "10034": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.HeartBleedScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/HeartBleedScanRule.java"
+  },
+  "10035": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.StrictTransportSecurityScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/StrictTransportSecurityScanRule.java"
+  },
+  "10036": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ServerHeaderInfoLeakScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ServerHeaderInfoLeakScanRule.java"
+  },
+  "10037": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XPoweredByHeaderInfoLeakScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XPoweredByHeaderInfoLeakScanRule.java"
+  },
+  "10038": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ContentSecurityPolicyMissingScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ContentSecurityPolicyMissingScanRule.java"
+  },
+  "10039": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XBackendServerInformationLeakScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XBackendServerInformationLeakScanRule.java"
+  },
+  "10040": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.MixedContentScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/MixedContentScanRule.java"
+  },
+  "10041": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InsecureFormLoadScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InsecureFormLoadScanRule.java"
+  },
+  "10042": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InsecureFormPostScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InsecureFormPostScanRule.java"
+  },
+  "10043": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UserControlledJavascriptEventScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UserControlledJavascriptEventScanRule.java"
+  },
+  "10044": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.BigRedirectsScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/BigRedirectsScanRule.java"
+  },
+  "10045": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SourceCodeDisclosureWebInfScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SourceCodeDisclosureWebInfScanRule.java"
+  },
+  "10046": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10047": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.HttpsAsHttpScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/HttpsAsHttpScanRule.java"
+  },
+  "10048": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ShellShockScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ShellShockScanRule.java"
+  },
+  "10049": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.CacheableScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/CacheableScanRule.java"
+  },
+  "10050": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.RetrievedFromCacheScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/RetrievedFromCacheScanRule.java"
+  },
+  "10051": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.RelativePathConfusionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/RelativePathConfusionScanRule.java"
+  },
+  "10052": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XChromeLoggerDataInfoLeakScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XChromeLoggerDataInfoLeakScanRule.java"
+  },
+  "10053": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ApacheRangeHeaderDosScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ApacheRangeHeaderDosScanRule.java"
+  },
+  "10054": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CookieSameSiteScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CookieSameSiteScanRule.java"
+  },
+  "10055": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ContentSecurityPolicyScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ContentSecurityPolicyScanRule.java"
+  },
+  "10056": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XDebugTokenScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XDebugTokenScanRule.java"
+  },
+  "10057": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.UsernameIdorScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/UsernameIdorScanRule.java"
+  },
+  "10058": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.GetForPostScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/GetForPostScanRule.java"
+  },
+  "10061": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.XAspNetVersionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/XAspNetVersionScanRule.java"
+  },
+  "10062": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.PiiScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/PiiScanRule.java"
+  },
+  "10063": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.PermissionsPolicyScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/PermissionsPolicyScanRule.java"
+  },
+  "10070": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.saml.SAMLPassiveScanner",
+    "rule_source": "zap-extensions/addOns/saml/src/main/java/org/zaproxy/zap/extension/saml/SAMLPassiveScanner.java"
+  },
+  "10094": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesAlpha.Base64Disclosure",
+    "rule_source": "zap-extensions/addOns/pscanrulesAlpha/src/main/java/org/zaproxy/zap/extension/pscanrulesAlpha/Base64Disclosure.java"
+  },
+  "10095": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.BackupFileDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/BackupFileDisclosureScanRule.java"
+  },
+  "10096": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.TimestampDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/TimestampDisclosureScanRule.java"
+  },
+  "10097": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.HashDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/HashDisclosureScanRule.java"
+  },
+  "10098": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CrossDomainMisconfigurationScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CrossDomainMisconfigurationScanRule.java"
+  },
+  "10099": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.SourceCodeDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/SourceCodeDisclosureScanRule.java"
+  },
+  "10101": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.accessControl.ExtensionAccessControl",
+    "rule_source": "zap-extensions/addOns/accessControl/src/main/java/org/zaproxy/zap/extension/accessControl/ExtensionAccessControl.java"
+  },
+  "10102": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.accessControl.ExtensionAccessControl",
+    "rule_source": "zap-extensions/addOns/accessControl/src/main/java/org/zaproxy/zap/extension/accessControl/ExtensionAccessControl.java"
+  },
+  "10103": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.imagelocationscanner.ImageLocationScanRule",
+    "rule_source": "zap-extensions/addOns/imagelocationscanner/src/main/java/org/zaproxy/zap/extension/imagelocationscanner/ImageLocationScanRule.java"
+  },
+  "10104": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.UserAgentScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/UserAgentScanRule.java"
+  },
+  "10105": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InsecureAuthenticationScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InsecureAuthenticationScanRule.java"
+  },
+  "10106": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.HttpOnlySiteScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/HttpOnlySiteScanRule.java"
+  },
+  "10107": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.HttPoxyScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/HttPoxyScanRule.java"
+  },
+  "10108": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.LinkTargetScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/LinkTargetScanRule.java"
+  },
+  "10109": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ModernAppDetectionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ModernAppDetectionScanRule.java"
+  },
+  "10110": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.JsFunctionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/JsFunctionScanRule.java"
+  },
+  "10111": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.authhelper.AuthenticationDetectionScanRule",
+    "rule_source": "zap-extensions/addOns/authhelper/src/main/java/org/zaproxy/addon/authhelper/AuthenticationDetectionScanRule.java"
+  },
+  "10112": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.authhelper.SessionDetectionScanRule",
+    "rule_source": "zap-extensions/addOns/authhelper/src/main/java/org/zaproxy/addon/authhelper/SessionDetectionScanRule.java"
+  },
+  "10113": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.authhelper.VerificationDetectionScanRule",
+    "rule_source": "zap-extensions/addOns/authhelper/src/main/java/org/zaproxy/addon/authhelper/VerificationDetectionScanRule.java"
+  },
+  "10115": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.PolyfillCdnScriptScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/PolyfillCdnScriptScanRule.java"
+  },
+  "10116": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ZapVersionScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ZapVersionScanRule.java"
+  },
+  "10202": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CsrfCountermeasuresScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CsrfCountermeasuresScanRule.java"
+  },
+  "110001": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110002": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110003": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110004": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110005": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110006": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110007": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110008": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "110009": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesAlpha.FullPathDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesAlpha/src/main/java/org/zaproxy/zap/extension/pscanrulesAlpha/FullPathDisclosureScanRule.java"
+  },
+  "120000": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.client.pscan.InformationInStorageScanRule",
+    "rule_source": "zap-extensions/addOns/client/src/main/java/org/zaproxy/addon/client/pscan/InformationInStorageScanRule.java"
+  },
+  "120001": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.client.pscan.SensitiveInfoInStorageScanRule",
+    "rule_source": "zap-extensions/addOns/client/src/main/java/org/zaproxy/addon/client/pscan/SensitiveInfoInStorageScanRule.java"
+  },
+  "120002": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.client.pscan.JwtInStorageScanRule",
+    "rule_source": "zap-extensions/addOns/client/src/main/java/org/zaproxy/addon/client/pscan/JwtInStorageScanRule.java"
+  },
+  "20012": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.CsrfTokenScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/CsrfTokenScanRule.java"
+  },
+  "20014": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.HttpParameterPollutionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/HttpParameterPollutionScanRule.java"
+  },
+  "20015": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.HeartBleedActiveScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/HeartBleedActiveScanRule.java"
+  },
+  "20016": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.CrossDomainScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/CrossDomainScanRule.java"
+  },
+  "20017": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SourceCodeDisclosureCve20121823ScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SourceCodeDisclosureCve20121823ScanRule.java"
+  },
+  "20018": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.RemoteCodeExecutionCve20121823ScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/RemoteCodeExecutionCve20121823ScanRule.java"
+  },
+  "20019": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.ExternalRedirectScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/ExternalRedirectScanRule.java"
+  },
+  "2005": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "22": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PathTraversalScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PathTraversalScanRule.java"
+  },
+  "30001": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.BufferOverflowScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/BufferOverflowScanRule.java"
+  },
+  "30002": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.FormatStringScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/FormatStringScanRule.java"
+  },
+  "30003": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.IntegerOverflowScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/IntegerOverflowScanRule.java"
+  },
+  "40003": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CrlfInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CrlfInjectionScanRule.java"
+  },
+  "40008": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.ParameterTamperScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/ParameterTamperScanRule.java"
+  },
+  "40009": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.ServerSideIncludeScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/ServerSideIncludeScanRule.java"
+  },
+  "40012": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CrossSiteScriptingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CrossSiteScriptingScanRule.java"
+  },
+  "40013": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SessionFixationScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SessionFixationScanRule.java"
+  },
+  "40014": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PersistentXssScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PersistentXssScanRule.java"
+  },
+  "40015": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesAlpha.LdapInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesAlpha/src/main/java/org/zaproxy/zap/extension/ascanrulesAlpha/LdapInjectionScanRule.java"
+  },
+  "40016": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PersistentXssPrimeScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PersistentXssPrimeScanRule.java"
+  },
+  "40017": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PersistentXssSpiderScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PersistentXssSpiderScanRule.java"
+  },
+  "40018": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionScanRule.java"
+  },
+  "40019": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionMySqlTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionMySqlTimingScanRule.java"
+  },
+  "40020": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionHypersonicTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionHypersonicTimingScanRule.java"
+  },
+  "40021": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionOracleTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionOracleTimingScanRule.java"
+  },
+  "40022": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionPostgreSqlTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionPostgreSqlTimingScanRule.java"
+  },
+  "40023": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.UsernameEnumerationScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/UsernameEnumerationScanRule.java"
+  },
+  "40024": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionSqLiteTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionSqLiteTimingScanRule.java"
+  },
+  "40025": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ProxyDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ProxyDisclosureScanRule.java"
+  },
+  "40026": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.domxss.DomXssScanRule",
+    "rule_source": "zap-extensions/addOns/domxss/src/main/java/org/zaproxy/zap/extension/domxss/DomXssScanRule.java"
+  },
+  "40027": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SqlInjectionMsSqlTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SqlInjectionMsSqlTimingScanRule.java"
+  },
+  "40028": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.ElmahScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/ElmahScanRule.java"
+  },
+  "40029": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.TraceAxdScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/TraceAxdScanRule.java"
+  },
+  "40031": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.OutOfBandXssScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/OutOfBandXssScanRule.java"
+  },
+  "40032": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.HtAccessScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/HtAccessScanRule.java"
+  },
+  "40033": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesAlpha.MongoDbInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesAlpha/src/main/java/org/zaproxy/zap/extension/ascanrulesAlpha/MongoDbInjectionScanRule.java"
+  },
+  "40034": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.EnvFileScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/EnvFileScanRule.java"
+  },
+  "40035": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.HiddenFilesScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/HiddenFilesScanRule.java"
+  },
+  "40036": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.jwt.JWTActiveScanRule",
+    "rule_source": "owasp-zap-jwt-addon/src/main/java/org/zaproxy/zap/extension/jwt/JWTActiveScanRule.java"
+  },
+  "40038": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ForbiddenBypassScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ForbiddenBypassScanRule.java"
+  },
+  "40039": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesAlpha.WebCacheDeceptionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesAlpha/src/main/java/org/zaproxy/zap/extension/ascanrulesAlpha/WebCacheDeceptionScanRule.java"
+  },
+  "40040": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.CorsScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/CorsScanRule.java"
+  },
+  "40041": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.sasanlabs.fileupload.FileUploadScanRule",
+    "rule_source": "owasp-zap-fileupload-addon/src/main/java/org/sasanlabs/fileupload/FileUploadScanRule.java"
+  },
+  "40042": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SpringActuatorScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SpringActuatorScanRule.java"
+  },
+  "40043": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.Log4ShellScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/Log4ShellScanRule.java"
+  },
+  "40044": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ExponentialEntityExpansionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ExponentialEntityExpansionScanRule.java"
+  },
+  "40045": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.Spring4ShellScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/Spring4ShellScanRule.java"
+  },
+  "40046": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SsrfScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SsrfScanRule.java"
+  },
+  "40047": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.Text4ShellScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/Text4ShellScanRule.java"
+  },
+  "41": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SourceCodeDisclosureGitScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SourceCodeDisclosureGitScanRule.java"
+  },
+  "42": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SourceCodeDisclosureSvnScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SourceCodeDisclosureSvnScanRule.java"
+  },
+  "43": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SourceCodeDisclosureFileInclusionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SourceCodeDisclosureFileInclusionScanRule.java"
+  },
+  "497": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InfoPrivateAddressDisclosureScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InfoPrivateAddressDisclosureScanRule.java"
+  },
+  "50007": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.addon.graphql.ExtensionGraphQl",
+    "rule_source": "zap-extensions/addOns/graphql/src/main/java/org/zaproxy/addon/graphql/ExtensionGraphQl.java"
+  },
+  "548": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.DirectoryBrowsingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/DirectoryBrowsingScanRule.java"
+  },
+  "598": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InfoSessionIdUrlScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InfoSessionIdUrlScanRule.java"
+  },
+  "90001": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InsecureJsfViewStatePassiveScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/InsecureJsfViewStatePassiveScanRule.java"
+  },
+  "90002": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.JsoScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/JsoScanRule.java"
+  },
+  "90003": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.SubResourceIntegrityAttributeScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/SubResourceIntegrityAttributeScanRule.java"
+  },
+  "90004": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesBeta.SiteIsolationScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesBeta/src/main/java/org/zaproxy/zap/extension/pscanrulesBeta/SiteIsolationScanRule.java"
+  },
+  "90005": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrulesAlpha.FetchMetadataRequestHeadersScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrulesAlpha/src/main/java/org/zaproxy/zap/extension/pscanrulesAlpha/FetchMetadataRequestHeadersScanRule.java"
+  },
+  "90011": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CharsetMismatchScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CharsetMismatchScanRule.java"
+  },
+  "90017": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.XsltInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/XsltInjectionScanRule.java"
+  },
+  "90018": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.sqliplugin.SQLInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/sqliplugin/src/main/java/org/zaproxy/zap/extension/sqliplugin/SQLInjectionScanRule.java"
+  },
+  "90019": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CodeInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CodeInjectionScanRule.java"
+  },
+  "90020": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CommandInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CommandInjectionScanRule.java"
+  },
+  "90021": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.XpathInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/XpathInjectionScanRule.java"
+  },
+  "90022": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.ApplicationErrorScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/ApplicationErrorScanRule.java"
+  },
+  "90023": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.XxeScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/XxeScanRule.java"
+  },
+  "90024": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.PaddingOracleScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/PaddingOracleScanRule.java"
+  },
+  "90025": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.ExpressionLanguageInjectionScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/ExpressionLanguageInjectionScanRule.java"
+  },
+  "90026": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.soap.SOAPActionSpoofingActiveScanRule",
+    "rule_source": "zap-extensions/addOns/soap/src/main/java/org/zaproxy/zap/extension/soap/SOAPActionSpoofingActiveScanRule.java"
+  },
+  "90027": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.SlackerCookieScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/SlackerCookieScanRule.java"
+  },
+  "90028": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesBeta.InsecureHttpMethodScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesBeta/src/main/java/org/zaproxy/zap/extension/ascanrulesBeta/InsecureHttpMethodScanRule.java"
+  },
+  "90029": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.soap.SOAPXMLInjectionActiveScanRule",
+    "rule_source": "zap-extensions/addOns/soap/src/main/java/org/zaproxy/zap/extension/soap/SOAPXMLInjectionActiveScanRule.java"
+  },
+  "90030": {
+    "logic_type": "",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.soap.WSDLFilePassiveScanRule",
+    "rule_source": "zap-extensions/addOns/soap/src/main/java/org/zaproxy/zap/extension/soap/WSDLFilePassiveScanRule.java"
+  },
+  "90033": {
+    "logic_type": "passive",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.CookieLooselyScopedScanRule",
+    "rule_source": "zap-extensions/addOns/pscanrules/src/main/java/org/zaproxy/zap/extension/pscanrules/CookieLooselyScopedScanRule.java"
+  },
+  "90034": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CloudMetadataScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CloudMetadataScanRule.java"
+  },
+  "90035": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SstiScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SstiScanRule.java"
+  },
+  "90036": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.SstiBlindScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/SstiBlindScanRule.java"
+  },
+  "90037": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.CommandInjectionTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/CommandInjectionTimingScanRule.java"
+  },
+  "90039": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrulesAlpha.MongoDbInjectionTimingScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrulesAlpha/src/main/java/org/zaproxy/zap/extension/ascanrulesAlpha/MongoDbInjectionTimingScanRule.java"
+  },
+  "98": {
+    "logic_type": "active",
+    "match_reason": "Scraped from ZAP Alerts docs",
+    "pattern": "",
+    "plugin_ref": "org.zaproxy.zap.extension.ascanrules.RemoteFileIncludeScanRule",
+    "rule_source": "zap-extensions/addOns/ascanrules/src/main/java/org/zaproxy/zap/extension/ascanrules/RemoteFileIncludeScanRule.java"
+  }
+}

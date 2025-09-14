@@ -1,0 +1,195 @@
+{
+  "main": {
+    "id": "b36059b7b86ede01",
+    "type": "split",
+    "children": [
+      {
+        "id": "8749b4e04e366ecc",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ff910f7ebe5ee602",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "occ-a1b2c3d4.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "occ-a1b2c3d4"
+            }
+          },
+          {
+            "id": "ec08f216e4ce0578",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "occ-9c0d1e2f.md",
+                "mode": "preview",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "occ-9c0d1e2f"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "15c12e594eb66833",
+    "type": "split",
+    "children": [
+      {
+        "id": "b34032090cc7daa4",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "6910bce0fbcca242",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "eb263805bdb1186b",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "2878b395f96a81c6",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "a182d8bc5ee7e049",
+    "type": "split",
+    "children": [
+      {
+        "id": "d9684516d36ec591",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "e5276e86f07f016f",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "occ-a1b2c3d4.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for occ-a1b2c3d4"
+            }
+          },
+          {
+            "id": "1f522dc069bf2c9c",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "occ-a1b2c3d4.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from occ-a1b2c3d4"
+            }
+          },
+          {
+            "id": "2e973fc71caf9386",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "4248d631d1ca571b",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "occ-a1b2c3d4.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of occ-a1b2c3d4"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "ec08f216e4ce0578",
+  "lastOpenFiles": [
+    "occ-a1b2c3d4.md",
+    "sample-sqli-finding.md",
+    "occ-e5f6g7h8.md",
+    "chart.md",
+    "occ-9c0d1e2f.md"
+  ]
+}

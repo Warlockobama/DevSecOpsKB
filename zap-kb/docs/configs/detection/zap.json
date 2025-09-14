@@ -1,0 +1,275 @@
+{
+  "10011": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Cookie Without Secure Flag'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10015": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Re-examine Cache-control Directives'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10017": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Cross-Domain JavaScript Source File Inclusion'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10020": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Missing Anti-clickjacking Header'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10021": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'X-Content-Type-Options Header Missing'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10027": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Information Disclosure - Suspicious Comments'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10028": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Off-site Redirect'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10031": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'User Controllable HTML Element Attribute (Potential XSS)'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10035": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Strict-Transport-Security Header Not Set'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10038": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Content Security Policy (CSP) Header Not Set'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10040": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Secure Pages Include Mixed Content (Including Scripts)'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10043": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'User Controllable JavaScript Event (XSS)'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10047": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'HTTPS Content Available via HTTP'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10049": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Storable and Cacheable Content'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10054": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Cookie without SameSite Attribute'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10055": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'CSP: Notices'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10058": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'GET for POST'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10063": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Permissions Policy Header Not Set'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10104": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'User Agent Fuzzer'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10109": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Modern Web Application'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10110": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Dangerous JS Functions'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10112": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Session Management Response Identified'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "10202": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Absence of Anti-CSRF Tokens'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "120000": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Information Disclosure - Information in Browser sessionStorage'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "2": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Private IP Disclosure'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "20012": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Anti-CSRF Tokens Check'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "20019": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'External Redirect'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "30002": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Format String Error'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "40012": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Cross Site Scripting (Reflected)'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "40018": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'SQL Injection'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "40024": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'SQL Injection - SQLite'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "40038": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Bypassing 403'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "40040": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'CORS Misconfiguration'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "43": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Source Code Disclosure - File Inclusion'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "6": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Path Traversal'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "90003": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Sub Resource Integrity Attribute Missing'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "90004": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Insufficient Site Isolation Against Spectre Vulnerability'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "90022": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Application Error Disclosure'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  },
+  "90027": {
+    "logic_type": "passive",
+    "match_reason": "Detection metadata for 'Cookie Slack Detector'",
+    "pattern": "",
+    "plugin_ref": "",
+    "rule_source": ""
+  }
+}

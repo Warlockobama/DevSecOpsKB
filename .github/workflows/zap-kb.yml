@@ -1,0 +1,40 @@
+name: build-zap-kb
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zap-kb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Tidy
+        run: go mod tidy
+
+      - name: Format check
+        run: |
+          gofmt -l . | tee /tmp/gofmt.txt
+          if [ -s /tmp/gofmt.txt ]; then
+            echo "Found unformatted files:" && cat /tmp/gofmt.txt
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+

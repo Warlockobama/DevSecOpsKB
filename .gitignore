@@ -1,0 +1,12 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.code-workspace
+
+# Env/config/logs
+.env
+.env.*
+*.log
+
+# Local archives of old folders
+archive/

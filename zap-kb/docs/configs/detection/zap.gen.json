@@ -1,0 +1,9 @@
+{
+  "120000": {
+    "logic_type": "passive",
+    "match_reason": "Response contains local/session storage usage",
+    "pattern": "localStorage|sessionStorage",
+    "plugin_ref": "org.zaproxy.zap.extension.pscanrules.InformationDisclosure",
+    "rule_source": "pscanrules/src/main/java/.../InformationDisclosureScanner.java"
+  }
+}

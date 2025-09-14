@@ -1,0 +1,5 @@
+"120000":
+  logic_type: passive
+  plugin_ref: "org.zaproxy.zap.extension.pscanrules.InformationDisclosure"
+  rule_source: "pscanrules/src/main/java/.../InformationDisclosureScanner.java"
+  pattern: "localStorage|sessionStorage"

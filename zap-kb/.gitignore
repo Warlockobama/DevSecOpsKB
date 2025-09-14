@@ -1,0 +1,39 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build
+*.test
+*.out
+
+# Dependency directories
+vendor/
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
+*.code-workspace
+
+# Env/config/logs
+.env
+.env.*
+*.log
+
+# Obsidian vault internals
+kb-new/obsidian/.obsidian/
+
+# Generated data & examples
+alerts.json
+docs/data/*.json
+
+# Artifacts
+dist/
+coverage.out
