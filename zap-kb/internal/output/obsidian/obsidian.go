@@ -1,17 +1,17 @@
 package obsidian
 
 import (
-	"fmt"
-	neturl "net/url"
-	"os"
-	pathpkg "path"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
-	"unicode"
+    "fmt"
+    neturl "net/url"
+    "os"
+    pathpkg "path"
+    "path/filepath"
+    "regexp"
+    "sort"
+    "strings"
+    "unicode"
 
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
 
 type Options struct {
@@ -209,13 +209,26 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 						fmt.Fprintf(&b, "_%s_\n\n", strings.Join(line, "; "))
 					}
 				}
-				if len(d.Detection.Signals) > 0 {
-					b.WriteString("Signals:\n")
-					for _, s := range d.Detection.Signals {
-						fmt.Fprintf(&b, "- %s\n", s)
-					}
-					b.WriteString("\n")
-				}
+                if len(d.Detection.Signals) > 0 {
+                    b.WriteString("Signals:\n")
+                    for _, s := range d.Detection.Signals {
+                        fmt.Fprintf(&b, "- %s\n", s)
+                        // If the signal is a regex, add a short hint/example to make it approachable.
+                        ls := strings.ToLower(strings.TrimSpace(s))
+                        if strings.HasPrefix(ls, "regex:") {
+                            pat := strings.TrimSpace(s[len("regex:"):])
+                            if hint, ex := regexHintAndExample(pat); hint != "" || ex != "" {
+                                if hint != "" {
+                                    fmt.Fprintf(&b, "  - hint: %s\n", hint)
+                                }
+                                if ex != "" {
+                                    fmt.Fprintf(&b, "  - example: `%s`\n", ex)
+                                }
+                            }
+                        }
+                    }
+                    b.WriteString("\n")
+                }
 			}
 		}
 
@@ -948,6 +961,100 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// regexHintAndExample returns a short human-friendly hint and a simple example
+// for common regex patterns found in ZAP rules. Best-effort only.
+func regexHintAndExample(pattern string) (string, string) {
+    p := strings.TrimSpace(pattern)
+    lp := strings.ToLower(p)
+
+    // Strip common anchors/boundaries for easier matching
+    p = strings.ReplaceAll(p, "\\b", "")
+    p = strings.TrimPrefix(p, "^")
+    p = strings.TrimSuffix(p, "$")
+
+    // Web Storage keywords
+    if strings.Contains(lp, "localstorage") || strings.Contains(lp, "sessionstorage") {
+        return "Looks for HTML5 Web Storage usage in content.", "localStorage.setItem(\"key\", \"value\")"
+    }
+
+    // Email address
+    if strings.Contains(p, "@") && strings.Contains(lp, ".") && (strings.Contains(lp, "[a-z") || strings.Contains(lp, "[a-za-z")) {
+        return "Email address pattern (name@domain).", "alice@example.com"
+    }
+
+    // IPv4 address
+    if strings.Contains(lp, "\\d{1,3}\\.") || strings.Contains(lp, "[0-9]{1,3}\\.") || strings.Contains(lp, "(?:[0-9]{1,3}\\.){3}") {
+        return "IPv4 address (four dot-separated numbers).", "192.168.0.1"
+    }
+
+    // UUID (hex groups separated by dashes)
+    if regexp.MustCompile(`(?i)[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`).MatchString(p) {
+        return "UUID/GUID (hex groups with dashes).", "123e4567-e89b-12d3-a456-426614174000"
+    }
+
+    // Hex lengths (crypto digests)
+    if regexp.MustCompile(`(?i)\[?[a-f0-9A-F]\]?\{32\}|(?i)[a-f0-9]{32}`).MatchString(p) {
+        return "32 hex chars (often an MD5 digest).", "e2fc714c4727ee9395f324cd2e7f331f"
+    }
+    if regexp.MustCompile(`(?i)[a-f0-9]{40}`).MatchString(p) {
+        return "40 hex chars (often a SHA-1 digest).", "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+    }
+    if regexp.MustCompile(`(?i)[a-f0-9]{64}`).MatchString(p) {
+        return "64 hex chars (often a SHA-256 digest).", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+
+    // SSN-like numeric groups (###-##-####)
+    if strings.Contains(p, "[0-9]{3}-[0-9]{2}-[0-9]{4}") || strings.Contains(lp, `\d{3}-\d{2}-\d{4}`) {
+        return "U.S. SSN-like pattern (three-two-four digits).", "123-45-6789"
+    }
+
+    // Bearer/JWT-like tokens
+    if strings.Contains(lp, "bearer") || regexp.MustCompile(`(?i)[a-z0-9_\-]{10,}\.([a-z0-9_\-]{10,}\.)?[a-z0-9_\-]{10,}`).MatchString(lp) {
+        return "Bearer/JWT-like token (dot-separated base64url).", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.sig"
+    }
+
+    // Generic guidance for digit groups like [0-9]{n}
+    if regexp.MustCompile(`(\\d|\[0-9\])\{\d+\}`).MatchString(p) {
+        // Try to produce a simple numeric example by replacing {n} with n digits
+        ex := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).ReplaceAllStringFunc(p, func(m string) string {
+            sub := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).FindStringSubmatch(m)
+            if len(sub) == 3 {
+                nStr := sub[2]
+                n := 0
+                fmt.Sscanf(nStr, "%d", &n)
+                if n <= 0 {
+                    n = 3
+                }
+                // return n digits cycling 1234567890
+                digits := "1234567890"
+                var b strings.Builder
+                for i := 0; i < n; i++ {
+                    b.WriteByte(digits[i%len(digits)])
+                }
+                return b.String()
+            }
+            return "000"
+        })
+        // Clean leftover escapes and character classes
+        ex = strings.ReplaceAll(ex, "[0-9]", "0")
+        ex = strings.ReplaceAll(ex, "\\d", "0")
+        ex = strings.ReplaceAll(ex, "\\.", ".")
+        ex = strings.ReplaceAll(ex, "\\-", "-")
+        ex = strings.ReplaceAll(ex, "^", "")
+        ex = strings.ReplaceAll(ex, "$", "")
+        ex = strings.ReplaceAll(ex, "\\s", " ")
+        ex = strings.ReplaceAll(ex, "\\_", "_")
+        ex = regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(ex, "a")
+        ex = strings.TrimSpace(ex)
+        if ex != "" && len(ex) <= 80 {
+            return "Digits with fixed group lengths.", ex
+        }
+    }
+
+    // Fallback generic message
+    return "Regular expression; see pattern for details.", ""
 }
 
 // titleASCII makes "open" -> "Open" (ASCII only, suitable for simple status labels)
