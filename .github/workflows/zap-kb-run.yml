@@ -1,0 +1,96 @@
+name: zap-kb-run
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseurl:
+        description: Optional base URL filter for alerts
+        required: false
+        default: ""
+      site_label:
+        description: Optional site/domain label override
+        required: false
+        default: ""
+      include_traffic:
+        description: Include first occurrence request/response snippets
+        required: false
+        default: "true"
+      detection_details:
+        description: Detection enrichment detail (links|summary)
+        required: false
+        default: "summary"
+
+jobs:
+  kb:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ZAP_URL: ${{ secrets.ZAP_URL }}
+      ZAP_API_KEY: ${{ secrets.ZAP_API_KEY }}
+    defaults:
+      run:
+        working-directory: zap-kb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Generate entities from ZAP
+        run: |
+          ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          scan_label="run ${GITHUB_RUN_NUMBER} @ ${GITHUB_REF_NAME}"
+          args=(
+            -format entities
+            -out docs/data/entities.json
+            -zap-url "${ZAP_URL}"
+            -api-key "${ZAP_API_KEY}"
+            -generated-at "$ts"
+            -scan-label "$scan_label"
+          )
+          # Optional filters/enrichment
+          if [ -n "${{ github.event.inputs.baseurl }}" ]; then
+            args+=( -baseurl "${{ github.event.inputs.baseurl }}" )
+          fi
+          if [ "${{ github.event.inputs.include_traffic }}" = "true" ]; then
+            args+=( -include-traffic -traffic-scope first -traffic-max-bytes 2048 )
+          fi
+          if [ -n "${{ github.event.inputs.detection_details }}" ]; then
+            args+=( -include-detection -detection-details "${{ github.event.inputs.detection_details }}" )
+          fi
+          echo go run ./cmd/zap-kb "${args[@]}"
+          go run ./cmd/zap-kb "${args[@]}"
+
+      - name: Publish Obsidian vault
+        run: |
+          args=(
+            -format obsidian
+            -entities-in docs/data/entities.json
+            -obsidian-dir kb-new/obsidian
+            -scan-label "run ${GITHUB_RUN_NUMBER} @ ${GITHUB_REF_NAME}"
+          )
+          if [ -n "${{ github.event.inputs.site_label }}" ]; then
+            args+=( -site-label "${{ github.event.inputs.site_label }}" )
+          fi
+          if [ -n "$ZAP_URL" ]; then
+            args+=( -zap-base-url "$ZAP_URL" )
+          fi
+          if [ -n "${{ github.event.inputs.detection_details }}" ]; then
+            args+=( -include-detection -detection-details "${{ github.event.inputs.detection_details }}" )
+          fi
+          echo go run ./cmd/zap-kb "${args[@]}"
+          go run ./cmd/zap-kb "${args[@]}"
+
+      - name: Archive KB (Obsidian + entities)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-kb-${{ github.run_id }}
+          path: |
+            zap-kb/kb-new/obsidian
+            zap-kb/docs/data/entities.json
+          if-no-files-found: error
+

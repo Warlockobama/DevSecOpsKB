@@ -65,6 +65,23 @@ See `docs/schema/entities-v1.md` for the entities schema and how definitions, fi
 - `docs/data/*.json` and `alerts.json` are treated as generated outputs and are ignored by Git by default.
 - When publishing to GitHub, consider updating the `module` path in `go.mod` after the repository is created (e.g., `module github.com/<you>/devsecopskb/zap-kb`).
 
+## CI Integration
+There are two ways to populate the KB in a pipeline after your ZAP stage:
+
+- Online (recommended): connect to the running ZAP instance via API and fetch alerts directly.
+  - Provide `ZAP_URL` and (if required) `ZAP_API_KEY` as environment variables or CI secrets.
+  - Example (Ubuntu runner):
+    - `go run ./cmd/zap-kb -format entities -out docs/data/entities.json -zap-url "$ZAP_URL" -api-key "$ZAP_API_KEY" -include-traffic -traffic-scope first -include-detection -detection-details summary -scan-label "run $GITHUB_RUN_NUMBER"`
+    - `go run ./cmd/zap-kb -format obsidian -entities-in docs/data/entities.json -obsidian-dir kb-new/obsidian -zap-base-url "$ZAP_URL" -scan-label "run $GITHUB_RUN_NUMBER"`
+
+- Offline: import alerts from a JSON file produced by your ZAP step (`-in` flag).
+  - Example: `go run ./cmd/zap-kb -in ./zap-alerts.json -format entities -out docs/data/entities.json`
+  - Then publish Obsidian as above using `-entities-in`.
+
+GitHub Actions workflow `zap-kb-run.yml` is included for manual runs with secrets:
+- Set repo secrets: `ZAP_URL`, `ZAP_API_KEY`.
+- Run the workflow from the Actions tab; it uploads the Obsidian vault and `entities.json` as artifacts.
+
 ## License
 - Code: Apache-2.0 (see repository root `LICENSE`).
 - Docs/KB content: CC BY 4.0 (see `docs/LICENSE` and `kb-new/obsidian/LICENSE`).
