@@ -3,14 +3,15 @@ aliases:
   - "IDIBS-0000"
 cweId: "359"
 cweUri: "https://cwe.mitre.org/data/definitions/359.html"
-generatedAt: "2025-01-01T00:00:00Z"
+generatedAt: "2025-09-21T20:00:10Z"
 id: "def-120000"
 name: "Information Disclosure - Information in Browser sessionStorage"
-occurrenceCount: "14"
+occurrenceCount: "15"
 pluginId: "120000"
+scan.label: "Google Firing Range run 2"
 schemaVersion: "v1"
 sourceTool: "zap"
-status.open: "14"
+status.open: "15"
 wascId: "13"
 ---
 
@@ -34,32 +35,33 @@ This is an informational alert and no action is necessary.
 
 ## Issues
 
-### GET https://www.google.com/search?client=firefox-b-d&q=firing+range+appspot+google  (observations: 1; open:1 triaged:0 fp:0 accepted:0 fixed:0)
+### GET https://www.google.com/search?client=firefox-b-d&q=google+firing+range  (observations: 1; open:1 triaged:0 fp:0 accepted:0 fixed:0)
 
-- [[findings/fin-1b126eec320b8ff9.md|Issue fin-1b126eec320b8ff9]]
+- [[findings/fin-6e97139792ba9d25.md|Issue fin-6e97139792ba9d25]]
 #### Observations
-- [[occurrences/occ-50c56e6b1939561c.md|search[1]]]
+- [[occurrences/occ-c928b57ebd0351fa.md|search[jjj]]]
 
-### GET https://www.google.com/search?client=firefox-b-d&q=firing+range+appspot+google&sei=1YacaIjPJJPZ5NoPjJeowAY  (observations: 8; open:8 triaged:0 fp:0 accepted:0 fixed:0)
+### GET https://www.google.com/search?client=firefox-b-d&q=google+firing+range&sei=j_jJaNXSKOmMwbkP-Je1uAY  (observations: 9; open:9 triaged:0 fp:0 accepted:0 fixed:0)
 
-- [[findings/fin-72c38c803671c7d9.md|Issue fin-72c38c803671c7d9]]
+- [[findings/fin-870760a9ede23da9.md|Issue fin-870760a9ede23da9]]
 #### Observations
-- [[occurrences/occ-4a5f2fd2e8e85b79.md|search[ci]]]
-- [[occurrences/occ-cbe27f6d32dbb009.md|search[h1]]]
-- [[occurrences/occ-ee4a142b86152fa0.md|search[h1]]]
-- [[occurrences/occ-19fc0ebe3dcaaedf.md|search[swp]]]
-- [[occurrences/occ-828cb5bd1653e5f1.md|search[swpth]]]
-- [[occurrences/occ-54a6d626b2122aaf.md|search[swsp]]]
-- [[occurrences/occ-7e579549fe454d4a.md|search[swsd]]]
-- [[occurrences/occ-751bb455ad885732.md|search[swzgws]]]
+- [[occurrences/occ-17f39d12d711bb89.md|search[ci]]]
+- [[occurrences/occ-a36fffe3cdd7b403.md|search[h1]]]
+- [[occurrences/occ-97cfcc244e97f5e0.md|search[h1]]]
+- [[occurrences/occ-6d653e1699bb1bbc.md|search[swp]]]
+- [[occurrences/occ-2ba90a7e42796b1f.md|search[swpth]]]
+- [[occurrences/occ-7695d31b4a741ee1.md|search[swsp]]]
+- [[occurrences/occ-867795ed024da405.md|search[swsd]]]
+- [[occurrences/occ-f0478e1a28570b78.md|search[swzgws]]]
+- [[occurrences/occ-c7628f5cd763cf6a.md|search[ule]]]
 
-### GET https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fclient%3Dfirefox-b-d%26q%3Dfiring%2Brange%2Bappspot%2Bgoogle%26sei%3D1YacaIjPJJPZ5NoPjJeowAY&q=EgSB3gKOGNaN8sQGIjCFSCeM0u9S-7on-GEdGlp-Ew3dmmCNrLA9xJYvRVI2IklgWlDfnCj8DKapVWJqXccyAVJaAUM  (observations: 5; open:5 triaged:0 fp:0 accepted:0 fixed:0)
+### GET https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fclient%3Dfirefox-b-d%26q%3Dgoogle%2Bfiring%2Brange%26sei%3Dj_jJaNXSKOmMwbkP-Je1uAY&q=EgSB3qOYGJDxp8YGIjDveYUWABxXj37Uckg8e5nyxzUCm3Hoex3ej7Ur3nbuOglgQJYhcGkp8XUuNILWJFQyAVJaAUM  (observations: 5; open:5 triaged:0 fp:0 accepted:0 fixed:0)
 
-- [[findings/fin-a9423f04c5999339.md|Issue fin-a9423f04c5999339]]
+- [[findings/fin-b27160be4428583e.md|Issue fin-b27160be4428583e]]
 #### Observations
-- [[occurrences/occ-a70fd58cf6a574ff.md|index[g]]]
-- [[occurrences/occ-a5f1a8e1cac81f77.md|index[ra]]]
-- [[occurrences/occ-c224165cb81f83be.md|index[rb]]]
-- [[occurrences/occ-55f0541145297b5c.md|index[rc]]]
-- [[occurrences/occ-f046e88fa3833fbc.md|index[rf]]]
+- [[occurrences/occ-b7b432d971dd692f.md|index[g]]]
+- [[occurrences/occ-b4e484eeec6bc906.md|index[ra]]]
+- [[occurrences/occ-4e80bfc3d1f101c0.md|index[rb]]]
+- [[occurrences/occ-bbbc9fa843cbe338.md|index[rc]]]
+- [[occurrences/occ-d597b61dcca1148e.md|index[rf]]]
 

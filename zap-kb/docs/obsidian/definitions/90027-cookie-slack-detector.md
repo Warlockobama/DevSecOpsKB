@@ -1,13 +1,18 @@
 ---
 aliases:
   - "CSD-0027"
-generatedAt: "2025-09-04T00:31:04Z"
+cweId: "205"
+cweUri: "https://cwe.mitre.org/data/definitions/205.html"
+generatedAt: "2025-09-21T20:00:10Z"
 id: "def-90027"
 name: "Cookie Slack Detector"
-occurrenceCount: "0"
+occurrenceCount: "2"
 pluginId: "90027"
+scan.label: "Google Firing Range run 2"
 schemaVersion: "v1"
 sourceTool: "zap"
+status.open: "2"
+wascId: "45"
 ---
 
 # Cookie Slack Detector (Plugin 90027)
@@ -23,4 +28,21 @@ sourceTool: "zap"
 ### How it detects
 
 Active
+
+### References
+- https://cwe.mitre.org/data/definitions/205.html
+
+## Issues
+
+### GET https://public-firing-range.appspot.com/leakedcookie/leakedcookie  (observations: 1; open:1 triaged:0 fp:0 accepted:0 fixed:0)
+
+- [[findings/fin-e2e2d735b6039b60.md|Issue fin-e2e2d735b6039b60]]
+#### Observations
+- [[occurrences/occ-839222512be1da66.md|leakedcookie]]
+
+### GET https://public-firing-range.appspot.com/leakedcookie/leakedinresource  (observations: 1; open:1 triaged:0 fp:0 accepted:0 fixed:0)
+
+- [[findings/fin-f1f34bece5c9fb04.md|Issue fin-f1f34bece5c9fb04]]
+#### Observations
+- [[occurrences/occ-5f569d94de632077.md|leakedinresource]]
 

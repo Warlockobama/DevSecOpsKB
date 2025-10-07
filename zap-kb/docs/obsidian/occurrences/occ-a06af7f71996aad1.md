@@ -1,0 +1,81 @@
+---
+aliases:
+  - "UAF leakedcookie-aad1"
+attack: "Mozilla/5.0 (iPhone; CPU iPhone OS 8_0_2 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12A366 Safari/600.1.4"
+confidence: "Medium"
+definitionId: "def-10104"
+domain: "public-firing-range.appspot.com"
+findingId: "fin-c1ff9e373d2ef805"
+generatedAt: "2025-09-21T20:00:10Z"
+host: "public-firing-range.appspot.com"
+id: "occ-a06af7f71996aad1"
+issueId: "fin-c1ff9e373d2ef805"
+kind: "observation"
+method: "GET"
+observationId: "occ-a06af7f71996aad1"
+observedAt: "2025-09-21T20:00:10Z"
+param: "Header User-Agent"
+path: "/leakedcookie/leakedcookie"
+risk: "Informational"
+riskId: "0"
+scan.label: "Google Firing Range run 2"
+schemaVersion: "v1"
+sourceId: "1"
+sourceTool: "zap"
+url: "https://public-firing-range.appspot.com/leakedcookie/leakedcookie"
+---
+
+# Observation occ-a06af7f71996aad1 — UAF leakedcookie-aad1
+
+> [!Note]
+> Risk: Informational () — Confidence: Medium
+
+- Definition: [[definitions/10104-user-agent-fuzzer.md|def-10104]]
+- Issue: [[findings/fin-c1ff9e373d2ef805.md|fin-c1ff9e373d2ef805]]
+
+**Endpoint:** GET https://public-firing-range.appspot.com/leakedcookie/leakedcookie
+
+## Rule summary
+
+- Title: User Agent Fuzzer (Plugin 10104)
+  - https://owasp.org/wstg
+
+## Endpoint details
+
+- Scheme: https
+- Host: public-firing-range.appspot.com
+- Path: /leakedcookie/leakedcookie
+
+**Param:** Header User-Agent
+
+**Attack:** `Mozilla/5.0 (iPhone; CPU iPhone OS 8_0_2 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12A366 Safari/600.1.4`
+
+## Repro (curl)
+
+```bash
+curl "https://public-firing-range.appspot.com/leakedcookie/leakedcookie"
+```
+
+## Triage guidance
+
+- Validate the finding manually and confirm exploitability in this context.
+- Document false-positive conditions and add ignores where appropriate.
+
+## Workflow
+
+- Status: open
+
+### Checklist
+
+- [ ] Triage
+- [ ] Validate
+- [ ] File ticket
+- [ ] Fix verified
+- [ ] Close
+
+### Governance
+
+- False positive reason: 
+- Acceptance justification: 
+- Acceptance expires at (UTC): 
+- Due at (UTC): 

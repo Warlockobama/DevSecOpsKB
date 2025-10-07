@@ -1,17 +1,18 @@
 package obsidian
 
 import (
-    "fmt"
-    neturl "net/url"
-    "os"
-    pathpkg "path"
-    "path/filepath"
-    "regexp"
-    "sort"
-    "strings"
-    "unicode"
+	"fmt"
+	neturl "net/url"
+	"os"
+	pathpkg "path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+	"unicode"
 
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
 
 type Options struct {
@@ -84,11 +85,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	domainSeverityCounts := make(map[string]map[string]int) // domain -> severity -> count
 
 	type defSummary struct {
-		Link   string
-		Title  string
-		Plugin string
-		Total  int
-		Stats  map[string]int
+		Link            string
+		Title           string
+		Plugin          string
+		Total           int
+		Stats           map[string]int
+		Severity        map[string]int
+		PrimarySeverity string
 	}
 	var defSummaries []defSummary
 
@@ -116,6 +119,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		// Aggregate rollups across all findings for this definition.
 		defStats := map[string]int{}
+		defSeverity := map[string]int{"high": 0, "medium": 0, "low": 0, "info": 0}
 		defOccTotal := 0
 		for _, f := range fs {
 			occs := occsByFind[f.FindingID]
@@ -124,17 +128,38 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			for k, v := range sc {
 				defStats[k] += v
 			}
+			for _, occ := range occs {
+				sevTxt, _ := deriveSeverity(occ.Risk, occ.RiskCode)
+				sevKey := strings.ToLower(strings.TrimSpace(sevTxt))
+				if sevKey == "informational" {
+					sevKey = "info"
+				}
+				if sevKey == "" {
+					sevKey = "info"
+				}
+				if _, ok := defSeverity[sevKey]; !ok {
+					defSeverity[sevKey] = 0
+				}
+				defSeverity[sevKey]++
+			}
 		}
-		// Accumulate to global index totals.
-		for k, v := range defStats {
-			statusCounts[k] += v
+
+		primarySeverity := "info"
+		for _, name := range []string{"high", "medium", "low", "info"} {
+			if defSeverity[name] > 0 {
+				primarySeverity = name
+				break
+			}
 		}
+
 		defSummaries = append(defSummaries, defSummary{
-			Link:   defLink,
-			Title:  firstNonEmpty(d.Alert, d.Name, d.PluginID),
-			Plugin: d.PluginID,
-			Total:  defOccTotal,
-			Stats:  defStats,
+			Link:            defLink,
+			Title:           firstNonEmpty(d.Alert, d.Name, d.PluginID),
+			Plugin:          d.PluginID,
+			Total:           defOccTotal,
+			Stats:           defStats,
+			Severity:        defSeverity,
+			PrimarySeverity: primarySeverity,
 		})
 
 		// Prepare YAML values
@@ -171,6 +196,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		title := firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		fmt.Fprintf(&b, "# %s (Plugin %s)\n\n", title, d.PluginID)
+		// Severity rollup for quick triage
+		if defSeverity["high"]+defSeverity["medium"]+defSeverity["low"]+defSeverity["info"] > 0 {
+			b.WriteString("## Severity overview\n\n")
+			for _, entry := range []struct {
+				Label string
+				Key   string
+			}{
+				{"High", "high"},
+				{"Medium", "medium"},
+				{"Low", "low"},
+				{"Info", "info"},
+			} {
+				fmt.Fprintf(&b, "- %s: %d\n", entry.Label, defSeverity[entry.Key])
+			}
+			b.WriteString("\n")
+		}
 
 		// Detection logic (if enriched)
 		if d.Detection != nil {
@@ -209,26 +250,26 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 						fmt.Fprintf(&b, "_%s_\n\n", strings.Join(line, "; "))
 					}
 				}
-                if len(d.Detection.Signals) > 0 {
-                    b.WriteString("Signals:\n")
-                    for _, s := range d.Detection.Signals {
-                        fmt.Fprintf(&b, "- %s\n", s)
-                        // If the signal is a regex, add a short hint/example to make it approachable.
-                        ls := strings.ToLower(strings.TrimSpace(s))
-                        if strings.HasPrefix(ls, "regex:") {
-                            pat := strings.TrimSpace(s[len("regex:"):])
-                            if hint, ex := regexHintAndExample(pat); hint != "" || ex != "" {
-                                if hint != "" {
-                                    fmt.Fprintf(&b, "  - hint: %s\n", hint)
-                                }
-                                if ex != "" {
-                                    fmt.Fprintf(&b, "  - example: `%s`\n", ex)
-                                }
-                            }
-                        }
-                    }
-                    b.WriteString("\n")
-                }
+				if len(d.Detection.Signals) > 0 {
+					b.WriteString("Signals:\n")
+					for _, s := range d.Detection.Signals {
+						fmt.Fprintf(&b, "- %s\n", s)
+						// If the signal is a regex, add a short hint/example to make it approachable.
+						ls := strings.ToLower(strings.TrimSpace(s))
+						if strings.HasPrefix(ls, "regex:") {
+							pat := strings.TrimSpace(s[len("regex:"):])
+							if hint, ex := regexHintAndExample(pat); hint != "" || ex != "" {
+								if hint != "" {
+									fmt.Fprintf(&b, "  - hint: %s\n", hint)
+								}
+								if ex != "" {
+									fmt.Fprintf(&b, "  - example: `%s`\n", ex)
+								}
+							}
+						}
+					}
+					b.WriteString("\n")
+				}
 			}
 		}
 
@@ -247,48 +288,90 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 
 		if len(fs) > 0 {
-			b.WriteString("## Issues\n\n")
+			maxFindingsPerSeverity := 10
+			maxSamplesPerFinding := 3
+			findingsBySeverity := map[string][]entities.Finding{}
 			for _, f := range fs {
-				occs := occsByFind[f.FindingID]
-				sc := aggStatus(occs)
-				fmt.Fprintf(&b, "### %s %s  (observations: %d; open:%d triaged:%d fp:%d accepted:%d fixed:%d)\n\n",
-					f.Method, f.URL, len(occs),
-					sc["open"], sc["triaged"], sc["fp"], sc["accepted"], sc["fixed"])
-
-				// Link to dedicated finding page
-				fmt.Fprintf(&b, "- [[%s|Issue %s]]\n", filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")), f.FindingID)
-
-				if len(occs) > 0 {
-					b.WriteString("#### Observations\n")
-					sort.Slice(occs, func(i, j int) bool {
-						if occs[i].URL != occs[j].URL {
-							return occs[i].URL < occs[j].URL
-						}
-						if occs[i].Param != occs[j].Param {
-							return occs[i].Param < occs[j].Param
-						}
-						return occs[i].Evidence < occs[j].Evidence
-					})
-					for _, o := range occs {
-						// Prefer the human-friendly occurrence name if provided; otherwise build a clean caption.
-						caption := strings.TrimSpace(o.Name)
-						if caption == "" {
-							parts := []string{strings.TrimSpace(o.Method), strings.TrimSpace(o.URL)}
-							if strings.TrimSpace(o.Param) != "" {
-								parts = append(parts, "param="+strings.TrimSpace(o.Param))
-							}
-							if strings.TrimSpace(o.Risk) != "" {
-								parts = append(parts, "risk="+strings.TrimSpace(o.Risk))
-							}
-							if strings.TrimSpace(o.Evidence) != "" {
-								parts = append(parts, `ev="`+truncate(strings.TrimSpace(o.Evidence), 80)+`"`)
-							}
-							caption = strings.Join(parts, " ")
-						}
-						fmt.Fprintf(&b, "- [[%s|%s]]\n", filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")), caption)
-					}
-					b.WriteString("\n")
+				sevTxt, _ := deriveSeverity(f.Risk, f.RiskCode)
+				sevKey := strings.ToLower(strings.TrimSpace(sevTxt))
+				if sevKey == "informational" {
+					sevKey = "info"
 				}
+				if sevKey == "" {
+					sevKey = "info"
+				}
+				findingsBySeverity[sevKey] = append(findingsBySeverity[sevKey], f)
+			}
+
+			b.WriteString("## Issues\n\n")
+			severityOrder := []string{"high", "medium", "low", "info"}
+			for _, sev := range severityOrder {
+				group := findingsBySeverity[sev]
+				if len(group) == 0 {
+					continue
+				}
+				sort.Slice(group, func(i, j int) bool {
+					ii := len(occsByFind[group[i].FindingID])
+					jj := len(occsByFind[group[j].FindingID])
+					if ii != jj {
+						return ii > jj
+					}
+					if group[i].URL != group[j].URL {
+						return group[i].URL < group[j].URL
+					}
+					return group[i].FindingID < group[j].FindingID
+				})
+				title := titleASCII(sev)
+				fmt.Fprintf(&b, "### %s severity (%d)\n\n", title, len(group))
+				limit := maxFindingsPerSeverity
+				if limit > len(group) {
+					limit = len(group)
+				}
+				for i := 0; i < limit; i++ {
+					f := group[i]
+					occs := occsByFind[f.FindingID]
+					sc := aggStatus(occs)
+					fmt.Fprintf(&b, "- [[%s|%s %s]] — observations: %d (open:%d triaged:%d fp:%d accepted:%d fixed:%d)\n",
+						filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
+						strings.TrimSpace(f.Method), strings.TrimSpace(f.URL), len(occs),
+						sc["open"], sc["triaged"], sc["fp"], sc["accepted"], sc["fixed"])
+					if len(occs) > 0 {
+						b.WriteString("  - Samples:\n")
+						sort.Slice(occs, func(i, j int) bool {
+							if occs[i].URL != occs[j].URL {
+								return occs[i].URL < occs[j].URL
+							}
+							if occs[i].Param != occs[j].Param {
+								return occs[i].Param < occs[j].Param
+							}
+							return occs[i].OccurrenceID < occs[j].OccurrenceID
+						})
+						sampleLimit := maxSamplesPerFinding
+						if sampleLimit > len(occs) {
+							sampleLimit = len(occs)
+						}
+						for j := 0; j < sampleLimit; j++ {
+							o := occs[j]
+							caption := strings.TrimSpace(o.Name)
+							if caption == "" {
+								parts := []string{strings.TrimSpace(o.Method), strings.TrimSpace(o.URL)}
+								if strings.TrimSpace(o.Param) != "" {
+									parts = append(parts, "param="+strings.TrimSpace(o.Param))
+								}
+								caption = strings.Join(parts, " ")
+							}
+							fmt.Fprintf(&b, "    - [[%s|%s]]\n",
+								filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")), caption)
+						}
+						if sampleLimit < len(occs) {
+							fmt.Fprintf(&b, "    - _%d additional observations not shown_\n", len(occs)-sampleLimit)
+						}
+					}
+				}
+				if limit < len(group) {
+					fmt.Fprintf(&b, "- _%d additional findings not shown_\n", len(group)-limit)
+				}
+				b.WriteString("\n")
 			}
 		}
 
@@ -351,18 +434,35 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		sevTxt, _ := deriveSeverity(f.Risk, f.RiskCode)
 		b.WriteString(calloutForSeverity(sevTxt, fmt.Sprintf("Risk: %s (%s) — Confidence: %s", f.Risk, f.RiskCode, f.Confidence)))
 
-		if link := defLinkByID[f.DefinitionID]; link != "" {
-			fmt.Fprintf(&b, "- Definition: [[%s|%s]]\n\n", link, f.FindingID)
+		defTitle := f.DefinitionID
+		if def, ok := defByID[f.DefinitionID]; ok {
+			if t := firstNonEmpty(def.Alert, def.Name, def.PluginID); strings.TrimSpace(t) != "" {
+				defTitle = t
+			}
+		}
+		if link := defLinkByID[f.DefinitionID]; strings.TrimSpace(link) != "" {
+			fmt.Fprintf(&b, "- Definition: [[%s|%s]]\n\n", link, defTitle)
 		} else {
-			fmt.Fprintf(&b, "- Definition: %s\n\n", f.DefinitionID)
+			fmt.Fprintf(&b, "- Definition: %s\n\n", defTitle)
 		}
 		fmt.Fprintf(&b, "**Endpoint:** %s %s\n\n", f.Method, f.URL)
+
+		primaryStatus, statusSummary := summarizeStatusCounts(sc)
 
 		// Rollup section
 		b.WriteString("## Rollup\n\n")
 		fmt.Fprintf(&b, "- Observations: %d\n", len(occs))
-		fmt.Fprintf(&b, "- Status: open:%d triaged:%d fp:%d accepted:%d fixed:%d\n\n",
-			sc["open"], sc["triaged"], sc["fp"], sc["accepted"], sc["fixed"])
+		fmt.Fprintf(&b, "- Status counts: %s\n", statusSummary)
+		trafficSamples := 0
+		for _, o := range occs {
+			if o.Request != nil || o.Response != nil {
+				trafficSamples++
+			}
+		}
+		if trafficSamples > 0 {
+			fmt.Fprintf(&b, "- Traffic samples: %d\n", trafficSamples)
+		}
+		b.WriteString("\n")
 
 		// Observations list (compact)
 		if len(occs) > 0 {
@@ -389,7 +489,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				if ev != "" {
 					ev = truncate(ev, 60)
 				}
-				fmt.Fprintf(&b, "- [[%s|%s]] — %s; %s\n", filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")), caption, titleASCII(sev2), ev)
+				decorations := []string{titleASCII(sev2)}
+				if o.Request != nil || o.Response != nil {
+					decorations = append(decorations, "traffic")
+				}
+				if ev != "" {
+					decorations = append(decorations, ev)
+				}
+				fmt.Fprintf(&b, "- [[%s|%s]] — %s\n", filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")), caption, strings.Join(decorations, "; "))
 			}
 			b.WriteString("\n")
 		}
@@ -400,71 +507,58 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			if first.Request != nil || first.Response != nil {
 				b.WriteString("## First observation traffic\n\n")
 				if first.Request != nil {
+					reqURL, _ := neturl.Parse(first.URL)
 					b.WriteString("### Request\n\n")
-					fmt.Fprintf(&b, "%s %s\n\n", f.Method, f.URL)
-					if len(first.Request.Headers) > 0 {
-						b.WriteString("Headers:\n")
-						for _, h := range first.Request.Headers {
-							fmt.Fprintf(&b, "- %s: %s\n", h.Name, h.Value)
-						}
-						b.WriteString("\n")
+					fmt.Fprintf(&b, "- Method: %s\n", strings.ToUpper(strings.TrimSpace(first.Method)))
+					if reqURL != nil {
+						fmt.Fprintf(&b, "- Host: %s\n", reqURL.Host)
+						fmt.Fprintf(&b, "- Path: %s\n", reqURL.Path)
 					}
-					if first.Request.BodySnippet != "" {
-						b.WriteString("```http\n")
-						b.WriteString(first.Request.BodySnippet)
-						b.WriteString("\n```\n\n")
-						if first.Request.BodyBytes > len(first.Request.BodySnippet) {
-							fmt.Fprintf(&b, "_Request body truncated to %d bytes (of %d)_\n\n", len(first.Request.BodySnippet), first.Request.BodyBytes)
-						}
-					} else if first.Request.BodyBytes > 0 {
-						fmt.Fprintf(&b, "_Request body: %d bytes_\n\n", first.Request.BodyBytes)
+					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Request.Headers))
+					writeHeadersWithLimit(&b, first.Request.Headers, 10)
+					if strings.TrimSpace(first.Request.BodySnippet) != "" || first.Request.BodyBytes > 0 {
+						writeBodySnippet(&b, first.Request.BodySnippet, first.Request.BodyBytes, 512, "http")
 					}
 				}
 				if first.Response != nil {
 					b.WriteString("### Response\n\n")
 					if first.Response.StatusCode > 0 {
-						fmt.Fprintf(&b, "Status: %d\n\n", first.Response.StatusCode)
+						fmt.Fprintf(&b, "- Status: %d\n", first.Response.StatusCode)
 					}
-					if len(first.Response.Headers) > 0 {
-						b.WriteString("Headers:\n")
-						for _, h := range first.Response.Headers {
-							fmt.Fprintf(&b, "- %s: %s\n", h.Name, h.Value)
-						}
-						b.WriteString("\n")
-					}
-					if first.Response.BodySnippet != "" {
-						b.WriteString("```http\n")
-						b.WriteString(first.Response.BodySnippet)
-						b.WriteString("\n```\n\n")
-						if first.Response.BodyBytes > len(first.Response.BodySnippet) {
-							fmt.Fprintf(&b, "_Response body truncated to %d bytes (of %d)_\n\n", len(first.Response.BodySnippet), first.Response.BodyBytes)
-						}
-					} else if first.Response.BodyBytes > 0 {
-						fmt.Fprintf(&b, "_Response body: %d bytes_\n\n", first.Response.BodyBytes)
+					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Response.Headers))
+					writeHeadersWithLimit(&b, first.Response.Headers, 12)
+					if strings.TrimSpace(first.Response.BodySnippet) != "" || first.Response.BodyBytes > 0 {
+						writeBodySnippet(&b, first.Response.BodySnippet, first.Response.BodyBytes, 512, "http")
 					}
 				}
 			}
 		}
 
 		// Issue-level Workflow
+		owners := collectAnalystSet(occs, func(a *entities.Analyst) []string {
+			if strings.TrimSpace(a.Owner) == "" {
+				return nil
+			}
+			return []string{strings.TrimSpace(a.Owner)}
+		})
+		tags := collectAnalystSet(occs, func(a *entities.Analyst) []string { return a.Tags })
+		tickets := collectAnalystSet(occs, func(a *entities.Analyst) []string { return a.TicketRefs })
+		updated := latestAnalystUpdate(occs)
+		notes := collectAnalystNotes(occs, 5)
+
 		b.WriteString("## Workflow\n\n")
-		b.WriteString("- Status: open\n")
-		b.WriteString("- Owner: \n")
-		b.WriteString("- Tags: \n")
-		b.WriteString("- Tickets: \n")
-		b.WriteString("- Updated: \n")
-		b.WriteString("\n### Notes\n\n")
-		b.WriteString("\n### Checklist\n\n")
-		b.WriteString("- [ ] Triage\n")
-		b.WriteString("- [ ] Validate\n")
-		b.WriteString("- [ ] File ticket\n")
-		b.WriteString("- [ ] Fix verified\n")
-		b.WriteString("- [ ] Close\n")
-		b.WriteString("\n### Governance\n\n")
-		b.WriteString("- False positive reason: \n")
-		b.WriteString("- Acceptance justification: \n")
-		b.WriteString("- Acceptance expires at (UTC): \n")
-		b.WriteString("- Due at (UTC): \n")
+		fmt.Fprintf(&b, "- Status: %s (%s)\n", titleASCII(primaryStatus), statusSummary)
+		fmt.Fprintf(&b, "- Owners: %s\n", formatListOrPlaceholder(owners, "_None recorded_"))
+		fmt.Fprintf(&b, "- Tags: %s\n", formatListOrPlaceholder(tags, "_None_"))
+		fmt.Fprintf(&b, "- Tickets: %s\n", formatListOrPlaceholder(tickets, "_None_"))
+		fmt.Fprintf(&b, "- Updated: %s\n", fallbackString(updated, "_Not recorded_"))
+		if len(notes) > 0 {
+			b.WriteString("\n### Analyst Notes\n\n")
+			for _, note := range notes {
+				fmt.Fprintf(&b, "- %s\n", note)
+			}
+			b.WriteString("\n")
+		}
 
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 			return err
@@ -580,43 +674,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		fmt.Fprintf(&b, "- Issue: [[%s|%s]]\n\n", filepath.ToSlash(filepath.Join("occurrences", "..", "findings", o.FindingID+".md")), o.FindingID)
 
 		fmt.Fprintf(&b, "**Endpoint:** %s %s\n\n", o.Method, o.URL)
-
-		// Rule summary for quick triage
-		if d, ok := defByID[o.DefinitionID]; ok {
-			b.WriteString("## Rule summary\n\n")
-			title := firstNonEmpty(d.Alert, d.Name, d.PluginID)
-			fmt.Fprintf(&b, "- Title: %s (Plugin %s)\n", title, d.PluginID)
-			if d.WASCID > 0 {
-				fmt.Fprintf(&b, "- WASC: %d\n", d.WASCID)
-			}
-			if d.Taxonomy != nil {
-				if d.Taxonomy.CWEID > 0 {
-					fmt.Fprintf(&b, "- CWE: %d\n", d.Taxonomy.CWEID)
-				}
-				if strings.TrimSpace(d.Taxonomy.CWEURI) != "" {
-					fmt.Fprintf(&b, "- CWE URI: %s\n", d.Taxonomy.CWEURI)
-				}
-			}
-			if d.Remediation != nil && strings.TrimSpace(d.Remediation.Summary) != "" {
-				fmt.Fprintf(&b, "- Remediation: %s\n", d.Remediation.Summary)
-			}
-			if d.Remediation != nil && len(d.Remediation.References) > 0 {
-				// show up to 2 references for brevity
-				maxRefs := 2
-				shown := 0
-				for _, r := range d.Remediation.References {
-					if strings.TrimSpace(r) == "" {
-						continue
-					}
-					fmt.Fprintf(&b, "  - %s\n", r)
-					shown++
-					if shown >= maxRefs {
-						break
-					}
-				}
-			}
-			b.WriteString("\n")
-		}
 
 		// Endpoint details
 		b.WriteString("## Endpoint details\n\n")
@@ -779,34 +836,121 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	{
 		// Aggregate historical counts across the vault (all occurrence files), so INDEX can differentiate sessions/scans.
 		histScanTotals, histDomainTotals, histDomainStatus := scanVaultOccurrences(occDir)
-		var keys []string
-		for k := range statusCounts {
-			keys = append(keys, k)
+
+		severityLine := func(m map[string]int) string {
+			parts := []string{}
+			for _, entry := range []struct {
+				Label string
+				Key   string
+			}{
+				{"H", "high"},
+				{"M", "medium"},
+				{"L", "low"},
+				{"I", "info"},
+			} {
+				parts = append(parts, fmt.Sprintf("%s:%d", entry.Label, m[entry.Key]))
+			}
+			return strings.Join(parts, " ")
 		}
-		sort.Strings(keys)
+
 		var b strings.Builder
 		b.WriteString("# Index\n\n")
 		if strings.TrimSpace(opts.ScanLabel) != "" {
 			fmt.Fprintf(&b, "_Scan:_ %s\n\n", opts.ScanLabel)
 		}
-		// Total observations for this run from domainTotals
-		total := 0
-		for _, v := range domainTotals {
-			total += v
+
+		totalObs := len(ef.Occurrences)
+		fmt.Fprintf(&b, "- Total observations: %d\n", totalObs)
+		fmt.Fprintf(&b, "- Unique findings: %d\n", len(ef.Findings))
+		for _, status := range []string{"open", "triaged", "accepted", "fixed", "fp"} {
+			if count := statusCounts[status]; count > 0 {
+				fmt.Fprintf(&b, "- %s: %d\n", titleASCII(status), count)
+			}
 		}
-		fmt.Fprintf(&b, "- Total observations: %d\n", total)
-		for _, k := range keys {
-			fmt.Fprintf(&b, "- %s: %d\n", titleASCII(k), statusCounts[k])
-		}
-		// New: By Severity (this run)
+
 		if len(severityCounts) > 0 {
-			b.WriteString("\n## By Severity (this run)\n\n")
+			b.WriteString("\n## Severity overview\n\n")
 			for _, sev := range []string{"high", "medium", "low", "info"} {
-				if severityCounts[sev] > 0 {
-					fmt.Fprintf(&b, "- %s: %d\n", titleASCII(sev), severityCounts[sev])
+				if count := severityCounts[sev]; count > 0 {
+					fmt.Fprintf(&b, "- %s: %d\n", titleASCII(sev), count)
 				}
 			}
 		}
+
+		highDefs := make([]defSummary, 0)
+		mediumDefs := make([]defSummary, 0)
+		lowDefs := make([]defSummary, 0)
+		for _, ds := range defSummaries {
+			h := ds.Severity["high"]
+			m := ds.Severity["medium"]
+			if h > 0 {
+				highDefs = append(highDefs, ds)
+			} else if m > 0 {
+				mediumDefs = append(mediumDefs, ds)
+			} else {
+				lowDefs = append(lowDefs, ds)
+			}
+		}
+
+		sort.Slice(highDefs, func(i, j int) bool {
+			if highDefs[i].Severity["high"] != highDefs[j].Severity["high"] {
+				return highDefs[i].Severity["high"] > highDefs[j].Severity["high"]
+			}
+			if highDefs[i].Severity["medium"] != highDefs[j].Severity["medium"] {
+				return highDefs[i].Severity["medium"] > highDefs[j].Severity["medium"]
+			}
+			if highDefs[i].Total != highDefs[j].Total {
+				return highDefs[i].Total > highDefs[j].Total
+			}
+			return highDefs[i].Title < highDefs[j].Title
+		})
+		sort.Slice(mediumDefs, func(i, j int) bool {
+			if mediumDefs[i].Severity["medium"] != mediumDefs[j].Severity["medium"] {
+				return mediumDefs[i].Severity["medium"] > mediumDefs[j].Severity["medium"]
+			}
+			if mediumDefs[i].Severity["low"] != mediumDefs[j].Severity["low"] {
+				return mediumDefs[i].Severity["low"] > mediumDefs[j].Severity["low"]
+			}
+			if mediumDefs[i].Total != mediumDefs[j].Total {
+				return mediumDefs[i].Total > mediumDefs[j].Total
+			}
+			return mediumDefs[i].Title < mediumDefs[j].Title
+		})
+		sort.Slice(lowDefs, func(i, j int) bool {
+			if lowDefs[i].Severity["low"] != lowDefs[j].Severity["low"] {
+				return lowDefs[i].Severity["low"] > lowDefs[j].Severity["low"]
+			}
+			if lowDefs[i].Severity["info"] != lowDefs[j].Severity["info"] {
+				return lowDefs[i].Severity["info"] > lowDefs[j].Severity["info"]
+			}
+			if lowDefs[i].Total != lowDefs[j].Total {
+				return lowDefs[i].Total > lowDefs[j].Total
+			}
+			return lowDefs[i].Title < lowDefs[j].Title
+		})
+
+		writeRuleSection := func(title string, defs []defSummary, limit int) {
+			b.WriteString("\n## " + title + "\n\n")
+			if len(defs) == 0 {
+				b.WriteString("- _None detected_\n\n")
+				return
+			}
+			if limit <= 0 || limit > len(defs) {
+				limit = len(defs)
+			}
+			for i := 0; i < limit; i++ {
+				ds := defs[i]
+				fmt.Fprintf(&b, "- [[%s|%s (Plugin %s)]] — %s (total: %d)\n", ds.Link, ds.Title, ds.Plugin, severityLine(ds.Severity), ds.Total)
+			}
+			if limit < len(defs) {
+				fmt.Fprintf(&b, "- _%d additional rules not shown_\n", len(defs)-limit)
+			}
+			b.WriteString("\n")
+		}
+
+		writeRuleSection("High severity rules", highDefs, 10)
+		writeRuleSection("Medium severity rules", mediumDefs, 10)
+		writeRuleSection("Low & informational rules", lowDefs, 10)
 		// Historical by Scan across entire vault
 		if len(histScanTotals) > 0 {
 			b.WriteString("\n## By Scan (vault)\n\n")
@@ -851,33 +995,29 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				b.WriteString("\n")
 			}
 		}
-		b.WriteString("\n## By Rule\n\n")
-		// Stable order by plugin then title
-		sort.Slice(defSummaries, func(i, j int) bool {
-			if defSummaries[i].Plugin != defSummaries[j].Plugin {
-				return defSummaries[i].Plugin < defSummaries[j].Plugin
-			}
-			return defSummaries[i].Title < defSummaries[j].Title
-		})
-		for _, ds := range defSummaries {
-			fmt.Fprintf(&b, "- [[%s|%s (Plugin %s)]] — observations: %d; open:%d triaged:%d fp:%d accepted:%d fixed:%d\n",
-				ds.Link, ds.Title, ds.Plugin, ds.Total,
-				ds.Stats["open"], ds.Stats["triaged"], ds.Stats["fp"], ds.Stats["accepted"], ds.Stats["fixed"])
-		}
-		// New: By Top Rules (this run)
 		if len(defSummaries) > 0 {
-			// copy & sort by Total desc
 			tmp := make([]defSummary, len(defSummaries))
 			copy(tmp, defSummaries)
-			sort.Slice(tmp, func(i, j int) bool { return tmp[i].Total > tmp[j].Total })
-			b.WriteString("\n## Top Rules (this run)\n\n")
-			limit := 5
+			sort.Slice(tmp, func(i, j int) bool {
+				if tmp[i].Total != tmp[j].Total {
+					return tmp[i].Total > tmp[j].Total
+				}
+				if tmp[i].Severity["high"] != tmp[j].Severity["high"] {
+					return tmp[i].Severity["high"] > tmp[j].Severity["high"]
+				}
+				return tmp[i].Title < tmp[j].Title
+			})
+			b.WriteString("\n## Volume leaders (all severities)\n\n")
+			limit := 10
 			if limit > len(tmp) {
 				limit = len(tmp)
 			}
 			for i := 0; i < limit; i++ {
 				ds := tmp[i]
-				fmt.Fprintf(&b, "- [[%s|%s (Plugin %s)]] — %d observations\n", ds.Link, ds.Title, ds.Plugin, ds.Total)
+				fmt.Fprintf(&b, "- [[%s|%s (Plugin %s)]] — %s (total: %d)\n", ds.Link, ds.Title, ds.Plugin, severityLine(ds.Severity), ds.Total)
+			}
+			if limit < len(tmp) {
+				fmt.Fprintf(&b, "- _%d additional rules not shown_\n", len(tmp)-limit)
 			}
 		}
 		b.WriteString("\n")
@@ -885,6 +1025,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			return err
 		}
 	}
+
+	// Dashboard is best-effort; do not fail vault writes if it errors.
+	_ = GenerateDashboard(root)
 
 	return nil
 }
@@ -966,95 +1109,95 @@ func truncate(s string, n int) string {
 // regexHintAndExample returns a short human-friendly hint and a simple example
 // for common regex patterns found in ZAP rules. Best-effort only.
 func regexHintAndExample(pattern string) (string, string) {
-    p := strings.TrimSpace(pattern)
-    lp := strings.ToLower(p)
+	p := strings.TrimSpace(pattern)
+	lp := strings.ToLower(p)
 
-    // Strip common anchors/boundaries for easier matching
-    p = strings.ReplaceAll(p, "\\b", "")
-    p = strings.TrimPrefix(p, "^")
-    p = strings.TrimSuffix(p, "$")
+	// Strip common anchors/boundaries for easier matching
+	p = strings.ReplaceAll(p, "\\b", "")
+	p = strings.TrimPrefix(p, "^")
+	p = strings.TrimSuffix(p, "$")
 
-    // Web Storage keywords
-    if strings.Contains(lp, "localstorage") || strings.Contains(lp, "sessionstorage") {
-        return "Looks for HTML5 Web Storage usage in content.", "localStorage.setItem(\"key\", \"value\")"
-    }
+	// Web Storage keywords
+	if strings.Contains(lp, "localstorage") || strings.Contains(lp, "sessionstorage") {
+		return "Looks for HTML5 Web Storage usage in content.", "localStorage.setItem(\"key\", \"value\")"
+	}
 
-    // Email address
-    if strings.Contains(p, "@") && strings.Contains(lp, ".") && (strings.Contains(lp, "[a-z") || strings.Contains(lp, "[a-za-z")) {
-        return "Email address pattern (name@domain).", "alice@example.com"
-    }
+	// Email address
+	if strings.Contains(p, "@") && strings.Contains(lp, ".") && (strings.Contains(lp, "[a-z") || strings.Contains(lp, "[a-za-z")) {
+		return "Email address pattern (name@domain).", "alice@example.com"
+	}
 
-    // IPv4 address
-    if strings.Contains(lp, "\\d{1,3}\\.") || strings.Contains(lp, "[0-9]{1,3}\\.") || strings.Contains(lp, "(?:[0-9]{1,3}\\.){3}") {
-        return "IPv4 address (four dot-separated numbers).", "192.168.0.1"
-    }
+	// IPv4 address
+	if strings.Contains(lp, "\\d{1,3}\\.") || strings.Contains(lp, "[0-9]{1,3}\\.") || strings.Contains(lp, "(?:[0-9]{1,3}\\.){3}") {
+		return "IPv4 address (four dot-separated numbers).", "192.168.0.1"
+	}
 
-    // UUID (hex groups separated by dashes)
-    if regexp.MustCompile(`(?i)[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`).MatchString(p) {
-        return "UUID/GUID (hex groups with dashes).", "123e4567-e89b-12d3-a456-426614174000"
-    }
+	// UUID (hex groups separated by dashes)
+	if regexp.MustCompile(`(?i)[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}`).MatchString(p) {
+		return "UUID/GUID (hex groups with dashes).", "123e4567-e89b-12d3-a456-426614174000"
+	}
 
-    // Hex lengths (crypto digests)
-    if regexp.MustCompile(`(?i)\[?[a-f0-9A-F]\]?\{32\}|(?i)[a-f0-9]{32}`).MatchString(p) {
-        return "32 hex chars (often an MD5 digest).", "e2fc714c4727ee9395f324cd2e7f331f"
-    }
-    if regexp.MustCompile(`(?i)[a-f0-9]{40}`).MatchString(p) {
-        return "40 hex chars (often a SHA-1 digest).", "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-    }
-    if regexp.MustCompile(`(?i)[a-f0-9]{64}`).MatchString(p) {
-        return "64 hex chars (often a SHA-256 digest).", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    }
+	// Hex lengths (crypto digests)
+	if regexp.MustCompile(`(?i)\[?[a-f0-9A-F]\]?\{32\}|(?i)[a-f0-9]{32}`).MatchString(p) {
+		return "32 hex chars (often an MD5 digest).", "e2fc714c4727ee9395f324cd2e7f331f"
+	}
+	if regexp.MustCompile(`(?i)[a-f0-9]{40}`).MatchString(p) {
+		return "40 hex chars (often a SHA-1 digest).", "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+	}
+	if regexp.MustCompile(`(?i)[a-f0-9]{64}`).MatchString(p) {
+		return "64 hex chars (often a SHA-256 digest).", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	}
 
-    // SSN-like numeric groups (###-##-####)
-    if strings.Contains(p, "[0-9]{3}-[0-9]{2}-[0-9]{4}") || strings.Contains(lp, `\d{3}-\d{2}-\d{4}`) {
-        return "U.S. SSN-like pattern (three-two-four digits).", "123-45-6789"
-    }
+	// SSN-like numeric groups (###-##-####)
+	if strings.Contains(p, "[0-9]{3}-[0-9]{2}-[0-9]{4}") || strings.Contains(lp, `\d{3}-\d{2}-\d{4}`) {
+		return "U.S. SSN-like pattern (three-two-four digits).", "123-45-6789"
+	}
 
-    // Bearer/JWT-like tokens
-    if strings.Contains(lp, "bearer") || regexp.MustCompile(`(?i)[a-z0-9_\-]{10,}\.([a-z0-9_\-]{10,}\.)?[a-z0-9_\-]{10,}`).MatchString(lp) {
-        return "Bearer/JWT-like token (dot-separated base64url).", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.sig"
-    }
+	// Bearer/JWT-like tokens
+	if strings.Contains(lp, "bearer") || regexp.MustCompile(`(?i)[a-z0-9_\-]{10,}\.([a-z0-9_\-]{10,}\.)?[a-z0-9_\-]{10,}`).MatchString(lp) {
+		return "Bearer/JWT-like token (dot-separated base64url).", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyIn0.sig"
+	}
 
-    // Generic guidance for digit groups like [0-9]{n}
-    if regexp.MustCompile(`(\\d|\[0-9\])\{\d+\}`).MatchString(p) {
-        // Try to produce a simple numeric example by replacing {n} with n digits
-        ex := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).ReplaceAllStringFunc(p, func(m string) string {
-            sub := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).FindStringSubmatch(m)
-            if len(sub) == 3 {
-                nStr := sub[2]
-                n := 0
-                fmt.Sscanf(nStr, "%d", &n)
-                if n <= 0 {
-                    n = 3
-                }
-                // return n digits cycling 1234567890
-                digits := "1234567890"
-                var b strings.Builder
-                for i := 0; i < n; i++ {
-                    b.WriteByte(digits[i%len(digits)])
-                }
-                return b.String()
-            }
-            return "000"
-        })
-        // Clean leftover escapes and character classes
-        ex = strings.ReplaceAll(ex, "[0-9]", "0")
-        ex = strings.ReplaceAll(ex, "\\d", "0")
-        ex = strings.ReplaceAll(ex, "\\.", ".")
-        ex = strings.ReplaceAll(ex, "\\-", "-")
-        ex = strings.ReplaceAll(ex, "^", "")
-        ex = strings.ReplaceAll(ex, "$", "")
-        ex = strings.ReplaceAll(ex, "\\s", " ")
-        ex = strings.ReplaceAll(ex, "\\_", "_")
-        ex = regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(ex, "a")
-        ex = strings.TrimSpace(ex)
-        if ex != "" && len(ex) <= 80 {
-            return "Digits with fixed group lengths.", ex
-        }
-    }
+	// Generic guidance for digit groups like [0-9]{n}
+	if regexp.MustCompile(`(\\d|\[0-9\])\{\d+\}`).MatchString(p) {
+		// Try to produce a simple numeric example by replacing {n} with n digits
+		ex := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).ReplaceAllStringFunc(p, func(m string) string {
+			sub := regexp.MustCompile(`(\\d|\[0-9\])\{(\d+)\}`).FindStringSubmatch(m)
+			if len(sub) == 3 {
+				nStr := sub[2]
+				n := 0
+				fmt.Sscanf(nStr, "%d", &n)
+				if n <= 0 {
+					n = 3
+				}
+				// return n digits cycling 1234567890
+				digits := "1234567890"
+				var b strings.Builder
+				for i := 0; i < n; i++ {
+					b.WriteByte(digits[i%len(digits)])
+				}
+				return b.String()
+			}
+			return "000"
+		})
+		// Clean leftover escapes and character classes
+		ex = strings.ReplaceAll(ex, "[0-9]", "0")
+		ex = strings.ReplaceAll(ex, "\\d", "0")
+		ex = strings.ReplaceAll(ex, "\\.", ".")
+		ex = strings.ReplaceAll(ex, "\\-", "-")
+		ex = strings.ReplaceAll(ex, "^", "")
+		ex = strings.ReplaceAll(ex, "$", "")
+		ex = strings.ReplaceAll(ex, "\\s", " ")
+		ex = strings.ReplaceAll(ex, "\\_", "_")
+		ex = regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(ex, "a")
+		ex = strings.TrimSpace(ex)
+		if ex != "" && len(ex) <= 80 {
+			return "Digits with fixed group lengths.", ex
+		}
+	}
 
-    // Fallback generic message
-    return "Regular expression; see pattern for details.", ""
+	// Fallback generic message
+	return "Regular expression; see pattern for details.", ""
 }
 
 // titleASCII makes "open" -> "Open" (ASCII only, suitable for simple status labels)
@@ -1445,6 +1588,205 @@ func scanVaultOccurrences(occDir string) (map[string]int, map[string]map[string]
 		domainStatus[scan][dom][st]++
 	}
 	return scanTotals, domainTotals, domainStatus
+}
+
+func summarizeStatusCounts(sc map[string]int) (string, string) {
+	if len(sc) == 0 {
+		return "open", "open:0"
+	}
+	known := []string{"open", "triaged", "accepted", "fixed", "fp"}
+	seen := map[string]bool{}
+	var summary []string
+	primary := ""
+	primaryCount := -1
+
+	appendStatus := func(name string) {
+		count := sc[name]
+		summary = append(summary, fmt.Sprintf("%s:%d", name, count))
+		if count > primaryCount {
+			primary = name
+			primaryCount = count
+		}
+	}
+
+	for _, name := range known {
+		if _, ok := sc[name]; ok {
+			appendStatus(name)
+			seen[name] = true
+		}
+	}
+	var extras []string
+	for name := range sc {
+		if !seen[name] {
+			extras = append(extras, name)
+		}
+	}
+	sort.Strings(extras)
+	for _, name := range extras {
+		appendStatus(name)
+	}
+	if primary == "" {
+		primary = "open"
+	}
+	return primary, strings.Join(summary, ", ")
+}
+
+func collectAnalystSet(occs []entities.Occurrence, fn func(*entities.Analyst) []string) []string {
+	set := map[string]struct{}{}
+	for _, o := range occs {
+		if o.Analyst == nil {
+			continue
+		}
+		vals := fn(o.Analyst)
+		for _, v := range vals {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			set[v] = struct{}{}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for v := range set {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func latestAnalystUpdate(occs []entities.Occurrence) string {
+	var latest time.Time
+	var latestRaw string
+	for _, o := range occs {
+		if o.Analyst == nil {
+			continue
+		}
+		ts := strings.TrimSpace(o.Analyst.UpdatedAt)
+		if ts == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			if t.After(latest) {
+				latest = t
+				latestRaw = ts
+			}
+		} else if latestRaw == "" || strings.Compare(ts, latestRaw) > 0 {
+			latestRaw = ts
+		}
+	}
+	return latestRaw
+}
+
+func collectAnalystNotes(occs []entities.Occurrence, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	var notes []string
+	seen := map[string]struct{}{}
+	for _, o := range occs {
+		if o.Analyst == nil {
+			continue
+		}
+		note := strings.TrimSpace(o.Analyst.Notes)
+		if note == "" {
+			continue
+		}
+		lines := strings.Split(note, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if _, ok := seen[line]; ok {
+				continue
+			}
+			notes = append(notes, line)
+			seen[line] = struct{}{}
+			break
+		}
+		if len(notes) >= limit {
+			break
+		}
+	}
+	return notes
+}
+
+func formatListOrPlaceholder(items []string, placeholder string) string {
+	if len(items) == 0 {
+		return placeholder
+	}
+	return strings.Join(items, ", ")
+}
+
+func fallbackString(value, placeholder string) string {
+	if strings.TrimSpace(value) == "" {
+		return placeholder
+	}
+	return value
+}
+
+func writeHeadersWithLimit(b *strings.Builder, headers []entities.Header, limit int) {
+	filtered := make([]entities.Header, 0, len(headers))
+	for _, h := range headers {
+		name := strings.TrimSpace(h.Name)
+		value := strings.TrimSpace(h.Value)
+		if strings.EqualFold(name, "_line") {
+			continue
+		}
+		if name == "" && value == "" {
+			continue
+		}
+		filtered = append(filtered, entities.Header{Name: name, Value: value})
+	}
+	if len(filtered) == 0 {
+		b.WriteString("_No headers captured._\n\n")
+		return
+	}
+	stop := len(filtered)
+	if limit > 0 && limit < stop {
+		stop = limit
+	}
+	for i := 0; i < stop; i++ {
+		fmt.Fprintf(b, "- %s: %s\n", filtered[i].Name, filtered[i].Value)
+	}
+	if stop < len(filtered) {
+		fmt.Fprintf(b, "- _%d additional headers not shown_\n", len(filtered)-stop)
+	}
+	b.WriteString("\n")
+}
+
+func writeBodySnippet(b *strings.Builder, snippet string, totalBytes int, displayLimit int, codeLabel string) {
+	snippet = strings.TrimRight(snippet, "\n")
+	if strings.TrimSpace(snippet) == "" {
+		if totalBytes > 0 {
+			fmt.Fprintf(b, "_Body was %d bytes (omitted)_\n\n", totalBytes)
+		} else {
+			b.WriteString("_No body captured._\n\n")
+		}
+		return
+	}
+	display := snippet
+	trimmed := false
+	if displayLimit > 0 {
+		runes := []rune(display)
+		if len(runes) > displayLimit {
+			display = string(runes[:displayLimit])
+			trimmed = true
+		}
+	}
+	label := codeLabel
+	if strings.TrimSpace(label) == "" {
+		label = "http"
+	}
+	fmt.Fprintf(b, "```%s\n%s\n```\n\n", label, display)
+	if totalBytes > len(snippet) {
+		fmt.Fprintf(b, "_Body truncated to %d bytes (of %d)_\n\n", len(snippet), totalBytes)
+	} else if trimmed {
+		fmt.Fprintf(b, "_Body truncated for display_\n\n")
+	}
 }
 
 // extractFrontmatter parses a minimal YAML frontmatter into a flat key/value map.

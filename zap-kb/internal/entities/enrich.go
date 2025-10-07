@@ -2,6 +2,7 @@ package entities
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -103,6 +104,94 @@ func EnrichAllTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFile
 		}
 	}
 	return nil
+}
+
+// EnrichTrafficSelective enriches up to maxPerFinding observations per issue (Finding),
+// only for observations at or above minRisk (info|low|medium|high). If totalMax > 0,
+// the enrichment stops after that many observations overall. Best-effort on errors.
+func EnrichTrafficSelective(ctx context.Context, c *zapclient.Client, ef *EntitiesFile, maxPerFinding int, minRisk string, totalMax int, maxBody int) error {
+	if c == nil || ef == nil {
+		return nil
+	}
+	if maxPerFinding <= 0 {
+		maxPerFinding = 1
+	}
+	floor := severityCode(minRisk)
+
+	// Track per-finding counts and global cap
+	per := map[string]int{}
+	done := 0
+
+	idxs := make([]int, len(ef.Occurrences))
+	for i := range ef.Occurrences {
+		idxs[i] = i
+	}
+	sort.SliceStable(idxs, func(i, j int) bool {
+		return severityCode(ef.Occurrences[idxs[i]].Risk) > severityCode(ef.Occurrences[idxs[j]].Risk)
+	})
+
+	for _, i := range idxs {
+		if totalMax > 0 && done >= totalMax {
+			break
+		}
+		o := ef.Occurrences[i]
+		// Filter by risk floor
+		if severityCode(o.Risk) < floor {
+			continue
+		}
+
+		if per[o.FindingID] >= maxPerFinding {
+			continue
+		}
+		if strings.TrimSpace(o.SourceID) == "" {
+			continue
+		}
+		msg, err := c.GetMessage(ctx, o.SourceID)
+		if err != nil {
+			continue
+		}
+		// Request
+		reqHeaders := parseRawHeaders(msg.RequestHeader)
+		reqBody := msg.RequestBody
+		ef.Occurrences[i].Request = &HTTPRequest{
+			Headers:        reqHeaders,
+			BodyBytes:      len(reqBody),
+			BodySnippet:    truncateUTF8(reqBody, maxBody),
+			RawHeader:      msg.RequestHeader,
+			RawHeaderBytes: len(msg.RequestHeader),
+		}
+		// Response
+		respHeaders, status := parseRespHeaders(msg.ResponseHeader)
+		respBody := msg.ResponseBody
+		ef.Occurrences[i].Response = &HTTPResponse{
+			StatusCode:     status,
+			Headers:        respHeaders,
+			BodyBytes:      len(respBody),
+			BodySnippet:    truncateUTF8(respBody, maxBody),
+			RawHeader:      msg.ResponseHeader,
+			RawHeaderBytes: len(msg.ResponseHeader),
+		}
+		per[o.FindingID]++
+		done++
+	}
+	return nil
+}
+
+// severityCode maps common ZAP risk strings to ascending levels.
+// Unknown values default to lowest (info).
+func severityCode(r string) int {
+	switch strings.ToLower(strings.TrimSpace(r)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	case "info", "informational", "information":
+		return 0
+	default:
+		return 0
+	}
 }
 
 func parseRawHeaders(raw string) []Header {
