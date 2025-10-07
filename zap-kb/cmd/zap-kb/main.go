@@ -12,43 +12,51 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
-    "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 func main() {
 	var (
-		zapURL         string
-		apiKey         string
-		baseURL        string
-		count          int
-		out            string
-		merge          bool
-		format         string
-		source         string
-		vault          string
-		infile         string
-		entitiesIn     string
-		plugins        string
-		allPlugins     bool
-		genAt          string
-		includeTraffic bool
-		trafficMax     int
-		scanLabel      string
-		siteLabel      string
-		trafficScope   string
-		zapBase        string
-		includeDetect  bool
-		detectDetails  string
-        initMode       bool
-        runOut         string
-        runIn          string
-        zipOut         string
-        redactOpts     string
-    )
+		zapURL             string
+		apiKey             string
+		baseURL            string
+		count              int
+		out                string
+		merge              bool
+		format             string
+		source             string
+		vault              string
+		infile             string
+		entitiesIn         string
+		plugins            string
+		allPlugins         bool
+		genAt              string
+		includeTraffic     bool
+		trafficMax         int
+		trafficMaxPerIssue int
+		trafficTotalMax    int
+		scanLabel          string
+		siteLabel          string
+		trafficScope       string
+		zapBase            string
+		trafficMinRisk     string
+		includeDetect      bool
+		detectDetails      string
+		initMode           bool
+		runOut             string
+		runIn              string
+		zipOut             string
+		redactOpts         string
+		wizard             bool
+		pruneScanLabel     string
+		pruneSiteLabel     string
+		pruneVault         string
+		pruneDryRun        bool
+	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (if required)")
 	flag.StringVar(&baseURL, "baseurl", "", "Filter alerts by baseurl (optional)")
@@ -66,17 +74,106 @@ func main() {
 	flag.BoolVar(&includeTraffic, "include-traffic", false, "Enrich with first-occurrence HTTP request/response snippets")
 	flag.IntVar(&trafficMax, "traffic-max-bytes", 2048, "Max bytes to capture for request/response snippets")
 	flag.StringVar(&trafficScope, "traffic-scope", "first", "Traffic enrichment scope: first|all")
+	flag.IntVar(&trafficMaxPerIssue, "traffic-max-per-issue", 1, "Max observations per issue to enrich with traffic (applies to first scope)")
+	flag.IntVar(&trafficTotalMax, "traffic-total-max", 0, "Global cap on number of observations to enrich with traffic (0 = unlimited)")
+	flag.StringVar(&trafficMinRisk, "traffic-min-risk", "info", "Minimum risk to enrich traffic: info|low|medium|high")
 	flag.StringVar(&scanLabel, "scan-label", "", "Optional label for this scan/session (appears in INDEX and frontmatter)")
 	flag.StringVar(&siteLabel, "site-label", "", "Optional site/domain label override when domains are redacted")
 	flag.StringVar(&zapBase, "zap-base-url", "", "Optional ZAP base URL to link back to messages in Obsidian")
 	flag.BoolVar(&includeDetect, "include-detection", false, "Enrich with detection logic links from ZAP docs/GitHub")
 	flag.StringVar(&detectDetails, "detection-details", "links", "Detection enrichment detail: links|summary")
-    flag.BoolVar(&initMode, "init", false, "Init KB without run data: seed/update definitions only (no alert fetch)")
-    flag.StringVar(&runOut, "run-out", "", "Write a pipeline-friendly run artifact JSON (entities+meta[+alerts])")
-    flag.StringVar(&runIn, "run-in", "", "Read a run artifact JSON (or bare entities JSON) and use it as -entities-in; also picks up scan/site labels if present")
-    flag.StringVar(&zipOut, "zip-out", "", "Zip outputs to this path (includes run-out, entities out, and obsidian dir if generated)")
-    flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body")
-    flag.Parse()
+	flag.BoolVar(&initMode, "init", false, "Init KB without run data: seed/update definitions only (no alert fetch)")
+	flag.StringVar(&runOut, "run-out", "", "Write a pipeline-friendly run artifact JSON (entities+meta[+alerts])")
+	flag.StringVar(&runIn, "run-in", "", "Read a run artifact JSON (or bare entities JSON) and use it as -entities-in; also picks up scan/site labels if present")
+	flag.StringVar(&zipOut, "zip-out", "", "Zip outputs to this path (includes run-out, entities out, and obsidian dir if generated)")
+	flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body")
+	flag.BoolVar(&wizard, "wizard", true, "Launch an interactive setup wizard when no flags are provided (disable with -wizard=false)")
+	// Prune options (vault-only maintenance): when -prune-scan is set, performs pruning and exits
+	flag.StringVar(&pruneScanLabel, "prune-scan", "", "Prune occurrence notes from the Obsidian vault with this scan label; no fetch or export performed")
+	flag.StringVar(&pruneSiteLabel, "prune-site", "", "Optional site/domain label filter when pruning (matches frontmatter 'domain')")
+	flag.StringVar(&pruneVault, "prune-vault", "", "Vault directory to operate on when pruning (defaults to -obsidian-dir)")
+	flag.BoolVar(&pruneDryRun, "prune-dry-run", false, "List matching files without deleting")
+	flag.Parse()
+
+	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
+	if strings.TrimSpace(pruneScanLabel) != "" {
+		vdir := strings.TrimSpace(pruneVault)
+		if vdir == "" {
+			vdir = vault
+			if strings.TrimSpace(vdir) == "" {
+				vdir = "docs/obsidian"
+			}
+		}
+		// perform prune
+		del, listed, perr := obsidian.PruneByScan(vdir, pruneScanLabel, pruneSiteLabel, pruneDryRun)
+		if perr != nil {
+			log.Fatalf("prune: %v", perr)
+		}
+		if pruneDryRun {
+			fmt.Printf("Prune dry-run: %d files would be removed.\n", del)
+		} else {
+			fmt.Printf("Pruned %d occurrence files.\n", del)
+		}
+		// Always show a small preview of affected files (up to 10)
+		maxShow := 10
+		if len(listed) < maxShow {
+			maxShow = len(listed)
+		}
+		for i := 0; i < maxShow; i++ {
+			fmt.Printf("- %s\n", listed[i])
+		}
+		// Rebuild INDEX and DASHBOARD w/o touching content by invoking WriteVault with empty entities
+		var ef entities.EntitiesFile
+		ef.SchemaVersion = "v1"
+		ef.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+		ef.SourceTool = source
+		if err := obsidian.WriteVault(vdir, ef, obsidian.Options{ScanLabel: "", SiteLabel: "", ZapBaseURL: strings.TrimSpace(zapBase)}); err != nil {
+			log.Fatalf("refresh index: %v", err)
+		}
+		fmt.Println("Refreshed INDEX.md and DASHBOARD.md")
+		return
+	}
+
+	if shouldLaunchWizard(wizard) {
+		wiz := wizardInputs{
+			ZapURL:          &zapURL,
+			APIKey:          &apiKey,
+			BaseURL:         &baseURL,
+			Count:           &count,
+			Out:             &out,
+			Vault:           &vault,
+			Format:          &format,
+			InFile:          &infile,
+			EntitiesIn:      &entitiesIn,
+			RunIn:           &runIn,
+			RunOut:          &runOut,
+			ZipOut:          &zipOut,
+			IncludeTraffic:  &includeTraffic,
+			TrafficScope:    &trafficScope,
+			TrafficMaxBytes: &trafficMax,
+			TrafficMaxPer:   &trafficMaxPerIssue,
+			TrafficTotalMax: &trafficTotalMax,
+			TrafficMinRisk:  &trafficMinRisk,
+			IncludeDetect:   &includeDetect,
+			DetectDetails:   &detectDetails,
+			ScanLabel:       &scanLabel,
+			SiteLabel:       &siteLabel,
+			ZapBaseURL:      &zapBase,
+			SourceTool:      &source,
+		}
+		if err := runWizard(wiz); err != nil {
+			log.Fatalf("wizard: %v", err)
+		}
+	}
+
+	if includeTraffic {
+		if strings.TrimSpace(trafficMinRisk) == "" || strings.EqualFold(trafficMinRisk, "info") {
+			trafficMinRisk = "medium"
+		}
+		if trafficTotalMax <= 0 {
+			trafficTotalMax = 50
+		}
+	}
 
 	var (
 		client *zapclient.Client
@@ -92,6 +189,9 @@ func main() {
 			log.Fatalf("read -run-in: %v", rerr)
 		}
 		entIn = a.Entities
+		if len(a.Alerts) > 0 {
+			alerts = append(alerts, a.Alerts...)
+		}
 		// adopt labels if not provided via flags
 		if strings.TrimSpace(scanLabel) == "" && strings.TrimSpace(a.Meta.ScanLabel) != "" {
 			scanLabel = a.Meta.ScanLabel
@@ -104,12 +204,12 @@ func main() {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer fetchCancel()
 
 	// Decide if we should fetch alerts from ZAP API
 	// Fetch only when not explicitly in init/enrich-only modes and no explicit entities/plugin list is provided.
-	fetchAllowed := strings.TrimSpace(infile) == "" && !initMode && strings.TrimSpace(entitiesIn) == "" && !allPlugins && strings.TrimSpace(plugins) == ""
+	fetchAllowed := strings.TrimSpace(infile) == "" && strings.TrimSpace(runIn) == "" && !initMode && strings.TrimSpace(entitiesIn) == "" && !allPlugins && strings.TrimSpace(plugins) == ""
 
 	if strings.TrimSpace(infile) != "" {
 		// Read alerts from file and skip API calls
@@ -130,11 +230,11 @@ func main() {
 		}
 		// Default = all alerts; -count N restricts to first N
 		if count > 0 {
-			alerts, err = client.GetAlerts(ctx, zapclient.AlertsFilter{
+			alerts, err = client.GetAlerts(fetchCtx, zapclient.AlertsFilter{
 				BaseURL: baseURL, Count: count, Start: 0, Recurse: true,
 			})
 		} else {
-			alerts, err = client.GetAllAlerts(ctx, zapclient.AlertsFilter{
+			alerts, err = client.GetAllAlerts(fetchCtx, zapclient.AlertsFilter{
 				BaseURL: baseURL, Recurse: true,
 			})
 		}
@@ -206,7 +306,7 @@ func main() {
 			var fields []string
 			ptrim := strings.TrimSpace(plugins)
 			if allPlugins || strings.EqualFold(ptrim, "all") || (initMode && ptrim == "") {
-				fields = zapmeta.ListAllPluginIDs(ctx)
+				fields = zapmeta.ListAllPluginIDs(fetchCtx)
 			} else {
 				fields = strings.FieldsFunc(plugins, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 			}
@@ -249,25 +349,40 @@ func main() {
 		if strings.TrimSpace(ent.GeneratedAt) == "" {
 			ent.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		}
+		var enrichCtx context.Context
+		var enrichCancel context.CancelFunc
+		if includeTraffic || includeDetect {
+			enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+			defer enrichCancel()
+		}
 		if includeTraffic {
+			if enrichCtx == nil {
+				enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+				defer enrichCancel()
+			}
 			if trafficScope == "all" {
-				_ = entities.EnrichAllTraffic(ctx, client, &ent, trafficMax)
+				_ = entities.EnrichAllTraffic(enrichCtx, client, &ent, trafficMax)
 			} else {
-				_ = entities.EnrichFirstTraffic(ctx, client, &ent, trafficMax)
+				// Selective enrichment: honor per-issue, min risk, and global cap
+				_ = entities.EnrichTrafficSelective(enrichCtx, client, &ent, trafficMaxPerIssue, trafficMinRisk, trafficTotalMax, trafficMax)
 			}
 		}
-        if includeDetect {
-            entities.EnrichDetections(ctx, &ent)
-            if strings.ToLower(strings.TrimSpace(detectDetails)) == "summary" {
-                entities.EnrichDetectionSummaries(ctx, &ent)
-            }
-        }
+		if includeDetect {
+			if enrichCtx == nil {
+				enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+				defer enrichCancel()
+			}
+			entities.EnrichDetections(enrichCtx, &ent)
+			if strings.ToLower(strings.TrimSpace(detectDetails)) == "summary" {
+				entities.EnrichDetectionSummaries(enrichCtx, &ent)
+			}
+		}
 
-        // Optional redaction pass
-        if strings.TrimSpace(redactOpts) != "" {
-            ro := entities.ParseRedactOptionList(redactOpts)
-            entities.RedactEntities(&ent, ro)
-        }
+		// Optional redaction pass
+		if strings.TrimSpace(redactOpts) != "" {
+			ro := entities.ParseRedactOptionList(redactOpts)
+			entities.RedactEntities(&ent, ro)
+		}
 
 		// Print a concise init/enrich summary when not fetching alerts
 		if fetchAllowed == false { // enrich-only / init flows
@@ -315,35 +430,47 @@ func main() {
 	}
 
 	// Optionally write a run artifact (entities + meta [+alerts]) for pipelines
-    if strings.TrimSpace(runOut) != "" {
-        meta := runartifact.Meta{
-            SourceTool:       ent.SourceTool,
-            GeneratedAt:      ent.GeneratedAt,
-            ScanLabel:        scanLabel,
-            SiteLabel:        siteLabel,
-            ZapBaseURL:       zapBase,
-            BaseURL:          baseURL,
-            DetectionDetails: detectDetails,
-            IncludeTraffic:   includeTraffic,
-        }
-        art := runartifact.Artifact{Schema: "zap-kb/run/v1", Meta: meta, Entities: ent, Alerts: alerts}
-        if err := runartifact.Write(runOut, art); err != nil {
-            log.Fatalf("write -run-out: %v", err)
-        }
-        fmt.Printf("Wrote run artifact to %s\n", runOut)
-    }
+	if strings.TrimSpace(runOut) != "" {
+		meta := runartifact.Meta{
+			SourceTool:       ent.SourceTool,
+			GeneratedAt:      ent.GeneratedAt,
+			ScanLabel:        scanLabel,
+			SiteLabel:        siteLabel,
+			ZapBaseURL:       zapBase,
+			BaseURL:          baseURL,
+			DetectionDetails: detectDetails,
+			IncludeTraffic:   includeTraffic,
+		}
+		art := runartifact.Artifact{Schema: "zap-kb/run/v1", Meta: meta, Entities: ent, Alerts: alerts}
+		if err := runartifact.Write(runOut, art); err != nil {
+			log.Fatalf("write -run-out: %v", err)
+		}
+		fmt.Printf("Wrote run artifact to %s\n", runOut)
+	}
 
-    // Optionally zip outputs for easy artifacting
-    if strings.TrimSpace(zipOut) != "" {
-        var ins []string
-        if strings.TrimSpace(runOut) != "" { ins = append(ins, runOut) }
-        if strings.TrimSpace(out) != "" { ins = append(ins, out) }
-        if format == "both" { ins = append(ins, out+".entities.json") }
-        if format == "obsidian" && strings.TrimSpace(vault) != "" { ins = append(ins, vault) }
-        if len(ins) == 0 && strings.TrimSpace(out) != "" { ins = append(ins, out) }
-        if err := ziputil.Zip(zipOut, ins...); err != nil { log.Fatalf("zip: %v", err) }
-        fmt.Printf("Zipped outputs to %s\n", zipOut)
-    }
+	// Optionally zip outputs for easy artifacting
+	if strings.TrimSpace(zipOut) != "" {
+		var ins []string
+		if strings.TrimSpace(runOut) != "" {
+			ins = append(ins, runOut)
+		}
+		if strings.TrimSpace(out) != "" {
+			ins = append(ins, out)
+		}
+		if format == "both" {
+			ins = append(ins, out+".entities.json")
+		}
+		if format == "obsidian" && strings.TrimSpace(vault) != "" {
+			ins = append(ins, vault)
+		}
+		if len(ins) == 0 && strings.TrimSpace(out) != "" {
+			ins = append(ins, out)
+		}
+		if err := ziputil.Zip(zipOut, ins...); err != nil {
+			log.Fatalf("zip: %v", err)
+		}
+		fmt.Printf("Zipped outputs to %s\n", zipOut)
+	}
 
 	// Exit code 2 only when no content produced at all (no alerts and no entities).
 	if (format == "flat" || format == "both") && len(alerts) == 0 && len(ent.Definitions) == 0 {

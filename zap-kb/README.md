@@ -33,12 +33,17 @@ Key flags:
 - `-detection-details`: `links|summary` (adds brief detection summary when `summary`).
 - `-include-traffic`: Attach first/all HTTP request/response snippets.
 - `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size.
+- `-traffic-max-per-issue`: When using `-traffic-scope=first`, enrich up to N observations per issue (default 1).
+- `-traffic-min-risk`: Only enrich traffic for observations at or above this risk (`info|low|medium|high`; default `info`).
+- `-traffic-total-max`: Global cap on the number of observations to enrich with traffic (default 0 = unlimited).
 - `-obsidian-dir`: Output directory when `-format=obsidian` (default `docs/obsidian`).
 - `-generated-at`: Override timestamp for stable diffs.
+- `-wizard`: Launch the interactive quickstart wizard (enabled by default when no other flags are set and the terminal is interactive).
 - `-run-out`: Write a pipeline-friendly run artifact JSON (entities + meta [+alerts]).
 - `-run-in`: Read a run artifact (or bare entities JSON) and reuse its entities and labels.
 - `-zip-out`: Zip outputs into one artifact (includes `-run-out`, entity/alerts JSON, and Obsidian dir if generated).
 - `-redact`: Redact sensitive details in outputs. Comma/space list supported: `domain,query,cookies,auth,headers,body`.
+ - Prune-only (vault maintenance): `-prune-scan <label>` deletes occurrence notes in the Obsidian vault matching a `scan.label`, optionally narrowed by `-prune-site <domain label>`. Use `-prune-vault` to target a specific vault; add `-prune-dry-run` to preview.
 
 Examples:
 - Initialize all known plugin definitions without fetching alerts:
@@ -55,6 +60,7 @@ PowerShell helper `scripts/kb.ps1` wraps common flows:
 - `-Task init` seeds entities (optionally with `-AllPlugins` or `-Plugins`).
 - `-Task ingest` fetches alerts from ZAP and merges to entities.
 - `-Task publish` writes the Obsidian vault.
+- `-Task prune` removes observation notes for a given scan label from the Obsidian vault (`-PruneScan`, optional `-PruneSite`).
 - `-Task all` runs init → ingest → publish.
 
 Environment variables used by the script:
@@ -69,6 +75,9 @@ See `docs/schema/entities-v1.md` for the entities schema and how definitions, fi
 - `docs/data/*.json` and `alerts.json` are treated as generated outputs and are ignored by Git by default.
 - When publishing to GitHub, consider updating the `module` path in `go.mod` after the repository is created (e.g., `module github.com/<you>/devsecopskb/zap-kb`).
 
+### Dashboard
+Publishing (or pruning) also generates `DASHBOARD.md` in the vault with vault‑wide summaries (by scan, severity, domains, and top rules), complementing `INDEX.md` which focuses on the current run plus a brief historical view.
+
 ## CI Integration
 There are two ways to populate the KB in a pipeline after your ZAP stage:
 
@@ -82,6 +91,22 @@ There are two ways to populate the KB in a pipeline after your ZAP stage:
   - Example: `go run ./cmd/zap-kb -in ./zap-alerts.json -format entities -out docs/data/entities.json`
   - Then publish Obsidian as above using `-entities-in`.
 
+### Python helper (CI-friendly)
+
+If you prefer to orchestrate the KB import from Python, run `python zap-kb/scripts/zap_run_artifact.py`. The helper wraps the Go CLI, strips raw alerts by default, and exposes flags to tune traffic capture for CI pipelines.
+
+Example (offline alerts JSON):
+
+```bash
+python zap-kb/scripts/zap_run_artifact.py \
+  --alerts-json out/alerts.json \
+  --artifact out/run.json \
+  --scan-label "$RUN_ID@$BRANCH" \
+  --zip-archive out/kb-run.zip \
+  --include-traffic --traffic-scope first --traffic-max-bytes 4096
+```
+
+Use `--keep-alerts` if raw alerts are needed for auditing, and `--entities-out` to persist the intermediate entities JSON.
 ### Run Artifact (recommended for portability)
 To keep pipeline runs self-contained and reproducible, export a single artifact that
 captures the normalized entities and run metadata:
@@ -127,3 +152,4 @@ GitHub Actions workflow `zap-kb-run.yml` is included for manual runs with secret
 - Examples: CC0 (see `docs/examples/LICENSE`).
 
 See repository `NOTICE` for attribution and trademark notes. Contributions require DCO sign‑off (see `CONTRIBUTING.md`).
+

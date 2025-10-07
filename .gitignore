@@ -10,3 +10,7 @@ Thumbs.db
 
 # Local archives of old folders
 archive/
+
+# Generated/example content
+examples/
+out/
