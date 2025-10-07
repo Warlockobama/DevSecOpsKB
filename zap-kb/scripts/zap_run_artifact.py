@@ -135,6 +135,51 @@ def _url_base_or_parent(raw: str) -> Tuple[str, str]:
     return base, ""
 
 
+def _ensure_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+
+def _path_matches(base_path: str, candidate_path: str) -> bool:
+    base_path = base_path or "/"
+    candidate_path = candidate_path or "/"
+    if not base_path.endswith("/"):
+        trimmed = base_path.rstrip("/")
+        if candidate_path == trimmed:
+            return True
+        return candidate_path.startswith(f"{trimmed}/")
+    return candidate_path.startswith(base_path)
+
+
+def _url_in_scope(url: str, scope: str) -> bool:
+    if not scope:
+        return True
+    try:
+        target = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    try:
+        base = urllib.parse.urlparse(scope)
+    except Exception:
+        return False
+
+    if base.scheme and (target.scheme or "").lower() != base.scheme.lower():
+        return False
+
+    if base.netloc:
+        if (target.netloc or "").lower() != base.netloc.lower():
+            return False
+    elif base.scheme:
+        pass
+    else:
+        return _path_matches(base.path, target.path)
+
+    return _path_matches(base.path or "/", target.path or "/")
+
+
 def _make_finding_name(alert: Dict[str, Any]) -> str:
     rule = _first_non_empty(alert.get("alert"), alert.get("name"), alert.get("pluginId"))
     acronym = _rule_acronym(rule)
@@ -492,6 +537,7 @@ def enrich_traffic(
     if scope == "all":
         indices = range(len(entities["occurrences"]))
     else:
+        # Prioritise higher-risk findings when enforcing enrichment limits.
         indices = sorted(range(len(entities["occurrences"])), key=lambda i: -_severity_code(entities["occurrences"][i].get("risk", "")))
 
     per_issue: Dict[str, int] = {}
@@ -530,10 +576,10 @@ def enrich_traffic(
                 break
         if not message:
             continue
-        request_header = message.get("requestHeader", "")
-        request_body = message.get("requestBody", "")
-        response_header = message.get("responseHeader", "")
-        response_body = message.get("responseBody", "")
+        request_header = _ensure_text(message.get("requestHeader"))
+        request_body = _ensure_text(message.get("requestBody"))
+        response_header = _ensure_text(message.get("responseHeader"))
+        response_body = _ensure_text(message.get("responseBody"))
 
         req_headers = _parse_raw_headers(request_header)
         resp_headers, status = _parse_response_headers(response_header)
@@ -577,7 +623,7 @@ def filter_alerts(alerts: Iterable[Dict[str, Any]], base_url: Optional[str]) -> 
     if not base_url:
         return list(alerts)
     base_url = base_url.strip()
-    return [alert for alert in alerts if str(alert.get("url", "")).startswith(base_url)]
+    return [alert for alert in alerts if _url_in_scope(str(alert.get("url", "")), base_url)]
 
 
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
