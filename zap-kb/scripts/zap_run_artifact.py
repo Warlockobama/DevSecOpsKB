@@ -15,6 +15,7 @@ import datetime as _dt
 import hashlib
 import json
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +23,105 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+_AUTOMATION_SUCCESS_STATES = {"FINISHED", "COMPLETED", "DONE", "SUCCESS", "SUCCEEDED"}
+_AUTOMATION_FAILURE_STATES = {"FAILED", "ABORTED", "ERRORED", "ERROR", "STOPPED", "HALTED"}
+
+
+@dataclass
+class AutomationStatus:
+    status: str
+    progress: float
+    message: str
+    raw: Dict[str, Any]
+
+    def is_success(self) -> bool:
+        return self.status.upper() in _AUTOMATION_SUCCESS_STATES
+
+    def is_failure(self) -> bool:
+        return self.status.upper() in _AUTOMATION_FAILURE_STATES
+
+    def is_terminal(self) -> bool:
+        return self.is_success() or self.is_failure()
+
+
+def _compute_deadline(timeout_seconds: int) -> Optional[float]:
+    if timeout_seconds and timeout_seconds > 0:
+        return time.monotonic() + timeout_seconds
+    return None
+
+
+def _remaining_time(deadline: Optional[float]) -> Optional[float]:
+    if deadline is None:
+        return None
+    return deadline - time.monotonic()
+
+
+def _sleep_interval(poll_seconds: float, deadline: Optional[float]) -> float:
+    poll = max(0.5, poll_seconds)
+    if deadline is None:
+        return poll
+    remaining = _remaining_time(deadline)
+    if remaining is None:
+        return poll
+    if remaining <= 0:
+        return 0.0
+    return max(0.1, min(poll, remaining))
+
+
+def _parse_progress_value(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if text.endswith("%"):
+        text = text[:-1]
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _extract_automation_payload(data: Any) -> Dict[str, Any]:
+    if isinstance(data, dict):
+        current: Any = data
+    else:
+        return {}
+    visited: set[int] = set()
+    while isinstance(current, dict) and id(current) not in visited:
+        visited.add(id(current))
+        if any(
+            key in current
+            for key in (
+                "planStatus",
+                "status",
+                "state",
+                "planProgress",
+                "progress",
+                "completion",
+            )
+        ):
+            return current
+        next_dict: Optional[Dict[str, Any]] = None
+        for key in (
+            "automation",
+            "autoRunDetails",
+            "details",
+            "run",
+            "plan",
+            "message",
+            "status",
+            "result",
+        ):
+            candidate = current.get(key)
+            if isinstance(candidate, dict):
+                next_dict = candidate
+                break
+        if next_dict is None:
+            break
+        current = next_dict
+    return current if isinstance(current, dict) else {}
 
 # ----------------------------- Helpers -------------------------------------
 
@@ -365,6 +465,106 @@ class ZapClient:
         data = self._request("/JSON/core/view/message", {"id": history_id})
         return data.get("message", {})
 
+    def get_automation_status(self, plan_id: Optional[str] = None) -> AutomationStatus:
+        params: Dict[str, str] = {}
+        if plan_id:
+            params["planId"] = plan_id
+        try:
+            payload = self._request("/JSON/automation/view/status", params)
+        except RuntimeError as exc:
+            raise RuntimeError(f"ZAP automation status request failed: {exc}") from exc
+        details = _extract_automation_payload(payload)
+        status = str(
+            details.get("planStatus")
+            or details.get("status")
+            or details.get("state")
+            or ""
+        ).strip().upper()
+        message = str(
+            details.get("runMessage")
+            or details.get("message")
+            or details.get("planMessage")
+            or ""
+        ).strip()
+        progress = _parse_progress_value(details.get("planProgress") or details.get("progress") or details.get("completion"))
+        return AutomationStatus(status=status, progress=progress, message=message, raw=dict(details) if isinstance(details, dict) else {})
+
+    def wait_for_automation(
+        self,
+        *,
+        plan_id: Optional[str],
+        poll_seconds: float = 5.0,
+        deadline: Optional[float] = None,
+        verbose: bool = False,
+    ) -> AutomationStatus:
+        poll = max(0.5, poll_seconds)
+        last_status = ""
+        last_progress = None
+        last_message = ""
+        while True:
+            remaining = _remaining_time(deadline)
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("Timed out waiting for ZAP automation to finish")
+            try:
+                status = self.get_automation_status(plan_id=plan_id)
+            except RuntimeError as exc:
+                if verbose:
+                    print(f"[zap-kb] automation status unavailable ({exc}); retrying in {poll:.1f}s", file=sys.stderr)
+                sleep_for = _sleep_interval(poll, deadline)
+                if sleep_for <= 0:
+                    raise TimeoutError("Timed out waiting for ZAP automation to finish")
+                time.sleep(sleep_for)
+                continue
+
+            display_status = status.status or "UNKNOWN"
+            progress_changed = last_progress is None or abs(status.progress - (last_progress or 0.0)) >= 1.0
+            message_changed = bool(status.message) and status.message != last_message
+            if verbose and (
+                status.status != last_status or (status.status == "RUNNING" and progress_changed) or message_changed
+            ):
+                progress_text = f"{status.progress:.1f}%" if status.progress else "0.0%"
+                print(f"[zap-kb] automation status: {display_status} (progress {progress_text})", file=sys.stderr)
+                if status.message:
+                    print(f"[zap-kb] automation message: {status.message}", file=sys.stderr)
+
+            if status.is_failure():
+                raise RuntimeError(
+                    f"ZAP automation finished with status {display_status}: {status.message or 'no details'}"
+                )
+            if status.is_success():
+                return status
+
+            last_status = status.status
+            last_progress = status.progress
+            last_message = status.message
+
+            sleep_for = _sleep_interval(poll, deadline)
+            if sleep_for <= 0:
+                raise TimeoutError("Timed out waiting for ZAP automation to finish")
+            time.sleep(sleep_for)
+
+    def end_wait_job(
+        self,
+        *,
+        plan_id: Optional[str],
+        job_id: str,
+        message: Optional[str] = None,
+    ) -> None:
+        if not job_id:
+            raise ValueError("job_id is required to end a wait job")
+        params: Dict[str, str] = {"jobId": job_id}
+        if plan_id:
+            params["planId"] = plan_id
+        if message:
+            params["message"] = message
+        try:
+            payload = self._request("/JSON/automation/action/endWaitJob", params)
+        except RuntimeError as exc:
+            raise RuntimeError(f"ZAP end wait job request failed: {exc}") from exc
+        result = str(payload.get("Result") or payload.get("result") or payload.get("status") or "").strip()
+        if result and result.upper() not in (_AUTOMATION_SUCCESS_STATES | {"OK"}):
+            raise RuntimeError(f"ZAP end wait job returned unexpected response: {payload}")
+
 
 # ----------------------------- Core logic ----------------------------------
 
@@ -619,6 +819,47 @@ def load_alerts_from_file(path: Path) -> List[Dict[str, Any]]:
     return [dict(alert) for alert in alerts]
 
 
+def wait_for_alerts_file(
+    path: Path,
+    *,
+    deadline: Optional[float],
+    poll_seconds: float,
+    verbose: bool,
+) -> List[Dict[str, Any]]:
+    poll = max(0.5, poll_seconds)
+    last_error = ""
+    announced_missing = False
+    while True:
+        remaining = _remaining_time(deadline)
+        if remaining is not None and remaining <= 0:
+            raise TimeoutError(f"Timed out waiting for alerts JSON at {path}")
+
+        if not path.exists():
+            if verbose and not announced_missing:
+                print(f"[zap-kb] waiting for alerts file at {path}", file=sys.stderr)
+            announced_missing = True
+            sleep_for = _sleep_interval(poll, deadline)
+            if sleep_for <= 0:
+                raise TimeoutError(f"Timed out waiting for alerts JSON at {path}")
+            time.sleep(sleep_for)
+            continue
+
+        announced_missing = False
+
+        try:
+            return load_alerts_from_file(path)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            message = str(exc)
+            if verbose and message != last_error:
+                print(f"[zap-kb] alerts file not ready ({message}); retrying", file=sys.stderr)
+            last_error = message
+
+        sleep_for = _sleep_interval(poll, deadline)
+        if sleep_for <= 0:
+            raise TimeoutError(f"Timed out waiting for alerts JSON at {path}")
+        time.sleep(sleep_for)
+
+
 def filter_alerts(alerts: Iterable[Dict[str, Any]], base_url: Optional[str]) -> List[Dict[str, Any]]:
     if not base_url:
         return list(alerts)
@@ -666,6 +907,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zip-archive", help="Optional zip archive to package the artifact (and entities JSON).")
     parser.add_argument("--entities-json", help="Optional path to save the intermediate entities JSON alongside the artifact.")
 
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Start in daemon mode: wait for ZAP automation (API mode) or the alerts JSON (file mode) before processing.",
+    )
+    parser.add_argument(
+        "--daemon-timeout",
+        type=int,
+        default=0,
+        help="Maximum seconds to wait in daemon mode before aborting (0 = no timeout).",
+    )
+    parser.add_argument(
+        "--daemon-poll-interval",
+        type=float,
+        default=5.0,
+        help="Seconds between readiness checks in daemon mode (default: 5).",
+    )
+    parser.add_argument(
+        "--automation-plan-id",
+        help="Optional ZAP automation plan identifier to monitor when --daemon is used with --zap-url.",
+    )
+    parser.add_argument(
+        "--automation-wait-job-id",
+        help="Optional ZAP automation wait job identifier to end after artifact generation.",
+    )
+    parser.add_argument(
+        "--automation-wait-job-message",
+        help="Optional message to include when ending the ZAP automation wait job.",
+    )
+
     # Traffic capture tuning
     parser.add_argument("--include-traffic", action="store_true", help="Fetch HTTP request/response snippets from ZAP.")
     parser.add_argument("--traffic-scope", choices=["first", "all"], default="first", help="Capture only selected occurrences per finding (first) or every occurrence (all).")
@@ -690,24 +961,63 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     entities_path = Path(args.entities_json).expanduser().resolve() if args.entities_json else None
     zip_path = Path(args.zip_archive).expanduser().resolve() if args.zip_archive else None
 
-    alerts: List[Dict[str, Any]]
+    alerts: Optional[List[Dict[str, Any]]] = None
     zap_client: Optional[ZapClient] = None
+    alert_file = Path(args.alerts_json).expanduser().resolve() if args.alerts_json else None
+    daemon_deadline = _compute_deadline(args.daemon_timeout) if args.daemon else None
+    poll_interval = args.daemon_poll_interval if args.daemon else 5.0
+    if args.daemon and poll_interval <= 0:
+        poll_interval = 5.0
+    if args.daemon and args.verbose:
+        timeout_text = f"{args.daemon_timeout}s" if args.daemon_timeout and args.daemon_timeout > 0 else "no timeout"
+        print(
+            f"[zap-kb] daemon mode enabled (poll {poll_interval:.1f}s, timeout {timeout_text})",
+            file=sys.stderr,
+        )
 
-    if args.alerts_json:
-        alert_file = Path(args.alerts_json).expanduser().resolve()
-        if not alert_file.exists():
-            parser.error(f"alerts JSON not found: {alert_file}")
+    if alert_file:
+        if args.daemon:
+            if args.verbose:
+                print(f"[zap-kb] waiting for alerts file at {alert_file}", file=sys.stderr)
+            try:
+                alerts = wait_for_alerts_file(
+                    alert_file,
+                    deadline=daemon_deadline,
+                    poll_seconds=poll_interval,
+                    verbose=args.verbose,
+                )
+            except TimeoutError as exc:
+                parser.error(str(exc))
+        else:
+            if not alert_file.exists():
+                parser.error(f"alerts JSON not found: {alert_file}")
+            alerts = load_alerts_from_file(alert_file)
         if args.verbose:
-            print(f"[zap-kb] reading alerts from {alert_file}", file=sys.stderr)
-        alerts = load_alerts_from_file(alert_file)
+            print(f"[zap-kb] loaded alerts from {alert_file}", file=sys.stderr)
         alerts = filter_alerts(alerts, args.base_url)
         if args.count and args.count > 0:
             alerts = alerts[: args.count]
     else:
         zap_client = ZapClient(base_url=args.zap_url, api_key=args.api_key, timeout=args.timeout)
+        if args.daemon:
+            if args.verbose:
+                plan_label = args.automation_plan_id or "<default>"
+                print(f"[zap-kb] waiting for ZAP automation plan {plan_label}", file=sys.stderr)
+            try:
+                zap_client.wait_for_automation(
+                    plan_id=args.automation_plan_id,
+                    poll_seconds=poll_interval,
+                    deadline=daemon_deadline,
+                    verbose=args.verbose,
+                )
+            except (RuntimeError, TimeoutError) as exc:
+                parser.error(str(exc))
         if args.verbose:
             print("[zap-kb] fetching alerts from ZAP API", file=sys.stderr)
         alerts = zap_client.get_alerts(base_url=args.base_url, count=args.count)
+
+    if alerts is None:
+        parser.error("No alerts available; daemon mode may have timed out before data was ready.")
 
     if args.verbose:
         print(f"[zap-kb] loaded {len(alerts)} alerts before de-duplication", file=sys.stderr)
@@ -788,6 +1098,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 temp_file.unlink()
             except FileNotFoundError:
                 pass
+
+    if args.automation_wait_job_id:
+        if not zap_client and args.zap_url:
+            zap_client = ZapClient(base_url=args.zap_url, api_key=args.api_key, timeout=args.timeout)
+        if not zap_client:
+            parser.error("--automation-wait-job-id requires --zap-url so the wait job can be ended via the ZAP API.")
+        try:
+            zap_client.end_wait_job(
+                plan_id=args.automation_plan_id,
+                job_id=args.automation_wait_job_id,
+                message=args.automation_wait_job_message,
+            )
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        if args.verbose:
+            print(
+                f"[zap-kb] ended automation wait job {args.automation_wait_job_id}",
+                file=sys.stderr,
+            )
 
     if args.verbose:
         print("[zap-kb] done", file=sys.stderr)
