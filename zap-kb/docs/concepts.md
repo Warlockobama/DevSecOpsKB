@@ -1,0 +1,24 @@
+# zap-kb Concepts (Data Model & Behavior)
+
+- **Entities model**: Definitions (rule metadata), Findings (deduped per rule+URL+method), Occurrences (every alert event).
+- **IDs**:
+  - Finding IDs: `fin-<hash>` (front matter `id` is `finding/<id>`).
+  - Occurrence IDs: `occ-<hash>` (front matter `id` is `occurrence/<id>`), scoped by scan label so identical alerts across scans stay distinct.
+- **Timestamps**:
+  - `generatedAt`: time the entities set was built.
+  - `observedAt`: when the occurrence was seen (defaults to generatedAt if missing).
+  - Findings carry `firstSeen`/`lastSeen` derived from occurrence history.
+- **Scan labels**: `scan.label` tags each occurrence to a run; also used in dedup to avoid collapsing identical alerts across different scans. Reusing the same label collapses duplicates.
+- **Dedup rules**:
+  - Within a scan: alerts deduped by pluginId|url|method|param|riskcode|confidence|attack|evidence.
+  - Across scans: same key is kept separate because scan label participates in the occurrence ID.
+- **Status/triage**:
+  - Front matter fields `analyst.status|owner|tags|notes|ticketRefs|updatedAt` are preserved on regeneration by reading existing occurrence files first.
+  - Status rollups propagate to INDEX, DASHBOARD, findings, and triage-board.
+- **Vault pages**:
+  - INDEX (issue + occurrence tables, triage board, by-domain links).
+  - DASHBOARD (vault-wide snapshot).
+  - Auto-generated helpers: `triage-board.md`, `by-domain.md`.
+- **Safety**:
+  - “Next actions” endpoints are neutered (schemes stripped) to avoid live links.
+  - Redaction flag `-redact domain,query,cookies,auth,headers,body` can scrub sensitive data in outputs.

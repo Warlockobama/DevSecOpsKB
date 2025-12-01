@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,12 @@ func main() {
 		pruneSiteLabel     string
 		pruneVault         string
 		pruneDryRun        bool
+		reportOut          string
+		reportSince        string
+		reportUntil        string
+		reportLookback     string
+		reportTitle        string
+		reportScanLabel    string
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (if required)")
@@ -74,8 +81,8 @@ func main() {
 	flag.BoolVar(&includeTraffic, "include-traffic", false, "Enrich with first-occurrence HTTP request/response snippets")
 	flag.IntVar(&trafficMax, "traffic-max-bytes", 2048, "Max bytes to capture for request/response snippets")
 	flag.StringVar(&trafficScope, "traffic-scope", "first", "Traffic enrichment scope: first|all")
-	flag.IntVar(&trafficMaxPerIssue, "traffic-max-per-issue", 1, "Max observations per issue to enrich with traffic (applies to first scope)")
-	flag.IntVar(&trafficTotalMax, "traffic-total-max", 0, "Global cap on number of observations to enrich with traffic (0 = unlimited)")
+	flag.IntVar(&trafficMaxPerIssue, "traffic-max-per-issue", 1, "Max occurrences per issue to enrich with traffic (applies to first scope)")
+	flag.IntVar(&trafficTotalMax, "traffic-total-max", 0, "Global cap on number of occurrences to enrich with traffic (0 = unlimited)")
 	flag.StringVar(&trafficMinRisk, "traffic-min-risk", "info", "Minimum risk to enrich traffic: info|low|medium|high")
 	flag.StringVar(&scanLabel, "scan-label", "", "Optional label for this scan/session (appears in INDEX and frontmatter)")
 	flag.StringVar(&siteLabel, "site-label", "", "Optional site/domain label override when domains are redacted")
@@ -93,6 +100,12 @@ func main() {
 	flag.StringVar(&pruneSiteLabel, "prune-site", "", "Optional site/domain label filter when pruning (matches frontmatter 'domain')")
 	flag.StringVar(&pruneVault, "prune-vault", "", "Vault directory to operate on when pruning (defaults to -obsidian-dir)")
 	flag.BoolVar(&pruneDryRun, "prune-dry-run", false, "List matching files without deleting")
+	flag.StringVar(&reportOut, "report-out", "", "Write a markdown report summarizing occurrences within a window (requires -format=obsidian); relative paths are rooted at the vault.")
+	flag.StringVar(&reportSince, "report-since", "", "Inclusive start date/time (RFC3339 or YYYY-MM-DD) for the report window; overrides -report-lookback when set.")
+	flag.StringVar(&reportUntil, "report-until", "", "Inclusive end date/time (RFC3339 or YYYY-MM-DD) for the report window; defaults to now when unset.")
+	flag.StringVar(&reportLookback, "report-lookback", "", "Lookback window (e.g., 30d, 12w, 3m, 1y) when -report-since is not provided; defaults to 30d when -report-out is set.")
+	flag.StringVar(&reportTitle, "report-title", "", "Optional title for the generated report.")
+	flag.StringVar(&reportScanLabel, "report-scan", "", "Optional scan.label filter for the report.")
 	flag.Parse()
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
@@ -290,8 +303,24 @@ func main() {
 		if len(entIn.Definitions) > 0 || len(entIn.Findings) > 0 || len(entIn.Occurrences) > 0 {
 			ent = entIn
 		}
+		// Single timestamp to stamp this generation and as observedAt for new occurrences
+		runGeneratedAt := strings.TrimSpace(genAt)
+		if runGeneratedAt == "" {
+			if len(alerts) > 0 {
+				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
+			} else if strings.TrimSpace(ent.GeneratedAt) != "" {
+				runGeneratedAt = ent.GeneratedAt
+			} else {
+				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
+			}
+		}
 		if len(alerts) > 0 {
-			built := entities.BuildEntities(alerts, source)
+			built := entities.BuildEntitiesWithOptions(alerts, entities.BuildOptions{
+				SourceTool:  source,
+				ScanLabel:   scanLabel,
+				GeneratedAt: runGeneratedAt,
+				ObservedAt:  runGeneratedAt,
+			})
 			if len(ent.Definitions) == 0 && len(ent.Findings) == 0 && len(ent.Occurrences) == 0 {
 				ent = built
 			} else {
@@ -336,9 +365,7 @@ func main() {
 			}
 		}
 		// optional override of generatedAt for stable diffs during iteration
-		if strings.TrimSpace(genAt) != "" {
-			ent.GeneratedAt = genAt
-		}
+		ent.GeneratedAt = runGeneratedAt
 		// fill defaults if missing (e.g., plugins-only mode)
 		if strings.TrimSpace(ent.SchemaVersion) == "" {
 			ent.SchemaVersion = "v1"
@@ -429,6 +456,28 @@ func main() {
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
 	}
 
+	// Optional report generation (vault-wide, time-bounded)
+	if strings.TrimSpace(reportOut) != "" {
+		if format != "obsidian" {
+			fmt.Println("Note: -report-out requires -format=obsidian; skipping report generation.")
+		} else {
+			rs, ru, rerr := computeReportWindow(reportSince, reportUntil, reportLookback)
+			if rerr != nil {
+				log.Fatalf("report window: %v", rerr)
+			}
+			if err := obsidian.GenerateReport(vault, obsidian.ReportOptions{
+				OutPath:   reportOut,
+				Title:     reportTitle,
+				Since:     rs,
+				Until:     ru,
+				ScanLabel: reportScanLabel,
+			}); err != nil {
+				log.Fatalf("report: %v", err)
+			}
+			fmt.Printf("Wrote report to %s\n", reportOut)
+		}
+	}
+
 	// Optionally write a run artifact (entities + meta [+alerts]) for pipelines
 	if strings.TrimSpace(runOut) != "" {
 		meta := runartifact.Meta{
@@ -475,5 +524,86 @@ func main() {
 	// Exit code 2 only when no content produced at all (no alerts and no entities).
 	if (format == "flat" || format == "both") && len(alerts) == 0 && len(ent.Definitions) == 0 {
 		os.Exit(2)
+	}
+}
+
+// computeReportWindow parses the since/until/lookback flag trio into concrete times.
+// Defaults: until=now when unset; since=until-30d when reportOut is set but no bounds provided.
+func computeReportWindow(rawSince, rawUntil, rawLookback string) (time.Time, time.Time, error) {
+	var since time.Time
+	until := time.Now().UTC()
+	if strings.TrimSpace(rawUntil) != "" {
+		t, err := parseReportTime(rawUntil)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid -report-until: %w", err)
+		}
+		until = t
+	}
+
+	if strings.TrimSpace(rawLookback) != "" {
+		dur, err := parseLookback(rawLookback)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid -report-lookback: %w", err)
+		}
+		since = until.Add(-dur)
+	}
+	if strings.TrimSpace(rawSince) != "" {
+		t, err := parseReportTime(rawSince)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid -report-since: %w", err)
+		}
+		since = t
+	}
+	if since.IsZero() {
+		since = until.Add(-30 * 24 * time.Hour)
+	}
+	if since.After(until) {
+		since, until = until, since
+	}
+	return since, until, nil
+}
+
+// parseReportTime accepts RFC3339 timestamps or dates in YYYY-MM-DD.
+func parseReportTime(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	layouts := []string{time.RFC3339, "2006-01-02"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("expected RFC3339 or YYYY-MM-DD, got %q", raw)
+}
+
+// parseLookback parses simple duration-ish strings for reporting: Nd, Nw, Nm, Ny (days/weeks/months/years).
+func parseLookback(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return 0, nil
+	}
+	unit := raw[len(raw)-1]
+	num := raw[:len(raw)-1]
+	if unit >= '0' && unit <= '9' {
+		unit = 'd'
+		num = raw
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid number in %q", raw)
+	}
+	switch unit {
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour, nil
+	case 'w':
+		return time.Duration(n*7) * 24 * time.Hour, nil
+	case 'm':
+		return time.Duration(n*30) * 24 * time.Hour, nil
+	case 'y':
+		return time.Duration(n*365) * 24 * time.Hour, nil
+	default:
+		return 0, fmt.Errorf("unknown unit %q (use d,w,m,y)", string(unit))
 	}
 }

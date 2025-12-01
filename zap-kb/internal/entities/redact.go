@@ -63,7 +63,7 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			if ro.Body {
 				e.Occurrences[i].Request.BodySnippet = ""
 			}
-			if ro.Cookies || ro.Auth || ro.Headers {
+			if ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query {
 				e.Occurrences[i].Request.Headers = redactHeaders(e.Occurrences[i].Request.Headers, ro)
 			}
 		}
@@ -71,7 +71,7 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			if ro.Body {
 				e.Occurrences[i].Response.BodySnippet = ""
 			}
-			if ro.Cookies || ro.Auth || ro.Headers {
+			if ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query {
 				e.Occurrences[i].Response.Headers = redactHeaders(e.Occurrences[i].Response.Headers, ro)
 			}
 		}
@@ -111,6 +111,14 @@ func redactHeaders(hs []Header, ro RedactOptions) []Header {
 	for _, h := range hs {
 		name := strings.ToLower(strings.TrimSpace(h.Name))
 		v := h.Value
+		// Request/status line may contain a full URL; redact host/query if requested.
+		if name == "_line" && (ro.Domain || ro.Query) {
+			parts := strings.Fields(v)
+			if len(parts) >= 2 {
+				parts[1] = redactURL(parts[1], ro)
+				v = strings.Join(parts, " ")
+			}
+		}
 		if ro.Cookies && (name == "cookie" || name == "set-cookie") {
 			v = "<redacted>"
 		}
@@ -121,6 +129,15 @@ func redactHeaders(hs []Header, ro RedactOptions) []Header {
 			switch name {
 			case "x-api-key", "api-key", "x-auth-token", "x-access-token", "authentication":
 				v = "<redacted>"
+			}
+		}
+		if ro.Domain {
+			if name == "host" || name == ":authority" {
+				v = "<redacted>"
+			}
+			// redact embedded URLs in referer/origin
+			if name == "referer" || name == "origin" {
+				v = redactURL(v, ro)
 			}
 		}
 		out = append(out, Header{Name: h.Name, Value: v})

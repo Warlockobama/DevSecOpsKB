@@ -1,83 +1,38 @@
-# zap-kb — AI Instructions
+# zap-kb - AI Instructions (current model)
 
 Purpose
-- Produce a single JSON file of ZAP alert occurrences for downstream use (Obsidian, Confluence, dashboards).
-- Idempotent runs: deduplicate within a run and across runs (with -merge).
+- Normalize ZAP alerts into the entities model (definitions, findings, occurrences) and publish an Obsidian-ready KB (plus optional reports/dashboards).
+- Idempotent runs: deduplicate within a run; across runs, scan labels keep occurrences distinct.
 
-Source of truth
-- Pretty-printed UTF-8 JSON written to -out (default: docs/data/alerts.json).
-- Directory is created if missing.
+Outputs & sources of truth
+- Entities JSON: pretty-printed (`-format entities`), default `docs/data/entities.json`.
+- Run artifact: `-run-out run.json` (entities + meta + alerts).
+- Obsidian vault: `-format obsidian -obsidian-dir <dir>` writes INDEX, DASHBOARD, triage-board, by-domain, and per-item pages.
 
 Fetching
-- Default: fetch all alerts (paged) from ZAP Desktop API at http://127.0.0.1:8090.
-- -count N: fetch first N alerts only.
-- Typical run (Windows PowerShell):
-  - cd F:\projects\devsecopskb\zap-kb
-  - go run .\cmd\zap-kb -zap-url http://127.0.0.1:8090 -api-key <KEY> -out docs\data\alerts.json
+- Default: fetch all alerts (paged) from ZAP API (`-zap-url`, `-api-key` if needed).
+- Offline: `-in <alerts.json>` reads flattened alerts.
+- Merge/enrich: `-entities-in <entities.json>` merges new alerts into prior entities.
 
-JSON shape (current, raw occurrences)
-Array of objects with tolerant parsing for numeric fields:
-- pluginId (string)
-- alert (string)
-- name (string)
-- risk (string)
-- riskcode (string)
-- confidence (string)
-- url (string)
-- method (string)
-- param (string)
-- attack (string)
-- evidence (string)
-- other (string)
-- solution (string)
-- reference (string)
-- cweid (int; string/number accepted)
-- wascid (int; string/number accepted)
-- sourceid (string)
+Entity model (v1)
+- Definitions: rule metadata (pluginId, alert/name, taxonomy, remediation, detection links).
+- Findings: deduped per rule+URL+method (IDs `fin-...`; front matter `id: finding/<id>`).
+- Occurrences: every alert event; IDs include scan label (`occ-...`, `id: occurrence/<id>`). Fields include URL/method/param/attack/evidence, `observedAt`, `scan.label`, analyst triage fields, optional traffic snippets.
+- Timestamps: `generatedAt` on the set; occurrences carry `observedAt` (defaults to generatedAt); findings derive `firstSeen`/`lastSeen`.
 
 Deduplication
-- Always deduplicate before write.
-- Optional -merge: load existing file, append new results, dedup, then write.
-- Deterministic key (normalized):
-  pluginId | url | method | param | riskcode | confidence | attack | evidence
-- Implementation: short SHA-1 of the key (stable). Sort output by pluginId, url, param, evidence for reproducibility.
-- Console output:
-  - Fetched {count} alerts (after dedup)
-  - Preview first ~5 lines:
-    [0] {alert} | risk={risk} url={url} param={param} plugin={pluginId} cwe={cweid}
+- Within a scan: key = pluginId|url|method|param|riskcode|confidence|attack|evidence.
+- Across scans: occurrence IDs include `scan.label`, so identical alerts in different runs stay distinct. Reusing the same scan label collapses them.
 
-Why keep repeated fields today?
-- We keep full alert occurrences so the JSON is self-contained and portable without extra joins.
-- After the “entity model” phase, we will:
-  - Definition (by pluginId + metadata): shared fields (name, solution, references, CWE, etc.).
-  - Occurrence: per-endpoint fields (url, method, param, evidence, etc.) plus stable ID.
-  - Finding: roll-ups as needed.
-- That change will remove duplication while preserving compatibility via a versioned schema.
+Triage persistence
+- Regeneration reads existing occurrence front matter first to preserve `analyst.*` fields. Status rollups flow to INDEX, DASHBOARD, triage-board.
 
-Stable IDs (future)
-- Current dedup uses SHA-1 truncated to 8 bytes as the key.
-- We can emit an "occurrenceId" based on:
-  - SHA-1(key) hex (existing), or
-  - UUIDv5(namespace, key) for standard UUID format.
-- Decision: keep internal SHA-1 for dedup now; introduce UUIDv5 in the entity model rollout.
-
-Idempotency expectations
-- Running twice against the same ZAP state yields the same JSON (no growth).
-- With -merge, only truly new alerts increase the count.
-
-Conventions
-- Go 1.21+, no external deps.
-- Single CLI execution, minimal logs.
-- Pretty JSON, safe for Git.
-
-Future roadmap (do not implement yet)
-- Definition/Finding/Occurrence model with deterministic IDs (UUIDv5/ULID).
-- Enrichment (taxonomy, normalization, scoring, routing).
-- Obsidian Markdown and Confluence sinks.
+Safety & redaction
+- “Next actions” endpoints are neutered (no http/https) to avoid live links.
+- Redaction: `-redact domain,query,cookies,auth,headers,body` (any subset) to scrub sensitive fields before publishing.
 
 Detection enrichment (optional)
-- Use `-include-detection` to link rules to their ZAP docs and GitHub source.
-- Best-effort scrape of https://www.zaproxy.org/docs/alerts/{pluginId}/ to infer:
+- `-include-detection` adds ZAP docs/GitHub references; `-detection-details summary` adds brief detection summaries/signals when available.
   - logic type (passive/active), add-on name, source path, GitHub link.
   - Populates `definitions[].detection` in Entities and renders a "Detection logic" section in Obsidian.
  - Add `-detection-details summary` to fetch the rule class and produce a brief "How it detects" summary (headers/regex/threshold/strength).

@@ -3,9 +3,16 @@
 This repository hosts the DevSecOps KB. It is a gradual, tool-agnostic knowledge base designed to normalize and publish security findings across tools. The first module is `zap-kb`, which focuses on OWASP ZAP.
 
 ## Structure
-- `zap-kb/`: ZAP module (Go). Fetches alerts, normalizes to an entities model, and can publish an Obsidian vault.
+- `zap-kb/`: ZAP module (Go). Fetches alerts, normalizes to an entities model, and can publish an Obsidian vault (INDEX/DASHBOARD/triage-board/by-domain) plus reports.
 - Other modules can be added alongside over time (e.g., Burp, SAST, SBOM importers).
- - `archive/`: Legacy experiments and prior folder attempts consolidated to keep the root clean. Safe to delete if not needed.
+- `archive/`: Legacy experiments and prior folder attempts consolidated to keep the root clean. Safe to delete if not needed.
+
+Doc map:
+- `zap-kb/README.md` – CLI usage, flags, behaviors.
+- `zap-kb/docs/concepts.md` – IDs, scan labels, timestamps, dedup rules, safety.
+- `zap-kb/docs/triage.md` – how triage/status persists.
+- `zap-kb/docs/archetecture.md` – updated flow diagram.
+- `zap-kb/docs/schema/entities-v1.md` – entity schema.
 
 ## Getting Started (zap-kb)
 See `zap-kb/README.md` for usage, flags, and examples. A GitHub Actions workflow is provided to build/vet the module on pushes and PRs.

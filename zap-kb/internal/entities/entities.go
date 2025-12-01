@@ -15,6 +15,8 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
+const inlineTrafficSnippetLimit = 2048
+
 type Header struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
@@ -112,6 +114,8 @@ type Finding struct {
 
 type Occurrence struct {
 	OccurrenceID string `json:"occurrenceId"`
+	ScanLabel    string `json:"scanLabel,omitempty"`
+	ObservedAt   string `json:"observedAt,omitempty"`
 	DefinitionID string `json:"definitionId"`
 	FindingID    string `json:"findingId"`
 
@@ -121,6 +125,7 @@ type Occurrence struct {
 	Param      string `json:"param,omitempty"`
 	Attack     string `json:"attack,omitempty"`
 	Evidence   string `json:"evidence,omitempty"`
+	Other      string `json:"other,omitempty"`
 	Risk       string `json:"risk,omitempty"`
 	RiskCode   string `json:"riskcode,omitempty"`
 	Confidence string `json:"confidence,omitempty"`
@@ -140,6 +145,16 @@ type EntitiesFile struct {
 	Occurrences   []Occurrence `json:"occurrences"`
 }
 
+// BuildOptions controls how entities are constructed for a single scan/import.
+// GeneratedAt/ObservedAt should be RFC3339 when provided; when empty they fall
+// back to now(). ScanLabel lets us keep scan-level identity per occurrence.
+type BuildOptions struct {
+	SourceTool string
+	ScanLabel  string
+	GeneratedAt string
+	ObservedAt  string
+}
+
 func shortHash(s string) string {
 	h := sha1.Sum([]byte(s))
 	return hex.EncodeToString(h[:8])
@@ -155,6 +170,17 @@ func findingKey(a zapclient.Alert) string {
 		strings.TrimSpace(a.URL),
 		strings.TrimSpace(a.Method),
 	}, "|")
+}
+
+// occurrenceKey scopes an alert to a specific scan label so repeated detections
+// across different scans remain distinct occurrences.
+func occurrenceKey(a zapclient.Alert, scanLabel string) string {
+	prefix := zapclient.AlertKey(a)
+	sl := strings.TrimSpace(scanLabel)
+	if sl == "" {
+		return prefix
+	}
+	return prefix + "|scan:" + sl
 }
 
 func splitRefs(s string) []string {
@@ -174,6 +200,22 @@ func splitRefs(s string) []string {
 }
 
 func BuildEntities(alerts []zapclient.Alert, sourceTool string) EntitiesFile {
+	return BuildEntitiesWithOptions(alerts, BuildOptions{SourceTool: sourceTool})
+}
+
+func BuildEntitiesWithOptions(alerts []zapclient.Alert, opts BuildOptions) EntitiesFile {
+	genAt := strings.TrimSpace(opts.GeneratedAt)
+	if genAt == "" {
+		genAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	obsAt := strings.TrimSpace(opts.ObservedAt)
+	if obsAt == "" {
+		obsAt = genAt
+	}
+	sourceTool := strings.TrimSpace(opts.SourceTool)
+	if sourceTool == "" {
+		sourceTool = "zap"
+	}
 	defMap := make(map[string]Definition)
 	findMap := make(map[string]Finding)
 	var occs []Occurrence
@@ -224,7 +266,9 @@ func BuildEntities(alerts []zapclient.Alert, sourceTool string) EntitiesFile {
 		findMap[fid] = f
 
 		occ := Occurrence{
-			OccurrenceID: "occ-" + shortHash(zapclient.AlertKey(a)),
+			OccurrenceID: "occ-" + shortHash(occurrenceKey(a, opts.ScanLabel)),
+			ScanLabel:    opts.ScanLabel,
+			ObservedAt:   obsAt,
 			DefinitionID: did,
 			FindingID:    fid,
 			Name:         makeOccurrenceName(a),
@@ -233,6 +277,7 @@ func BuildEntities(alerts []zapclient.Alert, sourceTool string) EntitiesFile {
 			Param:        a.Param,
 			Attack:       a.Attack,
 			Evidence:     a.Evidence,
+			Other:        a.Other,
 			Risk:         a.Risk,
 			RiskCode:     a.RiskCode,
 			Confidence:   a.Confidence,
@@ -241,6 +286,7 @@ func BuildEntities(alerts []zapclient.Alert, sourceTool string) EntitiesFile {
 			Response:     nil,
 			Analyst:      nil,
 		}
+		attachInlineTrafficFromAlert(&occ, a)
 		occs = append(occs, occ)
 	}
 
@@ -279,11 +325,46 @@ func BuildEntities(alerts []zapclient.Alert, sourceTool string) EntitiesFile {
 
 	return EntitiesFile{
 		SchemaVersion: "v1",
-		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		GeneratedAt:   genAt,
 		SourceTool:    sourceTool,
 		Definitions:   defs,
 		Findings:      finds,
 		Occurrences:   occs,
+	}
+}
+
+// attachInlineTrafficFromAlert preserves inline request/response snippets that
+// arrived with the alert (e.g., flattened traditional-json-plus reports). This
+// supplements or pre-populates the traffic blocks without requiring a live ZAP
+// instance for enrichment.
+func attachInlineTrafficFromAlert(o *Occurrence, a zapclient.Alert) {
+	if o == nil {
+		return
+	}
+	reqHeader := strings.TrimSpace(a.RequestHeader)
+	reqBody := a.RequestBody
+	if reqHeader != "" || strings.TrimSpace(reqBody) != "" {
+		o.Request = &HTTPRequest{
+			Headers:        parseRawHeaders(a.RequestHeader),
+			BodyBytes:      len(reqBody),
+			BodySnippet:    truncateUTF8(reqBody, inlineTrafficSnippetLimit),
+			RawHeader:      a.RequestHeader,
+			RawHeaderBytes: len(a.RequestHeader),
+		}
+	}
+
+	respHeader := strings.TrimSpace(a.ResponseHeader)
+	respBody := a.ResponseBody
+	if respHeader != "" || strings.TrimSpace(respBody) != "" {
+		headers, status := parseRespHeaders(a.ResponseHeader)
+		o.Response = &HTTPResponse{
+			StatusCode:     status,
+			Headers:        headers,
+			BodyBytes:      len(respBody),
+			BodySnippet:    truncateUTF8(respBody, inlineTrafficSnippetLimit),
+			RawHeader:      a.ResponseHeader,
+			RawHeaderBytes: len(a.ResponseHeader),
+		}
 	}
 }
 

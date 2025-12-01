@@ -10,37 +10,27 @@ end
 
 subgraph Stores
   JSN[(alerts.json)]
-  DEF[(definitions.json)]
-  FIND[(findings.json)]
-  OCC[(occurrences.json)]
+  ENT[(entities.json)]
+  RUN[(run.json)]
 end
 
 subgraph Overlays
-  O1[Identity overlay]
-  O2[Enrichment overlay]
-  O3[Temporal overlay]
+  O1[Identity overlay (scan.label in IDs)]
+  O2[Enrichment overlay (taxonomy, detection, remediation)]
+  O3[Temporal overlay (observedAt, firstSeen/lastSeen)]
+  O4[Triage overlay (analyst.*, status)]
 end
 
 subgraph Sinks
-  OBS[Obsidian]
-  CONF[Confluence]
-  DASH[Dashboards]
+  OBS[Obsidian vault (INDEX, DASHBOARD, triage-board, by-domain, findings, occurrences, definitions)]
+  REP[Reports (markdown)]
+  DASH[Dashboards/embeds]
 end
 
 API --> C1 --> C2 --> C3 --> JSN
-JSN --> O1 --> DEF
-JSN --> O2
-JSN --> O3
-O2 --> DEF
-O2 --> FIND
-O2 --> OCC
-O3 --> FIND
-DEF --> OBS
-FIND --> OBS
-OCC --> OBS
-DEF --> CONF
-FIND --> CONF
-OCC --> CONF
-DEF --> DASH
-FIND --> DASH
-OCC --> DASH
+JSN --> ENT
+ENT --> O1 --> O2 --> O3 --> O4 --> OBS
+ENT --> RUN
+RUN --> OBS
+ENT --> REP
+ENT --> DASH

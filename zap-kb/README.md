@@ -33,9 +33,9 @@ Key flags:
 - `-detection-details`: `links|summary` (adds brief detection summary when `summary`).
 - `-include-traffic`: Attach first/all HTTP request/response snippets.
 - `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size.
-- `-traffic-max-per-issue`: When using `-traffic-scope=first`, enrich up to N observations per issue (default 1).
-- `-traffic-min-risk`: Only enrich traffic for observations at or above this risk (`info|low|medium|high`; default `info`).
-- `-traffic-total-max`: Global cap on the number of observations to enrich with traffic (default 0 = unlimited).
+- `-traffic-max-per-issue`: When using `-traffic-scope=first`, enrich up to N occurrences per issue (default 1).
+- `-traffic-min-risk`: Only enrich traffic for occurrences at or above this risk (`info|low|medium|high`; default `info`).
+- `-traffic-total-max`: Global cap on the number of occurrences to enrich with traffic (default 0 = unlimited).
 - `-obsidian-dir`: Output directory when `-format=obsidian` (default `docs/obsidian`).
 - `-generated-at`: Override timestamp for stable diffs.
 - `-wizard`: Launch the interactive quickstart wizard (enabled by default when no other flags are set and the terminal is interactive).
@@ -44,6 +44,7 @@ Key flags:
 - `-zip-out`: Zip outputs into one artifact (includes `-run-out`, entity/alerts JSON, and Obsidian dir if generated).
 - `-redact`: Redact sensitive details in outputs. Comma/space list supported: `domain,query,cookies,auth,headers,body`.
  - Prune-only (vault maintenance): `-prune-scan <label>` deletes occurrence notes in the Obsidian vault matching a `scan.label`, optionally narrowed by `-prune-site <domain label>`. Use `-prune-vault` to target a specific vault; add `-prune-dry-run` to preview.
+- Reporting: add `-report-out` to emit a markdown summary from the vault for a time window (default last 30 days when unspecified). Tune with `-report-since`/`-report-until` (RFC3339 or `YYYY-MM-DD`), `-report-lookback` (`30d`, `12w`, `3m`, `1y`), `-report-title`, and `-report-scan` to filter on `scan.label`.
 
 Examples:
 - Initialize all known plugin definitions without fetching alerts:
@@ -55,17 +56,44 @@ Examples:
 - Publish an Obsidian vault:
   `go run ./cmd/zap-kb -format obsidian -entities-in docs/data/entities.json -obsidian-dir docs/obsidian`
 
+- Monthly (or PI) report from the vault:
+  `go run ./cmd/zap-kb -run-in out/run.json -format obsidian -obsidian-dir kb-new/obsidian -report-out reports/2025-01.md -report-lookback 30d -report-title "Jan 2025 KB report"`
+
+## Data Model & Behavior (important)
+- Findings are deduped per rule+URL+method; occurrences are per alert event. Identical alerts in different scans stay separate because the occurrence ID includes the scan label.
+- IDs: finding front matter `id` uses `finding/<findingId>`; occurrence `id` uses `occurrence/<occurrenceId>`.
+- Timestamps: `generatedAt` marks build time; occurrences carry `observedAt` (defaults to generatedAt); findings derive `firstSeen`/`lastSeen` from occurrences.
+- Status/triage: `analyst.*` fields are preserved on regeneration and roll up to INDEX/DASHBOARD/triage-board.
+- Safety: “Next actions” endpoints are neutered (schemes stripped). Use `-redact domain,query,cookies,auth,headers,body` to scrub sensitive data.
+- Helper pages: vault emits `INDEX.md`, `DASHBOARD.md`, plus `triage-board.md` and `by-domain.md`.
+- Run artifacts: `-run-out` writes `run.json` (entities + meta + alerts); multiple runs can be merged (`-entities-in`) to build a multi-scan vault.
+
 ## Scripts
 PowerShell helper `scripts/kb.ps1` wraps common flows:
 - `-Task init` seeds entities (optionally with `-AllPlugins` or `-Plugins`).
 - `-Task ingest` fetches alerts from ZAP and merges to entities.
 - `-Task publish` writes the Obsidian vault.
-- `-Task prune` removes observation notes for a given scan label from the Obsidian vault (`-PruneScan`, optional `-PruneSite`).
+- `-Task prune` removes occurrence notes for a given scan label from the Obsidian vault (`-PruneScan`, optional `-PruneSite`).
 - `-Task all` runs init → ingest → publish.
 
 Environment variables used by the script:
 - `ZAP_URL` (maps to `-zap-url`)
 - `ZAP_API_KEY` (maps to `-api-key`)
+
+Python helper `scripts/flatten_report.py` converts ZAP's JSON-plus report (site -> alerts -> instances) into the flat alert list accepted by `zap-kb -in`. It also supports on-the-fly filtering:
+
+```bash
+python scripts/flatten_report.py \
+  --report /tmp/zap-report.json \
+  --out out/alerts.from-report.json \
+  --risk high,medium \
+  --plugin 40040,90001 \
+  --host public-firing-range.appspot.com \
+  --url-prefix https://public-firing-range.appspot.com/ \
+  --delete-report
+```
+
+Flags can be repeated or comma-delimited. Use `--indent 2` for readable JSON or `--limit N` to cap the number of emitted alert instances.
 
 ## Data Model
 See `docs/schema/entities-v1.md` for the entities schema and how definitions, findings, and occurrences relate.
@@ -76,7 +104,7 @@ See `docs/schema/entities-v1.md` for the entities schema and how definitions, fi
 - When publishing to GitHub, consider updating the `module` path in `go.mod` after the repository is created (e.g., `module github.com/<you>/devsecopskb/zap-kb`).
 
 ### Dashboard
-Publishing (or pruning) also generates `DASHBOARD.md` in the vault with vault‑wide summaries (by scan, severity, domains, and top rules), complementing `INDEX.md` which focuses on the current run plus a brief historical view.
+Publishing (or pruning) also generates `DASHBOARD.md` in the vault with vault‑wide summaries (by scan, severity, domains, and top rules), complementing the workflow-aware `INDEX.md`. The index now highlights issues by status, provides a complete issue list, and includes an occurrence feed alongside the historical scan/domain sections.
 
 ## CI Integration
 There are two ways to populate the KB in a pipeline after your ZAP stage:
@@ -135,11 +163,11 @@ Notes:
 3) Import into the KB and publish for triage (can be a separate job or on your workstation):
 - `go run ./cmd/zap-kb -run-in out/run.json -format obsidian -obsidian-dir kb-new/obsidian -site-label "MyApp" -zap-base-url "$ZAP_URL"`
 
-4) Triage in Obsidian:
-- Open `kb-new/obsidian/INDEX.md` for a run summary (status and severity rollups).
-- Drill into definitions → issues → observations. Each page has frontmatter:
+-4) Triage in Obsidian:
+- Open `kb-new/obsidian/INDEX.md` for the workflow-aware run summary (issues by status, severity rollups, and the occurrence feed).
+- Drill into definitions → issues → occurrences. Each page has frontmatter:
   - `scan.label`, `domain`, and IDs for linking.
-  - Observations include request/response snippets (if included) and a ZAP message link when `-zap-base-url` is set.
+  - Occurrences include request/response snippets (if included) and a ZAP message link when `-zap-base-url` is set.
 - Use the “Workflow” section on issue pages for status, notes, and governance.
 
 GitHub Actions workflow `zap-kb-run.yml` is included for manual runs with secrets:
