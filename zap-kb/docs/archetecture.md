@@ -15,10 +15,10 @@ subgraph Stores
 end
 
 subgraph Overlays
-  O1[Identity overlay (scan.label in IDs)]
-  O2[Enrichment overlay (taxonomy, detection, remediation)]
-  O3[Temporal overlay (observedAt, firstSeen/lastSeen)]
-  O4[Triage overlay (analyst.*, status)]
+  O1["Identity overlay (scan.label in IDs)"]
+  O2["Enrichment overlay (taxonomy, detection, remediation)"]
+  O3["Temporal overlay (observedAt, firstSeen/lastSeen)"]
+  O4["Triage overlay (analyst.*, status)"]
 end
 
 subgraph Sinks
