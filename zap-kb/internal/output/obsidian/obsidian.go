@@ -160,6 +160,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		PrimaryStatus  string
 		StatusOverview string
 		RuleTitle      string
+		ObservedAt     string
+		ScanLabel      string
 	}
 	var issueSummaries []issueSummary
 
@@ -713,6 +715,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			PrimaryStatus:  primaryStatus,
 			StatusOverview: statusSummary,
 			RuleTitle:      ruleTitle,
+			ObservedAt:     lastSeen,
+			ScanLabel:      fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
 		})
 
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -721,6 +725,41 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	}
 
 	issueSeverityCounts := map[string]int{}
+	var latestScanLabel string
+	var latestObs time.Time
+	seenByKey := map[string]bool{}
+	var newestOccs []entities.Occurrence
+
+	// Find latest observed time and associated scan label
+	for _, o := range ef.Occurrences {
+		ts := parseObservedTime(o.ObservedAt)
+		if ts.IsZero() {
+			continue
+		}
+		if ts.After(latestObs) {
+			latestObs = ts
+			latestScanLabel = strings.TrimSpace(o.ScanLabel)
+		}
+	}
+	// Collect occurrences from the latest scan that weren't seen in older scans (same finding+url+param+attack key)
+	if latestScanLabel != "" {
+		for _, o := range ef.Occurrences {
+			if strings.TrimSpace(o.ScanLabel) != latestScanLabel {
+				continue
+			}
+			keyParts := []string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}
+			key := strings.Join(keyParts, "|")
+			seenByKey[key] = true
+			newestOccs = append(newestOccs, o)
+		}
+		for _, o := range ef.Occurrences {
+			if strings.TrimSpace(o.ScanLabel) == latestScanLabel {
+				continue
+			}
+			key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
+			delete(seenByKey, key)
+		}
+	}
 	for _, is := range issueSummaries {
 		key := strings.ToLower(strings.TrimSpace(is.Severity))
 		if key == "" {
@@ -848,7 +887,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 		if strings.TrimSpace(o.Other) != "" {
 			b.WriteString("## Other info\n\n")
+			b.WriteString("<details>\n<summary>Show details</summary>\n\n")
 			b.WriteString(strings.TrimSpace(o.Other) + "\n\n")
+			b.WriteString("</details>\n\n")
 		}
 
 		// Repro snippet
@@ -858,9 +899,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("\n```\n\n")
 		// No deep links to ZAP here (requested)
 
-		// Traffic with content-type/length hints
+		// Traffic with content-type/length hints (collapsible)
 		if o.Request != nil || o.Response != nil {
 			b.WriteString("## Traffic\n\n")
+			b.WriteString("<details>\n<summary>Show traffic</summary>\n\n")
 			if o.Request != nil {
 				b.WriteString("### Request\n\n")
 				fmt.Fprintf(&b, "%s %s\n\n", strings.ToUpper(strings.TrimSpace(o.Method)), o.URL)
@@ -924,6 +966,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "_Response body: %d bytes_\n\n", o.Response.BodyBytes)
 				}
 			}
+			b.WriteString("</details>\n\n")
 		}
 
 		// Triage guidance
@@ -1091,7 +1134,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- [Issues](#issues)\n")
 		b.WriteString("- [Occurrences](#occurrences)\n")
 		b.WriteString("- [Rules](#rules)\n")
-		b.WriteString("- [By domain](by-domain.md)\n\n")
+		b.WriteString("- [By domain](by-domain.md)\n")
+		b.WriteString("- [Triage quickstart](docs/triage.md)\n\n")
 
 		triageSection.WriteString("## Triage board\n\n")
 		triageSection.WriteString("| Status | Issues | Occurrences |\n| --- | --- | --- |\n")
@@ -1132,9 +1176,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
-				status := titleASCII(fallbackString(is.PrimaryStatus, "open"))
+				status := "Open"
+				if s := strings.TrimSpace(is.PrimaryStatus); s != "" {
+					status = titleASCII(s)
+				}
 				rule := fallbackString(is.RuleTitle, "Rule")
-				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | %s | %d | %s |\n",
+				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | `%s` | %d | %s |\n",
 					titleASCII(is.Severity), is.Alias, is.Link,
 					strings.TrimSpace(is.Method), strings.TrimSpace(is.URL),
 					status,
@@ -1278,6 +1325,35 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 		if err := os.WriteFile(filepath.Join(root, "by-domain.md"), []byte("# By domain\n\n"+dbContent), 0o644); err != nil {
 			return err
+		}
+		// New: latest scan spotlight (if we have one)
+		if latestScanLabel != "" && len(seenByKey) > 0 {
+			var spot strings.Builder
+			spot.WriteString("# Latest scan spotlight\n\n")
+			spot.WriteString(fmt.Sprintf("Scan: %s\n\n", latestScanLabel))
+			spot.WriteString("| Occurrence | Endpoint | Severity | Status | Issue |\n| --- | --- | --- | --- | --- |\n")
+			for _, o := range newestOccs {
+				key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
+				if !seenByKey[key] {
+					continue
+				}
+				sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
+				status := "Open"
+				if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
+					status = titleASCII(o.Analyst.Status)
+				}
+				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
+				fmt.Fprintf(&spot, "| [%s](%s) | %s %s | %s | %s | [%s](%s) |\n",
+					occAliasUltraCompact(o, ""),
+					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
+					strings.TrimSpace(o.Method), strings.TrimSpace(o.URL),
+					titleASCII(sevTxt),
+					status,
+					o.FindingID, issueLink)
+			}
+			if err := os.WriteFile(filepath.Join(root, "latest-scan.md"), []byte(spot.String()), 0o644); err != nil {
+				return err
+			}
 		}
 	}
 	// Dashboard is best-effort; do not fail vault writes if it errors.

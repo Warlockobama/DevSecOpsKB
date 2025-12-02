@@ -31,6 +31,11 @@ type Alert struct {
 	CWEID      Intish `json:"cweid"`
 	WASCID     Intish `json:"wascid"`
 	SourceID   string `json:"sourceid"`
+	// Optional inline traffic fields (present in traditional-json-plus exports)
+	RequestHeader  string `json:"requestHeader"`
+	RequestBody    string `json:"requestBody"`
+	ResponseHeader string `json:"responseHeader"`
+	ResponseBody   string `json:"responseBody"`
 }
 
 // Message models ZAP core/view/message response body.

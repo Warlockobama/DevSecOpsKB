@@ -22,9 +22,9 @@ subgraph Overlays
 end
 
 subgraph Sinks
-  OBS[Obsidian vault (INDEX, DASHBOARD, triage-board, by-domain, findings, occurrences, definitions)]
-  REP[Reports (markdown)]
-  DASH[Dashboards/embeds]
+  OBS["Obsidian vault (INDEX, DASHBOARD, triage-board, by-domain, findings, occurrences, definitions)"]
+  REP["Reports (markdown)"]
+  DASH["Dashboards/embeds"]
 end
 
 API --> C1 --> C2 --> C3 --> JSN
