@@ -1854,7 +1854,7 @@ func scanVaultOccurrences(occDir string) (map[string]int, map[string]map[string]
 }
 
 type occMeta struct {
-	Analyst   *entities.Analyst
+	Analyst    *entities.Analyst
 	ObservedAt string
 	ScanLabel  string
 }

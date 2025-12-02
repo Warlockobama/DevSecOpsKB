@@ -149,8 +149,8 @@ type EntitiesFile struct {
 // GeneratedAt/ObservedAt should be RFC3339 when provided; when empty they fall
 // back to now(). ScanLabel lets us keep scan-level identity per occurrence.
 type BuildOptions struct {
-	SourceTool string
-	ScanLabel  string
+	SourceTool  string
+	ScanLabel   string
 	GeneratedAt string
 	ObservedAt  string
 }
