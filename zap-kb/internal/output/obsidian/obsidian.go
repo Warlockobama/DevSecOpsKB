@@ -986,11 +986,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		// Workflow section (analyst notes)
 		b.WriteString("## Workflow\n\n")
-		if aStatus != "" {
-			fmt.Fprintf(&b, "- Status: %s\n", aStatus)
-		} else {
-			b.WriteString("- Status: open\n")
-		}
+		fmt.Fprintf(&b, "- Status: %s\n", fallbackString(aStatus, "open"))
 		if aOwner != "" {
 			fmt.Fprintf(&b, "- Owner: %s\n", aOwner)
 		}
@@ -1003,15 +999,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if aUpdated != "" {
 			fmt.Fprintf(&b, "- Updated: %s\n", aUpdated)
 		}
-		if aNotes != "" {
-			b.WriteString("\n### Notes\n\n")
-			b.WriteString(aNotes + "\n")
-		}
 
-		b.WriteString("\n### Analyst notebook\n\n")
-		b.WriteString("- Notes:\n")
-		b.WriteString("- Evidence links:\n")
-		b.WriteString("- Next steps:\n\n")
+		b.WriteString("\n### Analyst notebook (from front matter)\n\n")
+		if strings.TrimSpace(aNotes) != "" {
+			b.WriteString(aNotes + "\n\n")
+		} else {
+			b.WriteString("_Add `analyst.notes` in front matter for findings, evidence pointers, and next steps._\n\n")
+		}
 
 		b.WriteString("\n### Checklist\n\n")
 		b.WriteString("- [ ] Triage\n")
