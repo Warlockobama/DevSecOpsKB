@@ -774,9 +774,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		var b strings.Builder
 
 		// Analyst fields (flattened for YAML)
-		aStatus, aOwner, aTags, aNotes, aTickets, aUpdated := "", "", "", "", "", ""
+		aStatus, aOwner, aTags, aNotes, aTickets, aUpdated := "open", "", "", "", "", ""
 		if o.Analyst != nil {
 			aStatus = strings.TrimSpace(o.Analyst.Status)
+			if aStatus == "" {
+				aStatus = "open"
+			}
 			aOwner = strings.TrimSpace(o.Analyst.Owner)
 			if len(o.Analyst.Tags) > 0 {
 				aTags = strings.Join(o.Analyst.Tags, ", ")
@@ -1373,20 +1376,26 @@ func writeYAML(b *strings.Builder, kv map[string]any) {
 	for _, k := range keys {
 		switch v := kv[k].(type) {
 		case string:
-			if strings.TrimSpace(v) == "" {
+			force := strings.HasPrefix(k, "analyst.")
+			if strings.TrimSpace(v) == "" && !force {
 				continue
 			}
 			fmt.Fprintf(b, "%s: %q\n", k, v)
 		case []string:
-			if len(v) == 0 {
+			force := strings.HasPrefix(k, "analyst.")
+			if len(v) == 0 && !force {
 				continue
 			}
 			fmt.Fprintf(b, "%s:\n", k)
 			for _, s := range v {
-				if strings.TrimSpace(s) == "" {
+				if strings.TrimSpace(s) == "" && !force {
 					continue
 				}
 				fmt.Fprintf(b, "  - %q\n", s)
+			}
+			if len(v) == 0 && force {
+				// emit an empty list marker to remind analysts to fill it
+				fmt.Fprintf(b, "  # add values\n")
 			}
 		default:
 			// fall back to plain rendering
