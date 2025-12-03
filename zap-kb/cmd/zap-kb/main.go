@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
@@ -63,6 +64,13 @@ func main() {
 		reportLookback     string
 		reportTitle        string
 		reportScanLabel    string
+		confURL            string
+		confUser           string
+		confToken          string
+		confSpace          string
+		confParent         string
+		confTitlePrefix    string
+		confDryRun         bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (if required)")
@@ -106,6 +114,13 @@ func main() {
 	flag.StringVar(&reportLookback, "report-lookback", "", "Lookback window (e.g., 30d, 12w, 3m, 1y) when -report-since is not provided; defaults to 30d when -report-out is set.")
 	flag.StringVar(&reportTitle, "report-title", "", "Optional title for the generated report.")
 	flag.StringVar(&reportScanLabel, "report-scan", "", "Optional scan.label filter for the report.")
+	flag.StringVar(&confURL, "confluence-url", "", "Confluence base URL (enables export of INDEX.md to Confluence).")
+	flag.StringVar(&confUser, "confluence-user", "", "Confluence username (for basic auth).")
+	flag.StringVar(&confToken, "confluence-token", "", "Confluence API token (for basic auth).")
+	flag.StringVar(&confSpace, "confluence-space", "", "Confluence space key.")
+	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
+	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
+	flag.BoolVar(&confDryRun, "confluence-dry-run", false, "Dry-run Confluence export (log instead of POST).")
 	flag.Parse()
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
@@ -451,6 +466,22 @@ func main() {
 	case "obsidian":
 		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
+		}
+		// Optional Confluence export (INDEX.md only for now)
+		if strings.TrimSpace(confURL) != "" {
+			if err := confluence.Export(vault, confluence.Options{
+				BaseURL:      confURL,
+				Username:     confUser,
+				APIToken:     confToken,
+				SpaceKey:     confSpace,
+				ParentPageID: confParent,
+				TitlePrefix:  confTitlePrefix,
+				MarkdownPage: "INDEX.md",
+				DryRun:       confDryRun,
+			}); err != nil {
+				log.Fatalf("confluence export: %v", err)
+			}
+			fmt.Println("Exported INDEX.md to Confluence")
 		}
 	default:
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
