@@ -25,6 +25,7 @@ subgraph Sinks
   OBS["Obsidian vault (INDEX, DASHBOARD, triage-board, by-domain, findings, occurrences, definitions)"]
   REP["Reports (markdown)"]
   DASH["Dashboards/embeds"]
+  CONF["Confluence (planned)"]
 end
 
 API --> C1 --> C2 --> C3 --> JSN
@@ -34,3 +35,4 @@ ENT --> RUN
 RUN --> OBS
 ENT --> REP
 ENT --> DASH
+ENT --> CONF
