@@ -774,7 +774,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		var b strings.Builder
 
 		// Analyst fields (flattened for YAML)
-		aStatus, aOwner, aTags, aNotes, aTickets, aUpdated := "open", "", "", "", "", ""
+		aStatus, aOwner, aNotes, aUpdated := "open", "", "", ""
+		var aTags []string
+		var aTickets []string
 		if o.Analyst != nil {
 			aStatus = strings.TrimSpace(o.Analyst.Status)
 			if aStatus == "" {
@@ -782,11 +784,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			aOwner = strings.TrimSpace(o.Analyst.Owner)
 			if len(o.Analyst.Tags) > 0 {
-				aTags = strings.Join(o.Analyst.Tags, ", ")
+				aTags = append(aTags, o.Analyst.Tags...)
 			}
 			aNotes = strings.TrimSpace(o.Analyst.Notes)
 			if len(o.Analyst.TicketRefs) > 0 {
-				aTickets = strings.Join(o.Analyst.TicketRefs, ", ")
+				aTickets = append(aTickets, o.Analyst.TicketRefs...)
 			}
 			aUpdated = strings.TrimSpace(o.Analyst.UpdatedAt)
 		}
@@ -900,6 +902,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("```bash\n")
 		b.WriteString(buildCurl(o))
 		b.WriteString("\n```\n\n")
+		b.WriteString("_Note: review/redact sensitive headers/cookies before sharing externally._\n\n")
 		// No deep links to ZAP here (requested)
 
 		// Traffic with content-type/length hints (collapsible)
@@ -990,11 +993,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if aOwner != "" {
 			fmt.Fprintf(&b, "- Owner: %s\n", aOwner)
 		}
-		if aTags != "" {
-			fmt.Fprintf(&b, "- Tags: %s\n", aTags)
+		if len(aTags) > 0 {
+			fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(aTags, ", "))
 		}
-		if aTickets != "" {
-			fmt.Fprintf(&b, "- Tickets: %s\n", aTickets)
+		if len(aTickets) > 0 {
+			fmt.Fprintf(&b, "- Tickets: %s\n", strings.Join(aTickets, ", "))
 		}
 		if aUpdated != "" {
 			fmt.Fprintf(&b, "- Updated: %s\n", aUpdated)
