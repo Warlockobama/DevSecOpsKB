@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "groq": {
+      "command": "uvx",
+      "args": ["groq-mcp"],
+      "env": {
+        "GROQ_API_KEY": "your-key-here"
+      }
+    }
+  }
+}

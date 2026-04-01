@@ -8,6 +8,9 @@ Thumbs.db
 .env.*
 *.log
 
+# Claude Code local settings (may contain API keys)
+.claude/settings.local.json
+
 # Local archives of old folders
 archive/
 

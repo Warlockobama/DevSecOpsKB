@@ -11,7 +11,7 @@ Doc map:
 - `zap-kb/README.md` – CLI usage, flags, behaviors.
 - `zap-kb/docs/concepts.md` – IDs, scan labels, timestamps, dedup rules, safety.
 - `zap-kb/docs/triage.md` – how triage/status persists.
-- `zap-kb/docs/archetecture.md` – updated flow diagram.
+- `zap-kb/docs/architecture.md` – updated flow diagram.
 - `zap-kb/docs/schema/entities-v1.md` – entity schema.
 
 ## Getting Started (zap-kb)
