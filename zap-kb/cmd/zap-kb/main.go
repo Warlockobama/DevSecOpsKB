@@ -14,6 +14,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"
@@ -71,6 +72,16 @@ func main() {
 		confParent         string
 		confTitlePrefix    string
 		confDryRun         bool
+		jiraURL            string
+		jiraUser           string
+		jiraToken          string
+		jiraProject        string
+		jiraIssueType      string
+		jiraComponent      string
+		jiraLabels         string
+		jiraMinRisk        string
+		jiraDryRun         bool
+		jiraConcurrency    int
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (if required)")
@@ -121,6 +132,16 @@ func main() {
 	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
 	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
 	flag.BoolVar(&confDryRun, "confluence-dry-run", false, "Dry-run Confluence export (log instead of POST).")
+	flag.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables export of findings as Jira issues).")
+	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (for basic auth).")
+	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (for basic auth).")
+	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (e.g. SEC).")
+	flag.StringVar(&jiraIssueType, "jira-issue-type", "Bug", "Jira issue type (default: Bug).")
+	flag.StringVar(&jiraComponent, "jira-component", "", "Optional Jira component name to assign.")
+	flag.StringVar(&jiraLabels, "jira-labels", "", "Comma-separated extra labels to add to each issue.")
+	flag.StringVar(&jiraMinRisk, "jira-min-risk", "low", "Minimum risk level to export: info|low|medium|high (default: low).")
+	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
+	flag.IntVar(&jiraConcurrency, "jira-concurrency", 5, "Max parallel Jira API requests (default: 5, max: 10).")
 	flag.Parse()
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
@@ -469,7 +490,9 @@ func main() {
 		}
 		// Optional Confluence export (INDEX.md only for now)
 		if strings.TrimSpace(confURL) != "" {
-			if err := confluence.Export(vault, confluence.Options{
+			confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer confCancel()
+			if err := confluence.Export(confCtx, vault, confluence.Options{
 				BaseURL:      confURL,
 				Username:     confUser,
 				APIToken:     confToken,
@@ -485,6 +508,36 @@ func main() {
 		}
 	default:
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
+	}
+
+	// Optional Jira export (works with entities and obsidian formats)
+	if strings.TrimSpace(jiraURL) != "" {
+		var extraLabels []string
+		if strings.TrimSpace(jiraLabels) != "" {
+			for _, l := range strings.Split(jiraLabels, ",") {
+				if l = strings.TrimSpace(l); l != "" {
+					extraLabels = append(extraLabels, l)
+				}
+			}
+		}
+		jiraCtx, jiraCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer jiraCancel()
+		sum, err := jira.Export(jiraCtx, ent, jira.Options{
+			BaseURL:     jiraURL,
+			Username:    jiraUser,
+			APIToken:    jiraToken,
+			ProjectKey:  jiraProject,
+			IssueType:   jiraIssueType,
+			Component:   jiraComponent,
+			ExtraLabels: extraLabels,
+			MinRisk:     jiraMinRisk,
+			DryRun:      jiraDryRun,
+			Concurrency: jiraConcurrency,
+		})
+		if err != nil {
+			log.Fatalf("jira export: %v", err)
+		}
+		fmt.Printf("Jira: created=%d skipped=%d errors=%d\n", sum.Created, sum.Skipped, sum.Errors)
 	}
 
 	// Optional report generation (vault-wide, time-bounded)
