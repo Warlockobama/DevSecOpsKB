@@ -72,6 +72,8 @@ func main() {
 		confParent         string
 		confTitlePrefix    string
 		confDryRun         bool
+		confFull           bool
+		confConcurrency    int
 		jiraURL            string
 		jiraUser           string
 		jiraToken          string
@@ -132,6 +134,8 @@ func main() {
 	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
 	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
 	flag.BoolVar(&confDryRun, "confluence-dry-run", false, "Dry-run Confluence export (log instead of POST).")
+	flag.BoolVar(&confFull, "confluence-full", false, "Export full vault to Confluence (INDEX, Dashboard, Triage Board, all definitions).")
+	flag.IntVar(&confConcurrency, "confluence-concurrency", 3, "Max parallel Confluence API requests for full export (default: 3, max: 5).")
 	flag.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables export of findings as Jira issues).")
 	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (for basic auth).")
 	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (for basic auth).")
@@ -141,7 +145,7 @@ func main() {
 	flag.StringVar(&jiraLabels, "jira-labels", "", "Comma-separated extra labels to add to each issue.")
 	flag.StringVar(&jiraMinRisk, "jira-min-risk", "low", "Minimum risk level to export: info|low|medium|high (default: low).")
 	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
-	flag.IntVar(&jiraConcurrency, "jira-concurrency", 5, "Max parallel Jira API requests (default: 5, max: 10).")
+	flag.IntVar(&jiraConcurrency, "jira-concurrency", 3, "Max parallel Jira API requests (default: 3, max: 5).")
 	flag.Parse()
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
@@ -488,23 +492,41 @@ func main() {
 		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
-		// Optional Confluence export (INDEX.md only for now)
+		// Optional Confluence export
 		if strings.TrimSpace(confURL) != "" {
-			confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer confCancel()
-			if err := confluence.Export(confCtx, vault, confluence.Options{
-				BaseURL:      confURL,
-				Username:     confUser,
-				APIToken:     confToken,
-				SpaceKey:     confSpace,
-				ParentPageID: confParent,
-				TitlePrefix:  confTitlePrefix,
-				MarkdownPage: "INDEX.md",
-				DryRun:       confDryRun,
-			}); err != nil {
-				log.Fatalf("confluence export: %v", err)
+			if confFull {
+				confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+				defer confCancel()
+				sum, cerr := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
+					BaseURL:     confURL,
+					Username:    confUser,
+					APIToken:    confToken,
+					SpaceKey:    confSpace,
+					DryRun:      confDryRun,
+					Concurrency: confConcurrency,
+				})
+				if cerr != nil {
+					log.Fatalf("confluence vault export: %v", cerr)
+				}
+				fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n",
+					sum.Created, sum.Updated, sum.Skipped, sum.Errors)
+			} else {
+				confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer confCancel()
+				if err := confluence.Export(confCtx, vault, confluence.Options{
+					BaseURL:      confURL,
+					Username:     confUser,
+					APIToken:     confToken,
+					SpaceKey:     confSpace,
+					ParentPageID: confParent,
+					TitlePrefix:  confTitlePrefix,
+					MarkdownPage: "INDEX.md",
+					DryRun:       confDryRun,
+				}); err != nil {
+					log.Fatalf("confluence export: %v", err)
+				}
+				fmt.Println("Exported INDEX.md to Confluence")
 			}
-			fmt.Println("Exported INDEX.md to Confluence")
 		}
 	default:
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)

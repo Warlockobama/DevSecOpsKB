@@ -21,7 +21,8 @@ func TestExport_CreateNewPage(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
 		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
 			gotPOST = true
-			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "123"})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
@@ -148,6 +149,179 @@ func TestExport_MissingRequiredFields(t *testing.T) {
 	err := Export(context.Background(), t.TempDir(), Options{})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestExportVault_FullTree(t *testing.T) {
+	// Track all pages created/updated by title.
+	created := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			// Always say page doesn't exist (all creates)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			created[title] = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# Dashboard")
+	mustWriteFile(t, filepath.Join(dir, "triage-board.md"), "# Triage")
+	mustWriteFile(t, filepath.Join(dir, "by-domain.md"), "# Domains")
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "100003-cookie-httponly.md"), "---\nid: def-100003\n---\n# Cookie Set Without HttpOnly Flag (Plugin 100003)")
+	mustWriteFile(t, filepath.Join(defsDir, "10016-missing-headers.md"), "# Missing Security Headers (Plugin 10016)")
+
+	sum, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:     srv.URL,
+		Username:    "user",
+		APIToken:    "token",
+		SpaceKey:    "KB",
+		Concurrency: 2,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expect: INDEX + DASHBOARD + Triage + By Domain + Definitions parent + 2 defs = 7
+	total := sum.Created + sum.Updated
+	if total != 7 {
+		t.Errorf("expected 7 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
+	}
+	// Verify key pages exist
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions"} {
+		if !created[title] {
+			t.Errorf("expected page %q to be created", title)
+		}
+	}
+}
+
+func TestExportVault_DryRun(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP call in dry-run: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# Dash")
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "10001-test.md"), "# Test")
+
+	sum, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		APIToken: "token",
+		SpaceKey: "KB",
+		DryRun:   true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sum.Skipped == 0 {
+		t.Error("expected skipped count in dry-run")
+	}
+}
+
+func TestExport_RetryOn429(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+			return
+		}
+		attempts++
+		if attempts <= 2 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(429)
+			w.Write([]byte("rate limited"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"id": "456"})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# Retry test")
+
+	err := Export(context.Background(), dir, Options{
+		BaseURL:  srv.URL,
+		Username: "user",
+		APIToken: "token",
+		SpaceKey: "KB",
+	})
+	if err != nil {
+		t.Fatalf("expected success after retry, got: %v", err)
+	}
+	if attempts < 3 {
+		t.Errorf("expected at least 3 attempts, got %d", attempts)
+	}
+}
+
+func TestStripFrontmatter(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"# No frontmatter", "# No frontmatter"},
+		{"---\nid: foo\n---\n# Title", "# Title"},
+		{"---\na: 1\nb: 2\n---\n\nBody", "Body"},
+		// Horizontal rule in body should NOT be treated as frontmatter close
+		{"---\nid: x\n---\n# Title\n\n---\n\nMore content", "# Title\n\n---\n\nMore content"},
+	}
+	for _, c := range cases {
+		got := stripFrontmatter(c.in)
+		if got != c.want {
+			t.Errorf("stripFrontmatter(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDefTitleFromContent(t *testing.T) {
+	cases := []struct {
+		content string
+		want    string
+	}{
+		{"# Cookie Set Without HttpOnly Flag (Plugin 100003)\n\n## Details", "Cookie Set Without HttpOnly Flag (Plugin 100003)"},
+		{"---\nid: x\n---\n# My Alert (Plugin 999)\n\nBody", "My Alert (Plugin 999)"},
+		{"No heading here", ""},
+	}
+	for _, c := range cases {
+		got := defTitleFromContent(c.content)
+		if got != c.want {
+			t.Errorf("defTitleFromContent(%q) = %q, want %q", c.content, got, c.want)
+		}
+	}
+}
+
+func TestDefTitleFromFilename(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"100003-cookie-set-without-httponly-flag.md", "100003 Cookie Set Without Httponly Flag"},
+		{"10016-missing-headers.md", "10016 Missing Headers"},
+		{"100006-info-disclosure-persistence-.md", "100006 Info Disclosure Persistence"},
+	}
+	for _, c := range cases {
+		got := defTitleFromFilename(c.in)
+		if got != c.want {
+			t.Errorf("defTitleFromFilename(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
