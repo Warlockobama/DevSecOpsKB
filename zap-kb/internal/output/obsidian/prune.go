@@ -2,6 +2,7 @@ package obsidian
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,7 +16,16 @@ import (
 // Returns the number of files deleted (or that would be deleted) and the list
 // of matched file paths (relative to the occurrences dir where possible).
 func PruneByScan(root, label, siteLabel string, dryRun bool) (int, []string, error) {
-	occDir := filepath.Join(root, "occurrences")
+	// Resolve root to an absolute path and verify the occurrences dir is a
+	// descendant of it, preventing path-traversal via caller-controlled root values.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return 0, nil, fmt.Errorf("prune: resolve root path: %w", err)
+	}
+	occDir := filepath.Join(absRoot, "occurrences")
+	if !strings.HasPrefix(filepath.Clean(occDir)+string(filepath.Separator), filepath.Clean(absRoot)+string(filepath.Separator)) {
+		return 0, nil, fmt.Errorf("prune: occurrences dir %q escapes vault root %q", occDir, absRoot)
+	}
 
 	info, err := os.Stat(occDir)
 	if err != nil {

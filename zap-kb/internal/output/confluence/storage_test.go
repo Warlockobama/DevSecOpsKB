@@ -165,8 +165,12 @@ func TestMdToStorage_ObsidianCalloutWarning(t *testing.T) {
 
 func TestMdToStorage_WikilinkWithDisplay(t *testing.T) {
 	out := mdToStorage("See [[definitions/10038-csp.md|Content Security Policy]]")
-	if strings.Contains(out, "[[") || strings.Contains(out, "]]") {
-		t.Errorf("wikilink syntax leaked into output: %s", out)
+	// Should emit a Confluence page link macro, not plain text
+	if !strings.Contains(out, `<ac:link>`) {
+		t.Errorf("missing ac:link macro: %s", out)
+	}
+	if !strings.Contains(out, `ri:content-title="Content Security Policy"`) {
+		t.Errorf("missing page title in link: %s", out)
 	}
 	if !strings.Contains(out, "Content Security Policy") {
 		t.Errorf("missing wikilink display text: %s", out)
@@ -175,11 +179,11 @@ func TestMdToStorage_WikilinkWithDisplay(t *testing.T) {
 
 func TestMdToStorage_WikilinkNoDisplay(t *testing.T) {
 	out := mdToStorage("See [[fin-1234abcd]]")
-	if strings.Contains(out, "[[") {
-		t.Errorf("wikilink syntax leaked: %s", out)
+	if !strings.Contains(out, `<ac:link>`) {
+		t.Errorf("missing ac:link macro: %s", out)
 	}
 	if !strings.Contains(out, "fin-1234abcd") {
-		t.Errorf("missing wikilink path as text: %s", out)
+		t.Errorf("missing wikilink text: %s", out)
 	}
 }
 
@@ -258,6 +262,332 @@ func TestIsTableSeparator(t *testing.T) {
 		got := isTableSeparator(c.in)
 		if got != c.want {
 			t.Errorf("isTableSeparator(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMdToStorage_OrderedList(t *testing.T) {
+	out := mdToStorage("1. first\n2. second\n3. third")
+	if !strings.Contains(out, "<ol>") || !strings.Contains(out, "</ol>") {
+		t.Errorf("missing ol tags: %s", out)
+	}
+	if !strings.Contains(out, "<li>first</li>") {
+		t.Errorf("missing first item: %s", out)
+	}
+	if !strings.Contains(out, "<li>second</li>") {
+		t.Errorf("missing second item: %s", out)
+	}
+	if !strings.Contains(out, "<li>third</li>") {
+		t.Errorf("missing third item: %s", out)
+	}
+	// Must not produce unordered list tags
+	if strings.Contains(out, "<ul>") {
+		t.Errorf("unexpected ul tag in ordered list output: %s", out)
+	}
+}
+
+func TestMdToStorage_H4H5H6(t *testing.T) {
+	cases := []struct {
+		md      string
+		wantTag string
+		wantText string
+	}{
+		{"#### H4 Heading", "h4", "H4 Heading"},
+		{"##### H5 Heading", "h5", "H5 Heading"},
+		{"###### H6 Heading", "h6", "H6 Heading"},
+	}
+	for _, c := range cases {
+		out := mdToStorage(c.md)
+		open := "<" + c.wantTag + ">"
+		close := "</" + c.wantTag + ">"
+		if !strings.Contains(out, open) || !strings.Contains(out, close) {
+			t.Errorf("mdToStorage(%q): missing %s tags, got: %s", c.md, c.wantTag, out)
+		}
+		if !strings.Contains(out, c.wantText) {
+			t.Errorf("mdToStorage(%q): missing heading text %q, got: %s", c.md, c.wantText, out)
+		}
+	}
+}
+
+func TestMdToStorage_ItalicFalsePositive(t *testing.T) {
+	cases := []string{
+		"Content_Type",
+		"zap_finding_id",
+		"foo_bar_baz",
+	}
+	for _, input := range cases {
+		out := mdToStorage(input)
+		if strings.Contains(out, "<em>") {
+			t.Errorf("mdToStorage(%q): unexpected <em> tag for identifier with underscores, got: %s", input, out)
+		}
+	}
+}
+
+func TestMdToStorage_ItalicValid(t *testing.T) {
+	cases := []struct {
+		md   string
+		want string
+	}{
+		{"_italic text_", "<em>italic text</em>"},
+		{"_No data yet_", "<em>No data yet</em>"},
+		{"prefix _italic_ suffix", "<em>italic</em>"},
+	}
+	for _, c := range cases {
+		out := mdToStorage(c.md)
+		if !strings.Contains(out, c.want) {
+			t.Errorf("mdToStorage(%q): expected %q in output, got: %s", c.md, c.want, out)
+		}
+	}
+}
+
+func TestMdToStorage_CalloutMultiLine(t *testing.T) {
+	md := "> [!Info]\n> Line one\n> Line two\n> Line three"
+	out := mdToStorage(md)
+	if !strings.Contains(out, `name="info"`) {
+		t.Errorf("missing info macro: %s", out)
+	}
+	// Each line is processed through inlineToStorage individually, then joined
+	// with literal <br/> tags so line breaks render in Confluence.
+	if !strings.Contains(out, "Line one<br/>Line two") {
+		t.Errorf("expected <br/> between callout lines, got: %s", out)
+	}
+	if !strings.Contains(out, "Line two<br/>Line three") {
+		t.Errorf("expected <br/> between second and third callout lines, got: %s", out)
+	}
+	// Must not join with plain spaces
+	if strings.Contains(out, "Line one Line two") {
+		t.Errorf("callout lines must not be space-joined, got: %s", out)
+	}
+}
+
+func TestRiskStatusMacro(t *testing.T) {
+	cases := []struct {
+		risk        string
+		wantColor   string
+		wantTitle   string
+	}{
+		{"High", "Red", "HIGH"},
+		{"high", "Red", "HIGH"},
+		{"Medium", "Yellow", "MEDIUM"},
+		{"medium", "Yellow", "MEDIUM"},
+		{"Low", "Blue", "LOW"},
+		{"low", "Blue", "LOW"},
+		{"Informational", "Grey", "INFO"},
+		{"informational", "Grey", "INFO"},
+		{"Info", "Grey", "INFO"},
+		{"info", "Grey", "INFO"},
+		{"", "Grey", "UNKNOWN"},
+		{"Unknown", "Grey", "UNKNOWN"},
+	}
+	for _, c := range cases {
+		out := riskStatusMacro(c.risk)
+		if !strings.Contains(out, `name="status"`) {
+			t.Errorf("riskStatusMacro(%q): missing status macro name, got: %s", c.risk, out)
+		}
+		wantColorParam := `<ac:parameter name="colour">` + c.wantColor + `</ac:parameter>`
+		if !strings.Contains(out, wantColorParam) {
+			t.Errorf("riskStatusMacro(%q): expected colour %q, got: %s", c.risk, c.wantColor, out)
+		}
+		wantTitleParam := `<ac:parameter name="title">` + c.wantTitle + `</ac:parameter>`
+		if !strings.Contains(out, wantTitleParam) {
+			t.Errorf("riskStatusMacro(%q): expected title %q, got: %s", c.risk, c.wantTitle, out)
+		}
+	}
+}
+
+func TestPagePropertiesMacro(t *testing.T) {
+	t.Run("empty_props_returns_empty", func(t *testing.T) {
+		out := pagePropertiesMacro(nil)
+		if out != "" {
+			t.Errorf("expected empty string for nil props, got: %s", out)
+		}
+		out = pagePropertiesMacro([][2]string{})
+		if out != "" {
+			t.Errorf("expected empty string for empty props, got: %s", out)
+		}
+	})
+
+	t.Run("single_kv", func(t *testing.T) {
+		out := pagePropertiesMacro([][2]string{{"Risk", "High"}})
+		if !strings.Contains(out, `name="details"`) {
+			t.Errorf("missing details macro: %s", out)
+		}
+		if !strings.Contains(out, "<th>Risk</th>") {
+			t.Errorf("missing th key: %s", out)
+		}
+		if !strings.Contains(out, "<td>High</td>") {
+			t.Errorf("missing td value: %s", out)
+		}
+	})
+
+	t.Run("multiple_kvs", func(t *testing.T) {
+		props := [][2]string{
+			{"Risk", "Medium"},
+			{"Confidence", "High"},
+			{"URL", "http://example.com"},
+		}
+		out := pagePropertiesMacro(props)
+		if !strings.Contains(out, "<th>Risk</th>") {
+			t.Errorf("missing Risk key: %s", out)
+		}
+		if !strings.Contains(out, "<th>Confidence</th>") {
+			t.Errorf("missing Confidence key: %s", out)
+		}
+		if !strings.Contains(out, "<th>URL</th>") {
+			t.Errorf("missing URL key: %s", out)
+		}
+		// Verify table structure
+		if !strings.Contains(out, "<table><tbody>") {
+			t.Errorf("missing table structure: %s", out)
+		}
+		if !strings.Contains(out, "</tbody></table>") {
+			t.Errorf("missing closing table structure: %s", out)
+		}
+	})
+
+	t.Run("html_escaping_in_keys", func(t *testing.T) {
+		out := pagePropertiesMacro([][2]string{{"AT&T", "value"}})
+		if strings.Contains(out, "<th>AT&T</th>") {
+			t.Errorf("key should be HTML-escaped, got unescaped: %s", out)
+		}
+		if !strings.Contains(out, "<th>AT&amp;T</th>") {
+			t.Errorf("expected HTML-escaped key, got: %s", out)
+		}
+	})
+
+	t.Run("value_passes_through_unescaped", func(t *testing.T) {
+		// Values may contain pre-formatted macros or links
+		macro := `<a href="https://example.com">link</a>`
+		out := pagePropertiesMacro([][2]string{{"CWE", macro}})
+		if !strings.Contains(out, macro) {
+			t.Errorf("value should pass through unescaped, got: %s", out)
+		}
+	})
+}
+
+func TestMdToStorage_NestedList(t *testing.T) {
+	md := "- Top item\n  - Nested item\n    - Deep nested\n- Another top"
+	out := mdToStorage(md)
+	// Should produce nested <ul> tags
+	ulCount := strings.Count(out, "<ul>")
+	if ulCount < 2 {
+		t.Errorf("expected at least 2 nested <ul> tags, got %d: %s", ulCount, out)
+	}
+	if !strings.Contains(out, "<li>Top item</li>") {
+		t.Errorf("missing top-level item: %s", out)
+	}
+	if !strings.Contains(out, "<li>Nested item</li>") {
+		t.Errorf("missing nested item: %s", out)
+	}
+	if !strings.Contains(out, "<li>Deep nested</li>") {
+		t.Errorf("missing deep nested item: %s", out)
+	}
+}
+
+func TestMdToStorage_NestedListWithWikilinks(t *testing.T) {
+	md := "- [[findings/fin-abc.md|CSP Issue]] — occurrences: 1\n  - Samples:\n    - [[occurrences/occ-123.md|main.js]]"
+	out := mdToStorage(md)
+	// Both wikilinks should be ac:link macros
+	linkCount := strings.Count(out, "<ac:link>")
+	if linkCount < 2 {
+		t.Errorf("expected at least 2 ac:link macros, got %d: %s", linkCount, out)
+	}
+	if !strings.Contains(out, "CSP Issue") {
+		t.Errorf("missing finding link text: %s", out)
+	}
+	if !strings.Contains(out, "main.js") {
+		t.Errorf("missing occurrence link text: %s", out)
+	}
+}
+
+func TestMdToStorage_DetailsToExpandMacro(t *testing.T) {
+	md := "## Other info\n\n<details>\n<summary>Show details</summary>\n\nSome detailed content here.\n\n</details>\n\n## Next section"
+	out := mdToStorage(md)
+	if !strings.Contains(out, `name="expand"`) {
+		t.Errorf("missing expand macro: %s", out)
+	}
+	if !strings.Contains(out, "Show details") {
+		t.Errorf("missing expand title: %s", out)
+	}
+	if !strings.Contains(out, "Some detailed content here") {
+		t.Errorf("missing expand content: %s", out)
+	}
+	// Next section should still render
+	if !strings.Contains(out, "<h2>Next section</h2>") {
+		t.Errorf("missing section after details: %s", out)
+	}
+}
+
+func TestMdToStorageWithTitles_ResolvesCorrectly(t *testing.T) {
+	titleMap := map[string]string{
+		"definitions/10038-csp.md": "Content Security Policy (CSP) Header Not Set (Plugin 10038)",
+		"occ-abc123.md":            "Occurrence occ-abc123 — CSP juice-shop",
+	}
+	md := "- Definition: [[definitions/10038-csp.md|CSP Header]]\n- [[occ-abc123.md|short label]]"
+	out := mdToStorageWithTitles(md, titleMap)
+
+	// Definition link should use the actual page title from titleMap
+	if !strings.Contains(out, `ri:content-title="Content Security Policy (CSP) Header Not Set (Plugin 10038)"`) {
+		t.Errorf("expected resolved definition title from titleMap, got: %s", out)
+	}
+	// Occurrence link should also use titleMap
+	if !strings.Contains(out, `ri:content-title="Occurrence occ-abc123`) {
+		t.Errorf("expected resolved occurrence title from titleMap, got: %s", out)
+	}
+}
+
+// TestMdToStorage_DetailsWithCodeBlock verifies that a <details> block whose
+// body contains a fenced code block converts to an expand macro wrapping a
+// Confluence code macro — the pattern used by occurrence ## Traffic sections.
+func TestMdToStorage_DetailsWithCodeBlock(t *testing.T) {
+	md := "## Traffic\n\n" +
+		"<details>\n<summary>Show traffic</summary>\n\n" +
+		"### Request\n\n" +
+		"GET /api/v1/data\n\n" +
+		"```http\n{\"key\":\"value\"}\n```\n\n" +
+		"### Response\n\nStatus: 200\n\n" +
+		"</details>\n"
+
+	out := mdToStorage(md)
+
+	if !strings.Contains(out, `name="expand"`) {
+		t.Errorf("expected expand macro, got: %s", out)
+	}
+	if !strings.Contains(out, "Show traffic") {
+		t.Errorf("expand title missing: %s", out)
+	}
+	// Inner code block should become a Confluence code macro
+	if !strings.Contains(out, `name="code"`) {
+		t.Errorf("inner code block should become code macro, got: %s", out)
+	}
+	if !strings.Contains(out, `{"key":"value"}`) {
+		t.Errorf("code body should be present, got: %s", out)
+	}
+	// Headings inside expand should render
+	if !strings.Contains(out, "<h3>Request</h3>") {
+		t.Errorf("Request heading inside expand macro missing: %s", out)
+	}
+}
+
+func TestWikilinkToTitle(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"definitions/10038-csp-header-not-set.md", "10038 Csp Header Not Set"},
+		{"definitions/100003-cookie-httponly.md", "100003 Cookie Httponly"},
+		{"fin-1234abcd", "fin-1234abcd"},
+		{"occ-deadbeef", "occ-deadbeef"},
+		{"10016-missing-headers.md", "10016 Missing Headers"},
+		// No extension, no directory prefix
+		{"10001-some-alert", "10001 Some Alert"},
+		// Empty path edge case
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := wikilinkToTitle(c.path)
+		if got != c.want {
+			t.Errorf("wikilinkToTitle(%q) = %q, want %q", c.path, got, c.want)
 		}
 	}
 }

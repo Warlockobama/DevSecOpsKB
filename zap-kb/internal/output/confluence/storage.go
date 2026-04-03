@@ -1,16 +1,19 @@
 package confluence
 
 import (
+	"fmt"
 	"strings"
+	"unicode"
 )
 
 // mdToStorage converts markdown (including Obsidian-flavoured extensions) to
 // Confluence storage format (XHTML).
 //
 // Supported constructs:
-//   - Headings: # H1 through ### H3
+//   - Headings: # H1 through ###### H6
 //   - Paragraphs
 //   - Bullet lists: - item (including task lists - [ ] / - [x])
+//   - Ordered lists: 1. item
 //   - Tables: | col | col | with | --- | separator row
 //   - Fenced code blocks: ```lang ... ```
 //   - Blockquotes: > text
@@ -18,19 +21,33 @@ import (
 //   - Horizontal rules: ---
 //   - Inline: [text](url), _italic_, **bold**, `code`, [[wikilink|text]]
 func mdToStorage(md string) string {
+	return mdToStorageWithTitles(md, nil)
+}
+
+// mdToStorageWithTitles converts markdown to Confluence storage format.
+// titleMap maps vault-relative paths (e.g. "definitions/10038-csp.md") to
+// the actual Confluence page title, enabling correct wikilink resolution.
+func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 	lines := strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n")
 	var out strings.Builder
 
+	// Closure for inline conversion that carries the title map through.
+	inline := func(s string) string {
+		return inlineToStorageWithTitles(s, titleMap)
+	}
+
 	type blockKind int
 	const (
-		noBlock    blockKind = iota
-		inList               // <ul>
-		inTable              // <table>
-		inCode               // fenced code block
-		inCallout            // Obsidian callout / blockquote
+		noBlock      blockKind = iota
+		inList                 // <ul>
+		inOrderedList          // <ol>
+		inTable                // <table>
+		inCode                 // fenced code block
+		inCallout              // Obsidian callout / blockquote
 	)
 
 	block := noBlock
+	listDepth := 0 // current nesting depth for bullet lists
 	var codeLang string
 	var codeLines []string
 	calloutKind := ""       // "info", "note", "warning"
@@ -39,25 +56,30 @@ func mdToStorage(md string) string {
 	closeOpenBlocks := func() {
 		switch block {
 		case inList:
+			for listDepth > 0 {
+				out.WriteString("</ul>")
+				listDepth--
+			}
 			out.WriteString("</ul>")
+		case inOrderedList:
+			out.WriteString("</ol>")
 		case inTable:
 			out.WriteString("</tbody></table>")
 		case inCallout:
-			body := strings.Join(calloutLines, " ")
-			switch calloutKind {
-			case "warning":
-				out.WriteString(`<ac:structured-macro name="warning"><ac:rich-text-body><p>`)
-				out.WriteString(inlineToStorage(body))
-				out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
-			case "note":
-				out.WriteString(`<ac:structured-macro name="note"><ac:rich-text-body><p>`)
-				out.WriteString(inlineToStorage(body))
-				out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
-			default: // info
-				out.WriteString(`<ac:structured-macro name="info"><ac:rich-text-body><p>`)
-				out.WriteString(inlineToStorage(body))
-				out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
+			// Process each line through inlineToStorage first, then join with <br/>
+			// so the <br/> tags are not HTML-escaped.
+			processed := make([]string, len(calloutLines))
+			for ci, cl := range calloutLines {
+				processed[ci] = inline(cl)
 			}
+			body := strings.Join(processed, "<br/>")
+			macroName := calloutKind
+			if macroName == "" {
+				macroName = "info"
+			}
+			out.WriteString(`<ac:structured-macro name="` + macroName + `"><ac:rich-text-body><p>`)
+			out.WriteString(body)
+			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			calloutLines = calloutLines[:0]
 			calloutKind = ""
 		}
@@ -132,7 +154,7 @@ func mdToStorage(md string) string {
 			// Plain blockquote — close any open block, emit as info macro
 			closeOpenBlocks()
 			out.WriteString(`<ac:structured-macro name="info"><ac:rich-text-body><p>`)
-			out.WriteString(inlineToStorage(content))
+			out.WriteString(inline(content))
 			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			continue
 		}
@@ -149,25 +171,13 @@ func mdToStorage(md string) string {
 		}
 
 		// --- Heading ---
-		if strings.HasPrefix(trimmed, "### ") {
+		if h := headingLevel(trimmed); h > 0 {
 			closeOpenBlocks()
-			out.WriteString("<h3>")
-			out.WriteString(inlineToStorage(trimmed[4:]))
-			out.WriteString("</h3>")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "## ") {
-			closeOpenBlocks()
-			out.WriteString("<h2>")
-			out.WriteString(inlineToStorage(trimmed[3:]))
-			out.WriteString("</h2>")
-			continue
-		}
-		if strings.HasPrefix(trimmed, "# ") {
-			closeOpenBlocks()
-			out.WriteString("<h1>")
-			out.WriteString(inlineToStorage(trimmed[2:]))
-			out.WriteString("</h1>")
+			tag := fmt.Sprintf("h%d", h)
+			text := strings.TrimSpace(trimmed[h+1:]) // skip "### " prefix
+			out.WriteString("<" + tag + ">")
+			out.WriteString(inline(text))
+			out.WriteString("</" + tag + ">")
 			continue
 		}
 
@@ -204,7 +214,7 @@ func mdToStorage(md string) string {
 				out.WriteString("<")
 				out.WriteString(tag)
 				out.WriteString(">")
-				out.WriteString(inlineToStorage(strings.TrimSpace(cell)))
+				out.WriteString(inline(strings.TrimSpace(cell)))
 				out.WriteString("</")
 				out.WriteString(tag)
 				out.WriteString(">")
@@ -218,33 +228,90 @@ func mdToStorage(md string) string {
 			closeOpenBlocks()
 		}
 
-		// --- Bullet list item ---
-		if strings.HasPrefix(trimmed, "- ") {
+		// --- Bullet list item (with nesting support) ---
+		if bulletItem, depth := parseBulletItem(line); bulletItem != "" {
 			if block != inList {
 				closeOpenBlocks()
 				out.WriteString("<ul>")
 				block = inList
+				listDepth = 0
 			}
-			item := trimmed[2:]
+			// Adjust nesting depth
+			for listDepth < depth {
+				out.WriteString("<ul>")
+				listDepth++
+			}
+			for listDepth > depth {
+				out.WriteString("</ul>")
+				listDepth--
+			}
+			item := bulletItem
 			if strings.HasPrefix(item, "[ ] ") {
 				item = "☐ " + item[4:]
 			} else if strings.HasPrefix(item, "[x] ") || strings.HasPrefix(item, "[X] ") {
 				item = "☑ " + item[4:]
 			}
 			out.WriteString("<li>")
-			out.WriteString(inlineToStorage(item))
+			out.WriteString(inline(item))
 			out.WriteString("</li>")
 			continue
 		}
 
-		// Close list if we leave list context
+		// Close bullet list if we leave list context
 		if block == inList {
 			closeOpenBlocks()
 		}
 
+		// --- Ordered list item ---
+		if olItem := orderedListItem(trimmed); olItem != "" {
+			if block != inOrderedList {
+				closeOpenBlocks()
+				out.WriteString("<ol>")
+				block = inOrderedList
+			}
+			out.WriteString("<li>")
+			out.WriteString(inline(olItem))
+			out.WriteString("</li>")
+			continue
+		}
+
+		// Close ordered list if we leave list context
+		if block == inOrderedList {
+			closeOpenBlocks()
+		}
+
+		// --- HTML <details>/<summary> → Confluence expand macro ---
+		if strings.HasPrefix(trimmed, "<details>") {
+			closeOpenBlocks()
+			// Collect content until </details>
+			expandTitle := "Details"
+			var expandLines []string
+			i++
+			for i < len(lines) {
+				dl := strings.TrimSpace(lines[i])
+				if strings.HasPrefix(dl, "<summary>") {
+					expandTitle = strings.TrimSuffix(strings.TrimPrefix(dl, "<summary>"), "</summary>")
+					i++
+					continue
+				}
+				if strings.HasPrefix(dl, "</details>") {
+					break
+				}
+				expandLines = append(expandLines, lines[i])
+				i++
+			}
+			expandContent := strings.Join(expandLines, "\n")
+			out.WriteString(`<ac:structured-macro name="expand"><ac:parameter name="title">`)
+			out.WriteString(escapeHTML(expandTitle))
+			out.WriteString(`</ac:parameter><ac:rich-text-body>`)
+			out.WriteString(mdToStorageWithTitles(expandContent, titleMap))
+			out.WriteString(`</ac:rich-text-body></ac:structured-macro>`)
+			continue
+		}
+
 		// --- Regular paragraph ---
 		out.WriteString("<p>")
-		out.WriteString(inlineToStorage(trimmed))
+		out.WriteString(inline(trimmed))
 		out.WriteString("</p>")
 	}
 
@@ -256,19 +323,38 @@ func mdToStorage(md string) string {
 // Handles: [[wikilink|text]], [text](url), **bold**, _italic_, `code`,
 // HTML-escaping.
 func inlineToStorage(s string) string {
+	return inlineToStorageWithTitles(s, nil)
+}
+
+// inlineToStorageWithTitles converts inline markdown with wikilink title resolution.
+func inlineToStorageWithTitles(s string, titleMap map[string]string) string {
 	var out strings.Builder
 	i := 0
 	for i < len(s) {
 		// Obsidian wikilink: [[path|display]] or [[path]]
+		// Emit Confluence page link macro so cross-references are navigable.
 		if i+1 < len(s) && s[i] == '[' && s[i+1] == '[' {
 			end := strings.Index(s[i+2:], "]]")
 			if end >= 0 {
 				inner := s[i+2 : i+2+end]
+				path := inner
 				text := inner
 				if idx := strings.LastIndex(inner, "|"); idx >= 0 {
+					path = inner[:idx]
 					text = inner[idx+1:]
 				}
-				out.WriteString(escapeHTML(text))
+				// Resolve page title: titleMap (exact) > display text > wikilinkToTitle fallback
+				pageTitle := resolveWikilinkTitle(path, titleMap)
+				// If titleMap didn't resolve and display text differs from path,
+				// prefer display text (it's usually close to the actual page title).
+				if pageTitle == wikilinkToTitle(path) && text != path {
+					pageTitle = text
+				}
+				out.WriteString(`<ac:link><ri:page ri:content-title="`)
+				out.WriteString(escapeAttr(pageTitle))
+				out.WriteString(`"/><ac:plain-text-link-body><![CDATA[`)
+				out.WriteString(text)
+				out.WriteString(`]]></ac:plain-text-link-body></ac:link>`)
 				i = i + 2 + end + 2
 				continue
 			}
@@ -311,17 +397,25 @@ func inlineToStorage(s string) string {
 			}
 		}
 
-		// Italic: _text_ (not preceded by word char to avoid mid-word)
+		// Italic: _text_ — require non-word char (or start/end of string) on both sides
+		// to avoid false positives in identifiers like Content_Type or zap_finding.
 		if s[i] == '_' && i+1 < len(s) {
-			closeUnderscore := strings.Index(s[i+1:], "_")
-			if closeUnderscore >= 0 {
-				text := s[i+1 : i+1+closeUnderscore]
-				if len(text) > 0 && !strings.Contains(text, "\n") {
-					out.WriteString("<em>")
-					out.WriteString(escapeHTML(text))
-					out.WriteString("</em>")
-					i = i + 1 + closeUnderscore + 1
-					continue
+			// Must not be preceded by a word character
+			if i == 0 || !isWordChar(s[i-1]) {
+				closeUnderscore := strings.Index(s[i+1:], "_")
+				if closeUnderscore >= 0 {
+					afterClose := i + 1 + closeUnderscore + 1
+					// Must not be followed by a word character
+					if afterClose >= len(s) || !isWordChar(s[afterClose]) {
+						text := s[i+1 : i+1+closeUnderscore]
+						if len(text) > 0 && !strings.Contains(text, "\n") {
+							out.WriteString("<em>")
+							out.WriteString(escapeHTML(text))
+							out.WriteString("</em>")
+							i = afterClose
+							continue
+						}
+					}
 				}
 			}
 		}
@@ -390,4 +484,143 @@ func parseTableRow(line string) []string {
 		result = append(result, strings.TrimSpace(p))
 	}
 	return result
+}
+
+// parseBulletItem detects a bullet list item at any indentation level.
+// Returns (item text, depth) where depth 0 = top-level, 1 = 2-space indent, 2 = 4-space, etc.
+// Returns ("", 0) if the line is not a bullet item.
+func parseBulletItem(line string) (string, int) {
+	// Count leading spaces
+	spaces := 0
+	for spaces < len(line) && line[spaces] == ' ' {
+		spaces++
+	}
+	rest := line[spaces:]
+	if !strings.HasPrefix(rest, "- ") {
+		return "", 0
+	}
+	depth := spaces / 2 // 2 spaces per nesting level
+	return strings.TrimSpace(rest[2:]), depth
+}
+
+// headingLevel returns 1-6 for lines starting with "# " through "###### ",
+// or 0 if the line is not a heading.
+func headingLevel(line string) int {
+	level := 0
+	for level < len(line) && level < 6 && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level >= len(line) || line[level] != ' ' {
+		return 0
+	}
+	return level
+}
+
+// orderedListItem returns the item text if line matches "N. text", or empty string.
+func orderedListItem(line string) string {
+	i := 0
+	for i < len(line) && line[i] >= '0' && line[i] <= '9' {
+		i++
+	}
+	if i == 0 || i >= len(line)-1 || line[i] != '.' || line[i+1] != ' ' {
+		return ""
+	}
+	return strings.TrimSpace(line[i+2:])
+}
+
+// isWordChar returns true if b is a letter, digit, or underscore.
+func isWordChar(b byte) bool {
+	return unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b)) || b == '_'
+}
+
+// resolveWikilinkTitle resolves a wikilink path to the actual Confluence page title.
+// Uses the titleMap for exact match first, then falls back to wikilinkToTitle heuristic.
+func resolveWikilinkTitle(path string, titleMap map[string]string) string {
+	if titleMap != nil {
+		// Try exact path match
+		if title, ok := titleMap[path]; ok {
+			return title
+		}
+		// Try without leading directory for same-directory links
+		if idx := strings.LastIndex(path, "/"); idx >= 0 {
+			base := path[idx+1:]
+			if title, ok := titleMap[base]; ok {
+				return title
+			}
+		}
+	}
+	return wikilinkToTitle(path)
+}
+
+// wikilinkToTitle derives a Confluence page title from an Obsidian wikilink path.
+// e.g. "definitions/10038-csp-header-not-set.md" → "10038 Csp Header Not Set"
+// e.g. "fin-1234abcd" → "fin-1234abcd"
+func wikilinkToTitle(path string) string {
+	// Strip directory prefix and .md extension
+	base := path
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		base = path[idx+1:]
+	}
+	base = strings.TrimSuffix(base, ".md")
+	if base == "" {
+		return path
+	}
+	// If it looks like a definition filename (digits-words), titleize it
+	parts := strings.SplitN(base, "-", 2)
+	if len(parts) == 2 && len(parts[0]) > 0 && parts[0][0] >= '0' && parts[0][0] <= '9' {
+		words := strings.Split(parts[1], "-")
+		for i, w := range words {
+			if len(w) > 0 {
+				words[i] = strings.ToUpper(w[:1]) + w[1:]
+			}
+		}
+		return parts[0] + " " + strings.Join(words, " ")
+	}
+	return base
+}
+
+// riskStatusMacro returns a Confluence status lozenge macro for the given risk level.
+func riskStatusMacro(risk string) string {
+	color := "Grey"
+	label := strings.ToUpper(strings.TrimSpace(risk))
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "high":
+		color = "Red"
+	case "medium":
+		color = "Yellow"
+	case "low":
+		color = "Blue"
+	case "informational", "info":
+		color = "Grey"
+		label = "INFO"
+	}
+	if label == "" {
+		label = "UNKNOWN"
+	}
+	return fmt.Sprintf(`<ac:structured-macro name="status"><ac:parameter name="colour">%s</ac:parameter><ac:parameter name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(label))
+}
+
+// pagePropertiesMacro builds a Confluence Page Properties macro from key-value pairs.
+// Page Properties macros make metadata searchable and usable in Page Properties Report macros.
+//
+// SECURITY CONTRACT: keys are HTML-escaped by this function.
+// Values are written verbatim into the table cell — they MUST already be safe
+// Confluence storage XML (e.g., the output of riskStatusMacro, escapeHTML, or
+// a pre-built ac:link element). Callers that pass plain-text values MUST call
+// escapeHTML on them first. Passing raw user-controlled strings is an injection risk.
+func pagePropertiesMacro(props [][2]string) string {
+	if len(props) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<ac:structured-macro name="details"><ac:rich-text-body><table><tbody>`)
+	for _, kv := range props {
+		b.WriteString("<tr><th>")
+		b.WriteString(escapeHTML(kv[0]))
+		b.WriteString("</th><td>")
+		b.WriteString(kv[1]) // pre-formatted storage XML — see contract above
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</tbody></table></ac:rich-text-body></ac:structured-macro>")
+	return b.String()
 }

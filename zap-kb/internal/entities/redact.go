@@ -54,6 +54,12 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			e.Findings[i].URL = redactURL(e.Findings[i].URL, ro)
 		}
 	}
+	// rawHeaderRedact is true whenever any mode that can expose credentials in the
+	// raw header block is active. RawHeader is an unstructured string — we cannot
+	// selectively redact it, so we zero the field entirely to preserve the guarantee
+	// that -redact removes sensitive values from the output.
+	rawHeaderRedact := ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query
+
 	for i := range e.Occurrences {
 		if ro.Domain || ro.Query {
 			e.Occurrences[i].URL = redactURL(e.Occurrences[i].URL, ro)
@@ -63,16 +69,22 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			if ro.Body {
 				e.Occurrences[i].Request.BodySnippet = ""
 			}
-			if ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query {
+			if rawHeaderRedact {
 				e.Occurrences[i].Request.Headers = redactHeaders(e.Occurrences[i].Request.Headers, ro)
+				// RawHeader is an unstructured string that cannot be selectively
+				// redacted — zero it out to prevent credential bypass.
+				e.Occurrences[i].Request.RawHeader = ""
+				e.Occurrences[i].Request.RawHeaderBytes = 0
 			}
 		}
 		if e.Occurrences[i].Response != nil {
 			if ro.Body {
 				e.Occurrences[i].Response.BodySnippet = ""
 			}
-			if ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query {
+			if rawHeaderRedact {
 				e.Occurrences[i].Response.Headers = redactHeaders(e.Occurrences[i].Response.Headers, ro)
+				e.Occurrences[i].Response.RawHeader = ""
+				e.Occurrences[i].Response.RawHeaderBytes = 0
 			}
 		}
 	}

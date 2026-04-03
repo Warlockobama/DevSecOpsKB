@@ -85,8 +85,8 @@ func main() {
 		jiraDryRun         bool
 		jiraConcurrency    int
 	)
-	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL")
-	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (if required)")
+	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
+	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
 	flag.StringVar(&baseURL, "baseurl", "", "Filter alerts by baseurl (optional)")
 	flag.IntVar(&count, "count", 0, "Number of alerts to fetch (0 = all)")
 	flag.StringVar(&out, "out", "docs/data/alerts.json", "Write JSON to this path")
@@ -128,8 +128,8 @@ func main() {
 	flag.StringVar(&reportTitle, "report-title", "", "Optional title for the generated report.")
 	flag.StringVar(&reportScanLabel, "report-scan", "", "Optional scan.label filter for the report.")
 	flag.StringVar(&confURL, "confluence-url", "", "Confluence base URL (enables export of INDEX.md to Confluence).")
-	flag.StringVar(&confUser, "confluence-user", "", "Confluence username (for basic auth).")
-	flag.StringVar(&confToken, "confluence-token", "", "Confluence API token (for basic auth).")
+	flag.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER).")
+	flag.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN).")
 	flag.StringVar(&confSpace, "confluence-space", "", "Confluence space key.")
 	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
 	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
@@ -137,8 +137,8 @@ func main() {
 	flag.BoolVar(&confFull, "confluence-full", false, "Export full vault to Confluence (INDEX, Dashboard, Triage Board, all definitions).")
 	flag.IntVar(&confConcurrency, "confluence-concurrency", 3, "Max parallel Confluence API requests for full export (default: 3, max: 5).")
 	flag.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables export of findings as Jira issues).")
-	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (for basic auth).")
-	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (for basic auth).")
+	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER).")
+	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN).")
 	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (e.g. SEC).")
 	flag.StringVar(&jiraIssueType, "jira-issue-type", "Bug", "Jira issue type (default: Bug).")
 	flag.StringVar(&jiraComponent, "jira-component", "", "Optional Jira component name to assign.")
@@ -147,6 +147,23 @@ func main() {
 	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
 	flag.IntVar(&jiraConcurrency, "jira-concurrency", 3, "Max parallel Jira API requests (default: 3, max: 5).")
 	flag.Parse()
+
+	// Environment variable fallbacks for credentials and URLs.
+	// Flags take precedence; env vars are checked only when the flag is empty.
+	// This keeps credentials out of the process table and shell history.
+	envFallback := func(p *string, envKey string) {
+		if strings.TrimSpace(*p) == "" {
+			if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+				*p = v
+			}
+		}
+	}
+	envFallback(&zapURL, "ZAP_URL")
+	envFallback(&apiKey, "ZAP_API_KEY")
+	envFallback(&confUser, "CONFLUENCE_USER")
+	envFallback(&confToken, "CONFLUENCE_TOKEN")
+	envFallback(&jiraUser, "JIRA_USER")
+	envFallback(&jiraToken, "JIRA_API_TOKEN")
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
 	if strings.TrimSpace(pruneScanLabel) != "" {
@@ -504,6 +521,7 @@ func main() {
 					SpaceKey:    confSpace,
 					DryRun:      confDryRun,
 					Concurrency: confConcurrency,
+					Entities:    &ent,
 				})
 				if cerr != nil {
 					log.Fatalf("confluence vault export: %v", cerr)
@@ -699,6 +717,10 @@ func parseLookback(raw string) (time.Duration, error) {
 	n, err := strconv.Atoi(num)
 	if err != nil || n < 0 {
 		return 0, fmt.Errorf("invalid number in %q", raw)
+	}
+	const maxLookbackDays = 3650 // 10 years — beyond this a fat-finger is likely
+	if n > maxLookbackDays {
+		return 0, fmt.Errorf("lookback %q exceeds maximum of %d days", raw, maxLookbackDays)
 	}
 	switch unit {
 	case 'd':

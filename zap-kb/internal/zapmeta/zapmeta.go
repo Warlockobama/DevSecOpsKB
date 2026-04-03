@@ -20,6 +20,49 @@ type Result struct {
 	MatchReason string   // how we matched
 	AlertTitle  string   // Human-readable alert title from docs
 	References  []string // External references listed in the docs page
+	CWEID       int      // CWE ID (0 = unknown), e.g. 79 for XSS
+	CWEURI      string   // https://cwe.mitre.org/data/definitions/{CWEID}.html
+}
+
+// cweFallback maps well-known ZAP plugin IDs to their CWE IDs.
+// Used when the docs page does not include a parseable CWE reference.
+var cweFallback = map[string]int{
+	"10010": 1004, // Cookie No HttpOnly Flag
+	"10011": 614,  // Cookie Without Secure Flag
+	"10015": 525,  // Incomplete or No Cache-Control Header
+	"10016": 693,  // Web Browser XSS Protection Not Enabled
+	"10017": 829,  // Cross-Domain JavaScript Source File Inclusion
+	"10019": 345,  // Content-Type Header Missing
+	"10020": 1021, // X-Frame-Options Header Not Set
+	"10021": 693,  // X-Content-Type-Options Header Missing
+	"10023": 200,  // Information Disclosure - Debug Error Messages
+	"10024": 200,  // Information Disclosure - Sensitive Information in URL
+	"10027": 200,  // Information Disclosure - Suspicious Comments
+	"10035": 319,  // Strict-Transport-Security Header Not Set
+	"10036": 200,  // Server Leaks Info via X-Powered-By
+	"10037": 200,  // Server Leaks Version Info via Server Header
+	"10038": 693,  // Content Security Policy (CSP) Header Not Set
+	"10040": 311,  // Secure Pages Include Mixed Content
+	"10054": 1275, // Cookie Without SameSite Attribute
+	"10055": 693,  // CSP Scanner
+	"10063": 693,  // Permissions Policy Header Not Set
+	"10096": 200,  // Timestamp Disclosure
+	"10098": 942,  // Cross-Domain Misconfiguration
+	"10105": 549,  // Weak Authentication Method
+	"40012": 79,   // Cross Site Scripting (Reflected)
+	"40014": 89,   // SQL Injection
+	"40018": 89,   // SQL Injection - MySQL
+	"40019": 89,   // SQL Injection - Hypersonic SQL
+	"40020": 89,   // SQL Injection - Oracle
+	"40021": 89,   // SQL Injection - PostgreSQL
+	"40022": 22,   // Path Traversal
+	"40025": 98,   // Remote File Inclusion
+	"40027": 89,   // SQL Injection - SQLite
+	"90017": 91,   // XSLT Injection
+	"90019": 74,   // Server Side Include
+	"90020": 78,   // Remote OS Command Injection
+	"90022": 209,  // Application Error Disclosure
+	"90033": 565,  // Loosely Scoped Cookie
 }
 
 // ScrapeDetection best-effort scrapes ZAP alert docs for a plugin id and identifies
@@ -119,8 +162,22 @@ func ScrapeDetection(ctx context.Context, pluginID string) (*Result, error) {
 	// Try to infer logic type from docs sidebar if we did not get it from source path
 	docLogic := inferLogicFromDocs(html)
 	if repoPath == "" && blobURL == "" {
-		// No strong signal to source; return docs info and title
-		return &Result{LogicType: docLogic, PluginRef: "", RuleSource: "", DocsURL: docsURL, SourceURL: "", MatchReason: "No source reference in docs", AlertTitle: title}, nil
+		// No strong signal to source; still return docs info, title, and CWE if found
+		cweID := scrapeCWEID(html, pid)
+		cweURI := ""
+		if cweID > 0 {
+			cweURI = fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", cweID)
+		}
+		refs := scrapeReferences(html)
+		return &Result{
+			LogicType:   docLogic,
+			DocsURL:     docsURL,
+			MatchReason: "No source reference in docs",
+			AlertTitle:  title,
+			References:  refs,
+			CWEID:       cweID,
+			CWEURI:      cweURI,
+		}, nil
 	}
 
 	logic := "unknown"
@@ -153,6 +210,13 @@ func ScrapeDetection(ctx context.Context, pluginID string) (*Result, error) {
 	// Scrape references from docs (best-effort)
 	refs := scrapeReferences(html)
 
+	// Extract CWE from page, falling back to static map
+	cweID := scrapeCWEID(html, pid)
+	cweURI := ""
+	if cweID > 0 {
+		cweURI = fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", cweID)
+	}
+
 	return &Result{
 		LogicType:   logic,
 		PluginRef:   pref,
@@ -162,6 +226,8 @@ func ScrapeDetection(ctx context.Context, pluginID string) (*Result, error) {
 		MatchReason: "Scraped from ZAP Alerts docs",
 		AlertTitle:  title,
 		References:  refs,
+		CWEID:       cweID,
+		CWEURI:      cweURI,
 	}, nil
 }
 
@@ -246,6 +312,45 @@ func inferLogicFromDocs(html string) string {
 		}
 	}
 	return ""
+}
+
+// scrapeCWEID extracts a CWE ID for the given plugin from the docs HTML.
+// Priority: (1) CWE MITRE link in references block, (2) CWE-NNN text in page,
+// (3) static fallback map keyed by plugin ID (original, not leading-zero-stripped).
+func scrapeCWEID(html, pid string) int {
+	// Strategy 1: href to cwe.mitre.org/data/definitions/NNN.html
+	reCWELink := regexp.MustCompile(`cwe\.mitre\.org/data/definitions/(\d+)`)
+	if m := reCWELink.FindStringSubmatch(html); len(m) == 2 {
+		if n := atoi(m[1]); n > 0 {
+			return n
+		}
+	}
+
+	// Strategy 2: text pattern CWE-NNN anywhere in the page
+	reCWEText := regexp.MustCompile(`(?i)\bCWE-(\d+)\b`)
+	if m := reCWEText.FindStringSubmatch(html); len(m) == 2 {
+		if n := atoi(m[1]); n > 0 {
+			return n
+		}
+	}
+
+	// Strategy 3: static fallback by plugin ID (original, leading-zero-stripped)
+	if n, ok := cweFallback[pid]; ok {
+		return n
+	}
+	return 0
+}
+
+// atoi parses a decimal string, returning 0 on failure.
+func atoi(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // scrapeReferences extracts external reference URLs from the ZAP docs page.

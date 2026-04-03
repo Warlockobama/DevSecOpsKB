@@ -296,6 +296,15 @@ func EnrichDetections(ctx context.Context, ef *EntitiesFile) {
 			d.Name = res.AlertTitle
 		}
 
+		// Populate CWE taxonomy from scraped/fallback data if not already set.
+		if res.CWEID > 0 && (d.Taxonomy == nil || d.Taxonomy.CWEID == 0) {
+			if d.Taxonomy == nil {
+				d.Taxonomy = &Taxonomy{}
+			}
+			d.Taxonomy.CWEID = res.CWEID
+			d.Taxonomy.CWEURI = res.CWEURI
+		}
+
 		// Merge in references from docs if any (best-effort); do not duplicate.
 		if len(res.References) > 0 {
 			if d.Remediation == nil {

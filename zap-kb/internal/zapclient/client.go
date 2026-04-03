@@ -52,10 +52,8 @@ func (c *Client) build(path string, q url.Values) *url.URL {
 	if q == nil {
 		q = url.Values{}
 	}
-	if c.APIKey != "" {
-		// ZAP accepts the key as query param or header; well do both for convenience.
-		q.Set("apikey", c.APIKey)
-	}
+	// API key is sent via X-ZAP-API-Key header only (see do()).
+	// Do NOT embed it as a query param — that exposes it in access logs and CI output.
 	u.RawQuery = q.Encode()
 	return &u
 }

@@ -18,17 +18,55 @@ import (
 
 // Options controls Jira issue export.
 type Options struct {
-	BaseURL     string
-	Username    string   // email for Jira Cloud
-	APIToken    string
-	ProjectKey  string
-	IssueType   string        // default "Bug"
-	Component   string        // optional component name
-	ExtraLabels []string      // additional labels beyond zap-finding:<id>
-	MinRisk     string        // minimum risk to export: info|low|medium|high (default "low")
-	DryRun      bool
-	Concurrency int           // max parallel requests (default 5, capped at 10)
-	Timeout     time.Duration // default 30s
+	BaseURL      string
+	Username     string   // email for Jira Cloud
+	APIToken     string
+	ProjectKey   string
+	IssueType    string        // default "Bug"
+	Component    string        // optional component name
+	ExtraLabels  []string      // additional labels beyond zap-finding:<id>
+	MinRisk      string        // minimum risk to export: info|low|medium|high (default "low")
+	DryRun       bool
+	Concurrency  int           // max parallel requests (default 3, capped at 5)
+	Timeout      time.Duration // default 30s
+	RequestDelay time.Duration // minimum delay between API requests; default 250ms
+}
+
+// httpDoer abstracts HTTP request execution for throttling and testing.
+type httpDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+// throttledClient wraps an http.Client with a minimum delay between requests.
+type throttledClient struct {
+	inner *http.Client
+	mu    sync.Mutex
+	last  time.Time
+	delay time.Duration
+}
+
+func newThrottledClient(inner *http.Client, delay time.Duration) *throttledClient {
+	return &throttledClient{inner: inner, delay: delay}
+}
+
+func (tc *throttledClient) Do(req *http.Request) (*http.Response, error) {
+	tc.mu.Lock()
+	now := time.Now()
+	elapsed := now.Sub(tc.last)
+	if elapsed < tc.delay {
+		remaining := tc.delay - elapsed
+		tc.last = now.Add(remaining)
+		tc.mu.Unlock()
+		select {
+		case <-time.After(remaining):
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+	} else {
+		tc.last = now
+		tc.mu.Unlock()
+	}
+	return tc.inner.Do(req)
 }
 
 // Summary reports the outcome of an export run.
@@ -53,16 +91,21 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	}
 	concurrency := opts.Concurrency
 	if concurrency <= 0 {
+		concurrency = 3
+	}
+	if concurrency > 5 {
 		concurrency = 5
 	}
-	if concurrency > 10 {
-		concurrency = 10
-	}
 
-	httpClient := &http.Client{Timeout: opts.Timeout}
-	if httpClient.Timeout == 0 {
-		httpClient.Timeout = 30 * time.Second
+	rawClient := &http.Client{Timeout: opts.Timeout}
+	if rawClient.Timeout == 0 {
+		rawClient.Timeout = 30 * time.Second
 	}
+	delay := opts.RequestDelay
+	if delay == 0 {
+		delay = 250 * time.Millisecond
+	}
+	httpClient := newThrottledClient(rawClient, delay)
 	auth := "Basic " + base64.StdEncoding.EncodeToString(
 		[]byte(strings.TrimSpace(opts.Username)+":"+strings.TrimSpace(opts.APIToken)),
 	)
@@ -174,7 +217,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 
 // findExistingIssue searches for an issue with label zap-finding:<findingID>.
 // Returns the issue key if found, empty string if not found.
-func findExistingIssue(ctx context.Context, client *http.Client, auth, base, findingID string) (string, error) {
+func findExistingIssue(ctx context.Context, client httpDoer, auth, base, findingID string) (string, error) {
 	label := findingLabel(findingID)
 	jql := fmt.Sprintf(`labels = "%s"`, label)
 	q := url.Values{}
@@ -189,14 +232,11 @@ func findExistingIssue(ctx context.Context, client *http.Client, auth, base, fin
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", jiraHTTPErr(resp)
-	}
 
 	var result struct {
 		Total  int `json:"total"`
@@ -214,7 +254,7 @@ func findExistingIssue(ctx context.Context, client *http.Client, auth, base, fin
 }
 
 // createIssue POSTs a new Jira issue for the given Finding.
-func createIssue(ctx context.Context, client *http.Client, auth, base, issueType string, f entities.Finding, def *entities.Definition, opts Options) error {
+func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, opts Options) error {
 	labels := []string{findingLabel(f.FindingID)}
 	if def != nil && def.Taxonomy != nil {
 		labels = append(labels, def.Taxonomy.OWASPTop10...)
@@ -248,14 +288,11 @@ func createIssue(ctx context.Context, client *http.Client, auth, base, issueType
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
 		return fmt.Errorf("post issue: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return jiraHTTPErr(resp)
-	}
+	resp.Body.Close()
 	return nil
 }
 
@@ -277,12 +314,80 @@ func findingLabel(findingID string) string {
 	return "zap-finding:" + findingID
 }
 
+// doWithRetry executes a request, retrying on 429 with exponential backoff.
+func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
+	backoff := 2 * time.Second
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs := parseRetryAfter(ra); secs > 0 {
+					backoff = time.Duration(secs) * time.Second
+				} else {
+					backoff = 100 * time.Millisecond
+				}
+			}
+			fmt.Printf("[jira] rate limited, retrying in %s (attempt %d/%d)\n", backoff, attempt+1, maxAttempts)
+			select {
+			case <-time.After(backoff):
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			err := jiraHTTPErr(resp)
+			resp.Body.Close()
+			return nil, err
+		}
+		return resp, nil
+	}
+	return nil, fmt.Errorf("jira: max retries exceeded")
+}
+
+func parseRetryAfter(val string) int {
+	n := 0
+	for _, c := range strings.TrimSpace(val) {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
 // jiraHTTPErr reads the response body and returns a descriptive error.
+// The body is truncated to 200 chars and stripped of credential-like patterns
+// before being included in the error string, which may appear in CI logs.
 func jiraHTTPErr(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	msg := strings.TrimSpace(string(body))
+	msg := sanitizeErrorBody(strings.TrimSpace(string(body)))
 	if msg == "" {
 		return fmt.Errorf("jira: http %d", resp.StatusCode)
 	}
 	return fmt.Errorf("jira: http %d: %s", resp.StatusCode, msg)
+}
+
+// sanitizeErrorBody truncates an API error response body to 200 chars and
+// redacts substrings that look like credentials before the message is logged.
+func sanitizeErrorBody(s string) string {
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
+		if idx := strings.Index(s, pat); idx >= 0 {
+			s = s[:idx] + "<redacted>…"
+			break
+		}
+	}
+	return s
 }
