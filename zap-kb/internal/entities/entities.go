@@ -131,9 +131,16 @@ type Occurrence struct {
 	Confidence string `json:"confidence,omitempty"`
 	SourceID   string `json:"sourceid,omitempty"`
 
-	Request  *HTTPRequest  `json:"request,omitempty"`
-	Response *HTTPResponse `json:"response,omitempty"`
-	Analyst  *Analyst      `json:"analyst,omitempty"`
+	Request   *HTTPRequest  `json:"request,omitempty"`
+	Response  *HTTPResponse `json:"response,omitempty"`
+	Analyst   *Analyst      `json:"analyst,omitempty"`
+	Reproduce *Reproduce    `json:"reproduce,omitempty"`
+}
+
+// Reproduce holds scanner-provided reproduction steps for an occurrence.
+type Reproduce struct {
+	Curl  string   `json:"curl,omitempty"`  // ready-to-run curl command
+	Steps []string `json:"steps,omitempty"` // ordered multi-step instructions
 }
 
 type EntitiesFile struct {

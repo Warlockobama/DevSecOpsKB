@@ -897,11 +897,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("</details>\n\n")
 		}
 
-		// Repro snippet
+		// Repro snippet — prefer scanner-provided curl, fall back to synthesized
 		b.WriteString("## Repro (curl)\n\n")
 		b.WriteString("```bash\n")
-		b.WriteString(buildCurl(o))
+		if o.Reproduce != nil && strings.TrimSpace(o.Reproduce.Curl) != "" {
+			b.WriteString(strings.TrimSpace(o.Reproduce.Curl))
+		} else {
+			b.WriteString(buildCurl(o))
+		}
 		b.WriteString("\n```\n\n")
+		if o.Reproduce != nil && len(o.Reproduce.Steps) > 0 {
+			b.WriteString("### Reproduction steps\n\n")
+			for i, step := range o.Reproduce.Steps {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, strings.TrimSpace(step))
+			}
+			b.WriteString("\n")
+		}
 		b.WriteString("_Note: review/redact sensitive headers/cookies before sharing externally._\n\n")
 		// No deep links to ZAP here (requested)
 

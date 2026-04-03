@@ -1160,6 +1160,29 @@ func stripOccurrenceBodyForConfluence(content string) string {
 	return strings.Join(out, "\n")
 }
 
+// sourceToolFromDef derives a human-readable source tool name from definition
+// taxonomy tags (e.g. "nuclei" → "Nuclei", "zap" → "OWASP ZAP").
+func sourceToolFromDef(def *entities.Definition) string {
+	if def == nil || def.Taxonomy == nil {
+		return ""
+	}
+	for _, tag := range def.Taxonomy.Tags {
+		switch strings.ToLower(strings.TrimSpace(tag)) {
+		case "nuclei":
+			return "Nuclei"
+		case "zap":
+			return "OWASP ZAP"
+		case "burp":
+			return "Burp Suite"
+		case "semgrep":
+			return "Semgrep"
+		case "trivy":
+			return "Trivy"
+		}
+	}
+	return ""
+}
+
 // --- Finding/occurrence page title generation ---
 
 // findingPageTitle returns a human-readable Confluence page title for a finding:
@@ -1425,6 +1448,11 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 		}
 	}
 
+	// Source tool (derived from definition tags: "nuclei", "zap", "burp", etc.)
+	if src := sourceToolFromDef(def); src != "" {
+		props = append(props, [2]string{"Source Tool", escapeHTML(src)})
+	}
+
 	props = append(props, [2]string{"URL", escapeHTML(f.URL)})
 	props = append(props, [2]string{"Method", escapeHTML(f.Method)})
 	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
@@ -1493,6 +1521,11 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		}
 	}
 
+	// Source tool (derived from definition tags)
+	if src := sourceToolFromDef(def); src != "" {
+		props = append(props, [2]string{"Source Tool", escapeHTML(src)})
+	}
+
 	props = append(props, [2]string{"URL", escapeHTML(o.URL)})
 	if o.Param != "" {
 		props = append(props, [2]string{"Parameter", escapeHTML(o.Param)})
@@ -1524,7 +1557,11 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 			props = append(props, [2]string{"Tickets", strings.Join(links, ", ")})
 		}
 		if o.Analyst.Notes != "" {
-			props = append(props, [2]string{"Notes", escapeHTML(o.Analyst.Notes)})
+			notesLabel := "Notes"
+			if strings.EqualFold(strings.TrimSpace(o.Analyst.Status), "accept-risk") {
+				notesLabel = "Accepted Reason"
+			}
+			props = append(props, [2]string{notesLabel, escapeHTML(o.Analyst.Notes)})
 		}
 	}
 

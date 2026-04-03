@@ -320,12 +320,15 @@ func main() {
 
 	// Optional input Entities for merge/enrich-only (overridden when -run-in used)
 	if strings.TrimSpace(entitiesIn) != "" && strings.TrimSpace(runIn) == "" {
-		f, err := os.Open(entitiesIn)
+		raw, err := os.ReadFile(entitiesIn)
 		if err != nil {
 			log.Fatalf("open -entities-in file: %v", err)
 		}
-		defer f.Close()
-		if err := json.NewDecoder(f).Decode(&entIn); err != nil {
+		raw, err = entities.NormalizeImportJSON(raw)
+		if err != nil {
+			log.Fatalf("normalize -entities-in file: %v", err)
+		}
+		if err := json.Unmarshal(raw, &entIn); err != nil {
 			log.Fatalf("decode -entities-in file: %v", err)
 		}
 	}
