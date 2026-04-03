@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "occ-9c0d1e2f.md",
+                "file": "occ-a1b2c3d4.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "occ-9c0d1e2f"
+              "title": "occ-a1b2c3d4"
             }
           }
         ],
@@ -186,10 +186,10 @@
   },
   "active": "ec08f216e4ce0578",
   "lastOpenFiles": [
+    "occ-9c0d1e2f.md",
     "occ-a1b2c3d4.md",
     "sample-sqli-finding.md",
     "occ-e5f6g7h8.md",
-    "chart.md",
-    "occ-9c0d1e2f.md"
+    "chart.md"
   ]
 }

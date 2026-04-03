@@ -288,8 +288,8 @@ func TestMdToStorage_OrderedList(t *testing.T) {
 
 func TestMdToStorage_H4H5H6(t *testing.T) {
 	cases := []struct {
-		md      string
-		wantTag string
+		md       string
+		wantTag  string
 		wantText string
 	}{
 		{"#### H4 Heading", "h4", "H4 Heading"},
@@ -362,9 +362,9 @@ func TestMdToStorage_CalloutMultiLine(t *testing.T) {
 
 func TestRiskStatusMacro(t *testing.T) {
 	cases := []struct {
-		risk        string
-		wantColor   string
-		wantTitle   string
+		risk      string
+		wantColor string
+		wantTitle string
 	}{
 		{"High", "Red", "HIGH"},
 		{"high", "Red", "HIGH"},

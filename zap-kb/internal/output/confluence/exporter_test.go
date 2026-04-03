@@ -693,7 +693,7 @@ func TestExportVault_WithEntities(t *testing.T) {
 				},
 			},
 		},
-		Findings: []entities.Finding{},
+		Findings:    []entities.Finding{},
 		Occurrences: []entities.Occurrence{},
 	}
 

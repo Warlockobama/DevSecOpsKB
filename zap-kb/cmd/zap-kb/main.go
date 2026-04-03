@@ -13,8 +13,8 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"

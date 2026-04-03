@@ -38,19 +38,19 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 
 	type blockKind int
 	const (
-		noBlock      blockKind = iota
-		inList                 // <ul>
-		inOrderedList          // <ol>
-		inTable                // <table>
-		inCode                 // fenced code block
-		inCallout              // Obsidian callout / blockquote
+		noBlock       blockKind = iota
+		inList                  // <ul>
+		inOrderedList           // <ol>
+		inTable                 // <table>
+		inCode                  // fenced code block
+		inCallout               // Obsidian callout / blockquote
 	)
 
 	block := noBlock
 	listDepth := 0 // current nesting depth for bullet lists
 	var codeLang string
 	var codeLines []string
-	calloutKind := ""       // "info", "note", "warning"
+	calloutKind := "" // "info", "note", "warning"
 	var calloutLines []string
 
 	closeOpenBlocks := func() {

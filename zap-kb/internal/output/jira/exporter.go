@@ -19,13 +19,13 @@ import (
 // Options controls Jira issue export.
 type Options struct {
 	BaseURL      string
-	Username     string   // email for Jira Cloud
+	Username     string // email for Jira Cloud
 	APIToken     string
 	ProjectKey   string
-	IssueType    string        // default "Bug"
-	Component    string        // optional component name
-	ExtraLabels  []string      // additional labels beyond zap-finding:<id>
-	MinRisk      string        // minimum risk to export: info|low|medium|high (default "low")
+	IssueType    string   // default "Bug"
+	Component    string   // optional component name
+	ExtraLabels  []string // additional labels beyond zap-finding:<id>
+	MinRisk      string   // minimum risk to export: info|low|medium|high (default "low")
 	DryRun       bool
 	Concurrency  int           // max parallel requests (default 3, capped at 5)
 	Timeout      time.Duration // default 30s
@@ -263,11 +263,11 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 	labels = append(labels, opts.ExtraLabels...)
 
 	fields := map[string]any{
-		"project":   map[string]string{"key": opts.ProjectKey},
-		"summary":   issueSummary(f),
-		"issuetype": map[string]string{"name": issueType},
-		"priority":  map[string]string{"name": riskToPriority(f.Risk)},
-		"labels":    labels,
+		"project":     map[string]string{"key": opts.ProjectKey},
+		"summary":     issueSummary(f),
+		"issuetype":   map[string]string{"name": issueType},
+		"priority":    map[string]string{"name": riskToPriority(f.Risk)},
+		"labels":      labels,
 		"description": buildDescription(f, def),
 	}
 	if strings.TrimSpace(opts.Component) != "" {

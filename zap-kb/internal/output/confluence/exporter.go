@@ -40,9 +40,9 @@ type VaultOptions struct {
 	APIToken     string
 	SpaceKey     string
 	DryRun       bool
-	Concurrency  int           // default 3, capped at 5
-	Timeout      time.Duration // per-request timeout; default 30s
-	RequestDelay time.Duration // minimum delay between API requests; default 250ms
+	Concurrency  int                    // default 3, capped at 5
+	Timeout      time.Duration          // per-request timeout; default 30s
+	RequestDelay time.Duration          // minimum delay between API requests; default 250ms
 	Entities     *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
 }
 
@@ -161,7 +161,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		return dryRunVault(vaultRoot)
 	}
 
-rootID, rootAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "KB Index", mdToStorageWithTitles(rootContent, titleMap), "")
+	rootID, rootAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "KB Index", mdToStorageWithTitles(rootContent, titleMap), "")
 	if err != nil {
 		return summary, fmt.Errorf("upsert INDEX: %w", err)
 	}
@@ -204,7 +204,7 @@ rootID, rootAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey
 	}
 
 	// Phase 3: Upsert "Definitions" parent page
-defsID, defsAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "Definitions",
+	defsID, defsAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "Definitions",
 		mdToStorage("# Definitions\n\nAuto-generated ZAP plugin definitions from the DevSecOps KB."), rootID)
 	if err != nil {
 		return summary, fmt.Errorf("upsert Definitions parent: %w", err)
@@ -638,7 +638,6 @@ func (tc *throttledClient) Do(req *http.Request) (*http.Response, error) {
 	return tc.inner.Do(req)
 }
 
-
 // sanitizeErrorBody truncates an API error response body to 200 chars and
 // redacts substrings that look like credentials (Authorization headers,
 // token/key query params) before the message is printed to stdout/logs.
@@ -992,10 +991,10 @@ type obsRange struct {
 
 // entityIndex provides fast lookup from filenames to entity structs.
 type entityIndex struct {
-	defs     map[string]*entities.Definition  // pluginID → definition
-	finds    map[string]*entities.Finding     // findingID → finding
-	occs     map[string]*entities.Occurrence  // occurrenceID → occurrence
-	findingObs map[string]obsRange            // findingID → {first, last} ObservedAt
+	defs       map[string]*entities.Definition // pluginID → definition
+	finds      map[string]*entities.Finding    // findingID → finding
+	occs       map[string]*entities.Occurrence // occurrenceID → occurrence
+	findingObs map[string]obsRange             // findingID → {first, last} ObservedAt
 }
 
 func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {

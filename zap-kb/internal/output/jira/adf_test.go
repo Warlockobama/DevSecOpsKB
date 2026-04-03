@@ -10,11 +10,11 @@ import (
 
 func TestBuildDescription_BasicFinding(t *testing.T) {
 	f := entities.Finding{
-		FindingID:  "fin-abc",
-		URL:        "https://example.com/login",
-		Method:     "GET",
-		Risk:       "high",
-		Confidence: "medium",
+		FindingID:   "fin-abc",
+		URL:         "https://example.com/login",
+		Method:      "GET",
+		Risk:        "high",
+		Confidence:  "medium",
 		Occurrences: 3,
 	}
 	doc := buildDescription(f, nil)
