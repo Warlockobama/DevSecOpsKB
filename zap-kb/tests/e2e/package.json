@@ -1,0 +1,20 @@
+{
+  "name": "zap-kb-e2e",
+  "version": "1.0.0",
+  "description": "Playwright e2e tests for zap-kb Confluence rendering",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "export-fixtures": "ts-node setup/export-fixtures.ts",
+    "sme-screenshots": "playwright test --grep @sme --reporter=html"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.43.0",
+    "@types/node": "^20.0.0",
+    "dotenv": "^16.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}

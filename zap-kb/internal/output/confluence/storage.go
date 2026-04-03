@@ -40,6 +40,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 	const (
 		noBlock       blockKind = iota
 		inList                  // <ul>
+		inTaskList              // <ac:task-list> — interactive Confluence checkboxes
 		inOrderedList           // <ol>
 		inTable                 // <table>
 		inCode                  // fenced code block
@@ -48,6 +49,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 
 	block := noBlock
 	listDepth := 0 // current nesting depth for bullet lists
+	taskID := 0    // monotonically increasing task ID within this page
 	var codeLang string
 	var codeLines []string
 	calloutKind := "" // "info", "note", "warning"
@@ -61,6 +63,8 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 				listDepth--
 			}
 			out.WriteString("</ul>")
+		case inTaskList:
+			out.WriteString("</ac:task-list>")
 		case inOrderedList:
 			out.WriteString("</ol>")
 		case inTable:
@@ -230,30 +234,53 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 
 		// --- Bullet list item (with nesting support) ---
 		if bulletItem, depth := parseBulletItem(line); bulletItem != "" {
-			if block != inList {
-				closeOpenBlocks()
-				out.WriteString("<ul>")
-				block = inList
-				listDepth = 0
+			isTask := strings.HasPrefix(bulletItem, "[ ] ") ||
+				strings.HasPrefix(bulletItem, "[x] ") ||
+				strings.HasPrefix(bulletItem, "[X] ")
+
+			if isTask {
+				// Task list items → Confluence <ac:task-list> (interactive checkboxes)
+				if block != inTaskList {
+					closeOpenBlocks()
+					out.WriteString("<ac:task-list>")
+					block = inTaskList
+					listDepth = 0
+				}
+				taskID++
+				done := strings.HasPrefix(bulletItem, "[x] ") || strings.HasPrefix(bulletItem, "[X] ")
+				status := "incomplete"
+				if done {
+					status = "complete"
+				}
+				body := bulletItem[4:] // strip "[ ] " or "[x] "
+				out.WriteString("<ac:task>")
+				out.WriteString(fmt.Sprintf("<ac:task-id>%d</ac:task-id>", taskID))
+				out.WriteString(fmt.Sprintf("<ac:task-status>%s</ac:task-status>", status))
+				out.WriteString("<ac:task-body>")
+				out.WriteString(inline(body))
+				out.WriteString("</ac:task-body>")
+				out.WriteString("</ac:task>")
+			} else {
+				// Regular bullet item → <ul><li>
+				if block != inList {
+					closeOpenBlocks()
+					out.WriteString("<ul>")
+					block = inList
+					listDepth = 0
+				}
+				// Adjust nesting depth
+				for listDepth < depth {
+					out.WriteString("<ul>")
+					listDepth++
+				}
+				for listDepth > depth {
+					out.WriteString("</ul>")
+					listDepth--
+				}
+				out.WriteString("<li>")
+				out.WriteString(inline(bulletItem))
+				out.WriteString("</li>")
 			}
-			// Adjust nesting depth
-			for listDepth < depth {
-				out.WriteString("<ul>")
-				listDepth++
-			}
-			for listDepth > depth {
-				out.WriteString("</ul>")
-				listDepth--
-			}
-			item := bulletItem
-			if strings.HasPrefix(item, "[ ] ") {
-				item = "☐ " + item[4:]
-			} else if strings.HasPrefix(item, "[x] ") || strings.HasPrefix(item, "[X] ") {
-				item = "☑ " + item[4:]
-			}
-			out.WriteString("<li>")
-			out.WriteString(inline(item))
-			out.WriteString("</li>")
 			continue
 		}
 

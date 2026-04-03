@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "v1",
+  "generatedAt": "2026-04-03T12:00:00Z",
+  "sourceTool": "zap",
+  "definitions": [
+    {
+      "definitionId": "def-e2e-10038",
+      "pluginId": "10038",
+      "alert": "Content Security Policy (CSP) Header Not Set",
+      "name": "Content Security Policy (CSP) Header Not Set",
+      "wascid": 15,
+      "taxonomy": {
+        "cweid": 693,
+        "cweUri": "https://cwe.mitre.org/data/definitions/693.html",
+        "owaspTop10": ["A05:2021-Security Misconfiguration"],
+        "tags": ["zap", "headers", "passive"]
+      },
+      "remediation": {
+        "summary": "Ensure that your web server, application server, load balancer, etc. is configured to set the Content-Security-Policy header.",
+        "references": [
+          "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP",
+          "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+        ]
+      }
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "fin-e2e-aabb1122",
+      "definitionId": "def-e2e-10038",
+      "pluginId": "10038",
+      "url": "https://example.com/login",
+      "method": "GET",
+      "name": "GET https://example.com/login",
+      "risk": "Medium",
+      "riskcode": "2",
+      "confidence": "High",
+      "occurrenceCount": 2
+    }
+  ],
+  "occurrences": [
+    {
+      "occurrenceId": "occ-e2e-11223344",
+      "definitionId": "def-e2e-10038",
+      "findingId": "fin-e2e-aabb1122",
+      "scanLabel": "e2e-test-run",
+      "observedAt": "2026-04-03T12:00:00Z",
+      "url": "https://example.com/login",
+      "method": "GET",
+      "risk": "Medium",
+      "riskcode": "2",
+      "confidence": "High",
+      "evidence": "CSP header absent from response",
+      "analyst": {
+        "status": "open",
+        "owner": "e2e-tester"
+      },
+      "reproduce": {
+        "curl": "curl -i -s https://example.com/login",
+        "steps": [
+          "Send a GET request to https://example.com/login",
+          "Inspect response headers for Content-Security-Policy",
+          "Confirm header is absent"
+        ]
+      },
+      "request": {
+        "headers": [
+          { "name": "Host", "value": "example.com" },
+          { "name": "Accept", "value": "text/html" }
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "headers": [
+          { "name": "Content-Type", "value": "text/html; charset=utf-8" },
+          { "name": "X-Frame-Options", "value": "SAMEORIGIN" }
+        ],
+        "bodySnippet": "<html><head><title>Login</title></head><body>...</body></html>"
+      }
+    },
+    {
+      "occurrenceId": "occ-e2e-55667788",
+      "definitionId": "def-e2e-10038",
+      "findingId": "fin-e2e-aabb1122",
+      "scanLabel": "e2e-test-run",
+      "observedAt": "2026-03-01T10:00:00Z",
+      "url": "https://example.com/api/v1/products",
+      "method": "GET",
+      "risk": "Medium",
+      "riskcode": "2",
+      "confidence": "High",
+      "evidence": "CSP header absent from response",
+      "analyst": {
+        "status": "accept-risk",
+        "owner": "e2e-tester",
+        "notes": "API endpoint consumed only by trusted internal clients — risk accepted for this surface."
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env.e2e
+.page-ids.json
+playwright-report/
+test-results/
+screenshots/

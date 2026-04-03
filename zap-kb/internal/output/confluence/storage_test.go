@@ -37,11 +37,26 @@ func TestMdToStorage_BulletList(t *testing.T) {
 
 func TestMdToStorage_TaskList(t *testing.T) {
 	out := mdToStorage("- [ ] Pending\n- [x] Done")
-	if !strings.Contains(out, "☐ Pending") {
-		t.Errorf("missing unchecked task: %s", out)
+	// Task list items must emit ac:task-list (interactive Confluence checkboxes),
+	// NOT unicode ☐/☑ characters in plain <li> elements.
+	if !strings.Contains(out, "<ac:task-list>") {
+		t.Errorf("expected ac:task-list macro, got: %s", out)
 	}
-	if !strings.Contains(out, "☑ Done") {
-		t.Errorf("missing checked task: %s", out)
+	if !strings.Contains(out, "<ac:task-status>incomplete</ac:task-status>") {
+		t.Errorf("missing incomplete task status: %s", out)
+	}
+	if !strings.Contains(out, "<ac:task-status>complete</ac:task-status>") {
+		t.Errorf("missing complete task status: %s", out)
+	}
+	if !strings.Contains(out, "<ac:task-body>Pending</ac:task-body>") {
+		t.Errorf("missing task body 'Pending': %s", out)
+	}
+	if !strings.Contains(out, "<ac:task-body>Done</ac:task-body>") {
+		t.Errorf("missing task body 'Done': %s", out)
+	}
+	// Must NOT contain unicode fallback characters
+	if strings.Contains(out, "☐") || strings.Contains(out, "☑") {
+		t.Errorf("output must not contain unicode checkbox characters: %s", out)
 	}
 }
 
