@@ -1097,20 +1097,63 @@ func stripFindingBodyForConfluence(content string) string {
 	inSkipSection := false
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		// Start of sections that are Obsidian-only
-		if line == "### Quick triage shortcuts" || line == "### Analyst notebook" {
+
+		// Strip H1 — Confluence page title is already set; the "# Issue fin-xxx — alias" body
+		// heading is Obsidian-only and redundant.
+		if strings.HasPrefix(line, "# ") {
+			// also skip the blank line after it
+			if i+1 < len(lines) && lines[i+1] == "" {
+				i++
+			}
+			continue
+		}
+
+		// Strip "- Definition: [[...]]" bullet — duplicated in Page Properties table.
+		if strings.HasPrefix(line, "- Definition:") {
+			if i+1 < len(lines) && lines[i+1] == "" {
+				i++
+			}
+			continue
+		}
+
+		// Obsidian-only sections: Quick triage shortcuts, Analyst notebook,
+		// and the Workflow status/metadata lines (Status/Owners/Tags/Tickets/Updated).
+		// These are either Obsidian template scaffolding or plain-text duplicates of
+		// the Page Properties table — not useful in Confluence.
+		skipSections := []string{
+			"### Quick triage shortcuts",
+			"### Analyst notebook",
+			"## Workflow",
+		}
+		isSectionStart := false
+		for _, s := range skipSections {
+			if line == s {
+				isSectionStart = true
+				break
+			}
+		}
+		if isSectionStart {
 			inSkipSection = true
 			continue
 		}
+
 		if inSkipSection {
-			// Stop skipping at the next ## or ### heading that isn't one of our targets
-			if strings.HasPrefix(line, "## ") || (strings.HasPrefix(line, "### ") &&
-				line != "### Quick triage shortcuts" && line != "### Analyst notebook") {
+			// Resume at the next ## or ### heading that is NOT a skip target,
+			// e.g. "### Analyst Notes" which contains real analyst content.
+			isSkipTarget := false
+			for _, s := range skipSections {
+				if line == s {
+					isSkipTarget = true
+					break
+				}
+			}
+			if (strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ")) && !isSkipTarget {
 				inSkipSection = false
 				out = append(out, line)
 			}
 			continue
 		}
+
 		// Skip callout blocks (> [!TYPE] ...) — duplicates Properties table Risk/Confidence
 		if strings.HasPrefix(line, "> [!") {
 			for i+1 < len(lines) && strings.HasPrefix(lines[i+1], ">") {
@@ -1140,6 +1183,13 @@ func stripOccurrenceBodyForConfluence(content string) string {
 	var out []string
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+		// Strip H1 — Confluence page title already set; body H1 is redundant.
+		if strings.HasPrefix(line, "# ") {
+			if i+1 < len(lines) && lines[i+1] == "" {
+				i++
+			}
+			continue
+		}
 		if strings.HasPrefix(line, "> [!") {
 			for i+1 < len(lines) && strings.HasPrefix(lines[i+1], ">") {
 				i++

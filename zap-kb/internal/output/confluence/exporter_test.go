@@ -1135,6 +1135,10 @@ func TestStripFindingBodyForConfluence(t *testing.T) {
 - Status: open
 - Owners: alice
 
+### Analyst Notes
+
+- Risk accepted: internal network only.
+
 ### Quick triage shortcuts
 
 - Set ` + "`analyst.status`" + ` to: open | triaged | fp | accepted | fixed
@@ -1169,17 +1173,30 @@ func TestStripFindingBodyForConfluence(t *testing.T) {
 		t.Error("Analyst notebook section should be stripped")
 	}
 	// Useful content preserved
-	if !strings.Contains(out, "Definition:") {
-		t.Error("Definition link should be preserved")
-	}
 	if !strings.Contains(out, "## Rollup") {
 		t.Error("Rollup section should be preserved")
 	}
-	if !strings.Contains(out, "## Workflow") {
-		t.Error("Workflow heading should be preserved")
+	// Definition bullet stripped — duplicated in Page Properties table
+	if strings.Contains(out, "Definition:") {
+		t.Error("Definition bullet should be stripped (already in Page Properties)")
 	}
-	if !strings.Contains(out, "- Status: open") {
-		t.Error("Status line inside Workflow should be preserved")
+	// H1 stripped — Confluence page title already set
+	if strings.Contains(out, "# Issue fin-abc") {
+		t.Error("H1 heading should be stripped")
+	}
+	// Workflow section and its plain-text status lines stripped — not interactive in Confluence
+	if strings.Contains(out, "## Workflow") {
+		t.Error("Workflow section should be stripped")
+	}
+	if strings.Contains(out, "- Status: open") {
+		t.Error("Workflow status line should be stripped")
+	}
+	// Analyst Notes survive — contains real analyst content
+	if !strings.Contains(out, "### Analyst Notes") {
+		t.Error("Analyst Notes section should be preserved")
+	}
+	if !strings.Contains(out, "Risk accepted") {
+		t.Error("Analyst Notes content should be preserved")
 	}
 }
 
