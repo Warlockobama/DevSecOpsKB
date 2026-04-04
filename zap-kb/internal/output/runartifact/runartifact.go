@@ -63,17 +63,17 @@ func ReadFlexible(path string) (Artifact, error) {
 	if err == nil && a.Entities.SchemaVersion != "" {
 		return a, nil
 	}
-	// Try as bare entities JSON
+	// Try as bare entities JSON (with type normalization for external pipeline outputs)
 	var ent entities.EntitiesFile
-	f, err2 := os.Open(path)
+	raw, err2 := os.ReadFile(path)
 	if err2 != nil {
 		if err != nil {
 			return Artifact{}, err
 		}
 		return Artifact{}, fmt.Errorf("open entities JSON %q: %w", path, err2)
 	}
-	defer f.Close()
-	if err3 := json.NewDecoder(f).Decode(&ent); err3 != nil {
+	raw, _ = entities.NormalizeImportJSON(raw)
+	if err3 := json.Unmarshal(raw, &ent); err3 != nil {
 		if err != nil {
 			return Artifact{}, err
 		}
