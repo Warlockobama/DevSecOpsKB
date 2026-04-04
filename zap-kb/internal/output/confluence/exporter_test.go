@@ -1226,8 +1226,9 @@ func TestStripOccurrenceBodyForConfluence(t *testing.T) {
 	if !strings.Contains(out, "## Evidence") {
 		t.Error("Evidence section should be preserved")
 	}
-	if !strings.Contains(out, "Definition:") {
-		t.Error("Definition link should be preserved")
+	// Definition and Issue bullets stripped — duplicated in Page Properties
+	if strings.Contains(out, "Definition:") {
+		t.Error("Definition bullet should be stripped")
 	}
 }
 

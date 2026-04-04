@@ -1179,10 +1179,22 @@ func stripFindingBodyForConfluence(content string) string {
 // stripOccurrenceBodyForConfluence removes Obsidian-specific content from occurrence pages.
 // Strips: severity callout and Endpoint line (both duplicated in Properties table).
 func stripOccurrenceBodyForConfluence(content string) string {
+	// Sections that are Obsidian-only scaffolding and should not appear in Confluence.
+	// "### Checklist" is intentionally NOT in this list — it contains task list items
+	// that render as clickable checkboxes in Confluence.
+	skipSections := []string{
+		"## Workflow",
+		"### Analyst notebook (from front matter)",
+		"### Governance",
+		"## Triage guidance",
+	}
+
 	lines := strings.Split(content, "\n")
 	var out []string
+	inSkipSection := false
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+
 		// Strip H1 — Confluence page title already set; body H1 is redundant.
 		if strings.HasPrefix(line, "# ") {
 			if i+1 < len(lines) && lines[i+1] == "" {
@@ -1190,6 +1202,43 @@ func stripOccurrenceBodyForConfluence(content string) string {
 			}
 			continue
 		}
+
+		// Strip Definition and Issue bullets — duplicated in Page Properties table.
+		if strings.HasPrefix(line, "- Definition:") || strings.HasPrefix(line, "- Issue:") {
+			if i+1 < len(lines) && lines[i+1] == "" {
+				i++
+			}
+			continue
+		}
+
+		// Obsidian-only sections
+		isSectionStart := false
+		for _, s := range skipSections {
+			if line == s {
+				isSectionStart = true
+				break
+			}
+		}
+		if isSectionStart {
+			inSkipSection = true
+			continue
+		}
+		if inSkipSection {
+			isSkipTarget := false
+			for _, s := range skipSections {
+				if line == s {
+					isSkipTarget = true
+					break
+				}
+			}
+			if (strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ")) && !isSkipTarget {
+				inSkipSection = false
+				out = append(out, line)
+			}
+			continue
+		}
+
+		// Strip callout blocks — duplicates Properties table Risk/Confidence
 		if strings.HasPrefix(line, "> [!") {
 			for i+1 < len(lines) && strings.HasPrefix(lines[i+1], ">") {
 				i++
@@ -1199,6 +1248,7 @@ func stripOccurrenceBodyForConfluence(content string) string {
 			}
 			continue
 		}
+		// Strip **Endpoint:** line — duplicates URL+Method in Properties table
 		if strings.HasPrefix(line, "**Endpoint:**") {
 			if i+1 < len(lines) && lines[i+1] == "" {
 				i++
