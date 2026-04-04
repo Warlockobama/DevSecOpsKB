@@ -199,13 +199,13 @@ func TestExportVault_FullTree(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: INDEX + DASHBOARD + Triage + By Domain + Definitions parent + 2 defs = 7
+	// Expect: INDEX + DASHBOARD + Triage + By Domain + Definitions parent + 2 defs + Findings = 8
 	total := sum.Created + sum.Updated
-	if total != 7 {
-		t.Errorf("expected 7 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
+	if total != 8 {
+		t.Errorf("expected 8 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
 	}
 	// Verify key pages exist
-	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions"} {
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions", "Findings"} {
 		if !created[title] {
 			t.Errorf("expected page %q to be created", title)
 		}
@@ -1086,17 +1086,17 @@ func TestExportVault_HierarchicalNesting(t *testing.T) {
 		t.Errorf("definition page parent: want %q, got %q", defsParentID, pageParents[defTitle])
 	}
 
-	// Finding page should be a child of the definition page
-	defPageID := "pid-" + defTitle
+	// Finding page should be a child of the "Findings" folder page (not the definition page)
+	findingsParentID := "pid-Findings"
 	findingTitle := ""
 	for title, parent := range pageParents {
-		if parent == defPageID {
+		if parent == findingsParentID {
 			findingTitle = title
 			break
 		}
 	}
 	if findingTitle == "" {
-		t.Errorf("no finding page found as child of definition page %q; all parents: %v", defPageID, pageParents)
+		t.Errorf("no finding page found as child of Findings folder; all parents: %v", pageParents)
 	}
 
 	// Occurrence page should be a child of the finding page

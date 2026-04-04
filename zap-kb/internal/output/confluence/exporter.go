@@ -288,14 +288,23 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
-	// Phase 5+6: Hierarchical export when entity data is available.
-	// Findings nest under their definition pages; occurrences nest under their finding pages.
-	// Falls back to flat export when entity data is absent.
+	// Phase 5: Create "Findings" folder page as a top-level sibling of "Definitions".
+	// Findings are parented here (not buried under individual definition pages) so they
+	// appear in the sidebar and are reachable from Quick navigation.
+	findingsID, findingsAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "Findings",
+		mdToStorage("# Findings\n\nAll active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint."), rootID)
+	if err != nil {
+		return summary, fmt.Errorf("upsert Findings parent: %w", err)
+	}
+	countAction(&summary, findingsAction)
+
+	// Phase 6: Hierarchical export — findings under "Findings", occurrences under their finding.
+	// Falls back to flat upsertDir when entity data is absent.
 	if opts.Entities != nil {
 		findingPageIDs := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, defPageIDs, defsID, &summary)
+			vaultRoot, concurrency, &ei, titleMap, defPageIDs, findingsID, &summary)
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, defsID, &summary)
+			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, findingsID, &summary)
 	} else {
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, &summary)
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, &summary)
@@ -362,13 +371,10 @@ func upsertFindingsHierarchical(
 				title = defTitleFromFilename(fname)
 			}
 
-			// Parent: definition page if known, else fallback
+			// Parent: always the Findings folder page so findings are visible in the sidebar.
+			// The Definition link is already shown in the Page Properties table.
 			parentID := fallbackParentID
-			if f != nil {
-				if id, ok := defPageIDs[f.DefinitionID]; ok && id != "" {
-					parentID = id
-				}
-			}
+			_ = defPageIDs // retained for signature compatibility
 
 			storageBody := mdToStorageWithTitles(content, titleMap)
 			storageBody = prependFindingProperties(storageBody, f, ei)

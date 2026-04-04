@@ -398,11 +398,26 @@ func inlineToStorageWithTitles(s string, titleMap map[string]string) string {
 						text := s[i+1 : i+1+closeBracket]
 						url := s[afterBracket+1 : afterBracket+1+closeParen]
 						i = afterBracket + 1 + closeParen + 1
-						// Anchor-only links (#section) don't work in Confluence — render as bold text.
+						// Anchor-only links (#section) — map known KB section anchors to their
+						// Confluence folder page titles; others render as bold text.
 						if strings.HasPrefix(url, "#") {
-							out.WriteString("<strong>")
-							out.WriteString(escapeHTML(text))
-							out.WriteString("</strong>")
+							anchorPageMap := map[string]string{
+								"#issues":      "Findings",
+								"#findings":    "Findings",
+								"#occurrences": "Findings",
+								"#rules":       "Definitions",
+							}
+							if pageTitle, ok := anchorPageMap[url]; ok {
+								out.WriteString(`<ac:link><ri:page ri:content-title="`)
+								out.WriteString(escapeAttr(pageTitle))
+								out.WriteString(`"/><ac:plain-text-link-body><![CDATA[`)
+								out.WriteString(text)
+								out.WriteString(`]]></ac:plain-text-link-body></ac:link>`)
+							} else {
+								out.WriteString("<strong>")
+								out.WriteString(escapeHTML(text))
+								out.WriteString("</strong>")
+							}
 							continue
 						}
 						// Vault-relative .md links → Confluence page link macro
