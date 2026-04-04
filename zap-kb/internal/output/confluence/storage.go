@@ -397,12 +397,33 @@ func inlineToStorageWithTitles(s string, titleMap map[string]string) string {
 					if closeParen >= 0 {
 						text := s[i+1 : i+1+closeBracket]
 						url := s[afterBracket+1 : afterBracket+1+closeParen]
+						i = afterBracket + 1 + closeParen + 1
+						// Anchor-only links (#section) don't work in Confluence — render as bold text.
+						if strings.HasPrefix(url, "#") {
+							out.WriteString("<strong>")
+							out.WriteString(escapeHTML(text))
+							out.WriteString("</strong>")
+							continue
+						}
+						// Vault-relative .md links → Confluence page link macro
+						if strings.HasSuffix(url, ".md") && !strings.HasPrefix(url, "http") {
+							pageTitle := resolveWikilinkTitle(url, titleMap)
+							if pageTitle == wikilinkToTitle(url) && text != url {
+								pageTitle = text
+							}
+							out.WriteString(`<ac:link><ri:page ri:content-title="`)
+							out.WriteString(escapeAttr(pageTitle))
+							out.WriteString(`"/><ac:plain-text-link-body><![CDATA[`)
+							out.WriteString(text)
+							out.WriteString(`]]></ac:plain-text-link-body></ac:link>`)
+							continue
+						}
+						// External URL
 						out.WriteString(`<a href="`)
 						out.WriteString(escapeAttr(url))
 						out.WriteString(`">`)
 						out.WriteString(escapeHTML(text))
 						out.WriteString(`</a>`)
-						i = afterBracket + 1 + closeParen + 1
 						continue
 					}
 				}
