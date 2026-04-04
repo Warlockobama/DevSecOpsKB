@@ -148,7 +148,7 @@ func TestMdToStorage_InlineCode(t *testing.T) {
 func TestMdToStorage_FencedCodeBlock(t *testing.T) {
 	md := "```bash\ncurl \"http://juice-shop:3000\"\n```"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("missing code macro: %s", out)
 	}
 	if !strings.Contains(out, "curl") {
@@ -162,7 +162,7 @@ func TestMdToStorage_FencedCodeBlock(t *testing.T) {
 func TestMdToStorage_ObsidianCalloutInfo(t *testing.T) {
 	md := "> [!Info]\n> Risk: Medium — Confidence: High"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing info macro: %s", out)
 	}
 	if !strings.Contains(out, "Risk: Medium") {
@@ -226,7 +226,7 @@ curl "http://juice-shop:3000"
 	if !strings.Contains(out, "<h1>") {
 		t.Errorf("missing h1: %s", out)
 	}
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing callout: %s", out)
 	}
 	if !strings.Contains(out, "Content Security Policy") {
@@ -235,7 +235,7 @@ curl "http://juice-shop:3000"
 	if !strings.Contains(out, "<strong>Endpoint:</strong>") {
 		t.Errorf("missing bold: %s", out)
 	}
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("missing code block: %s", out)
 	}
 }
@@ -358,7 +358,7 @@ func TestMdToStorage_ItalicValid(t *testing.T) {
 func TestMdToStorage_CalloutMultiLine(t *testing.T) {
 	md := "> [!Info]\n> Line one\n> Line two\n> Line three"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing info macro: %s", out)
 	}
 	// Each line is processed through inlineToStorage individually, then joined
@@ -396,14 +396,14 @@ func TestRiskStatusMacro(t *testing.T) {
 	}
 	for _, c := range cases {
 		out := riskStatusMacro(c.risk)
-		if !strings.Contains(out, `name="status"`) {
+		if !strings.Contains(out, `ac:name="status"`) {
 			t.Errorf("riskStatusMacro(%q): missing status macro name, got: %s", c.risk, out)
 		}
-		wantColorParam := `<ac:parameter name="colour">` + c.wantColor + `</ac:parameter>`
+		wantColorParam := `<ac:parameter ac:name="colour">` + c.wantColor + `</ac:parameter>`
 		if !strings.Contains(out, wantColorParam) {
 			t.Errorf("riskStatusMacro(%q): expected colour %q, got: %s", c.risk, c.wantColor, out)
 		}
-		wantTitleParam := `<ac:parameter name="title">` + c.wantTitle + `</ac:parameter>`
+		wantTitleParam := `<ac:parameter ac:name="title">` + c.wantTitle + `</ac:parameter>`
 		if !strings.Contains(out, wantTitleParam) {
 			t.Errorf("riskStatusMacro(%q): expected title %q, got: %s", c.risk, c.wantTitle, out)
 		}
@@ -424,7 +424,7 @@ func TestPagePropertiesMacro(t *testing.T) {
 
 	t.Run("single_kv", func(t *testing.T) {
 		out := pagePropertiesMacro([][2]string{{"Risk", "High"}})
-		if !strings.Contains(out, `name="details"`) {
+		if !strings.Contains(out, `ac:name="details"`) {
 			t.Errorf("missing details macro: %s", out)
 		}
 		if !strings.Contains(out, "<th>Risk</th>") {
@@ -518,7 +518,7 @@ func TestMdToStorage_NestedListWithWikilinks(t *testing.T) {
 func TestMdToStorage_DetailsToExpandMacro(t *testing.T) {
 	md := "## Other info\n\n<details>\n<summary>Show details</summary>\n\nSome detailed content here.\n\n</details>\n\n## Next section"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="expand"`) {
+	if !strings.Contains(out, `ac:name="expand"`) {
 		t.Errorf("missing expand macro: %s", out)
 	}
 	if !strings.Contains(out, "Show details") {
@@ -565,14 +565,14 @@ func TestMdToStorage_DetailsWithCodeBlock(t *testing.T) {
 
 	out := mdToStorage(md)
 
-	if !strings.Contains(out, `name="expand"`) {
+	if !strings.Contains(out, `ac:name="expand"`) {
 		t.Errorf("expected expand macro, got: %s", out)
 	}
 	if !strings.Contains(out, "Show traffic") {
 		t.Errorf("expand title missing: %s", out)
 	}
 	// Inner code block should become a Confluence code macro
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("inner code block should become code macro, got: %s", out)
 	}
 	if !strings.Contains(out, `{"key":"value"}`) {

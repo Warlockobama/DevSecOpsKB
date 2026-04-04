@@ -968,7 +968,7 @@ func TestTriageStatusMacro_XmlEscaping(t *testing.T) {
 		// The raw unescaped tag must not be a free-standing element in the output
 		// (it's fine for it to appear as part of the macro name attribute, but
 		// the ac:parameter value must be escaped)
-		if strings.Contains(got, `<ac:parameter name="title">`+tc.wantNot) {
+		if strings.Contains(got, `<ac:parameter ac:name="title">`+tc.wantNot) {
 			t.Errorf("triageStatusMacro(%q): unescaped %q found in title param: %s", tc.status, tc.wantNot, got)
 		}
 		if !strings.Contains(got, tc.want) {

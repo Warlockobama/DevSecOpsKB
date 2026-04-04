@@ -81,7 +81,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 			if macroName == "" {
 				macroName = "info"
 			}
-			out.WriteString(`<ac:structured-macro name="` + macroName + `"><ac:rich-text-body><p>`)
+			out.WriteString(`<ac:structured-macro ac:name="` + macroName + `"><ac:rich-text-body><p>`)
 			out.WriteString(body)
 			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			calloutLines = calloutLines[:0]
@@ -101,13 +101,13 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 				lang := codeLang
 				body := strings.Join(codeLines, "\n")
 				if lang != "" {
-					out.WriteString(`<ac:structured-macro name="code"><ac:parameter name="language">`)
+					out.WriteString(`<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">`)
 					out.WriteString(escapeHTML(lang))
 					out.WriteString(`</ac:parameter><ac:plain-text-body><![CDATA[`)
 					out.WriteString(body)
 					out.WriteString(`]]></ac:plain-text-body></ac:structured-macro>`)
 				} else {
-					out.WriteString(`<ac:structured-macro name="code"><ac:plain-text-body><![CDATA[`)
+					out.WriteString(`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[`)
 					out.WriteString(body)
 					out.WriteString(`]]></ac:plain-text-body></ac:structured-macro>`)
 				}
@@ -157,7 +157,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 
 			// Plain blockquote — close any open block, emit as info macro
 			closeOpenBlocks()
-			out.WriteString(`<ac:structured-macro name="info"><ac:rich-text-body><p>`)
+			out.WriteString(`<ac:structured-macro ac:name="info"><ac:rich-text-body><p>`)
 			out.WriteString(inline(content))
 			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			continue
@@ -328,7 +328,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 				i++
 			}
 			expandContent := strings.Join(expandLines, "\n")
-			out.WriteString(`<ac:structured-macro name="expand"><ac:parameter name="title">`)
+			out.WriteString(`<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">`)
 			out.WriteString(escapeHTML(expandTitle))
 			out.WriteString(`</ac:parameter><ac:rich-text-body>`)
 			out.WriteString(mdToStorageWithTitles(expandContent, titleMap))
@@ -624,7 +624,7 @@ func riskStatusMacro(risk string) string {
 	if label == "" {
 		label = "UNKNOWN"
 	}
-	return fmt.Sprintf(`<ac:structured-macro name="status"><ac:parameter name="colour">%s</ac:parameter><ac:parameter name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(label))
+	return fmt.Sprintf(`<ac:structured-macro ac:name="status"><ac:parameter ac:name="colour">%s</ac:parameter><ac:parameter ac:name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(label))
 }
 
 // pagePropertiesMacro builds a Confluence Page Properties macro from key-value pairs.
@@ -640,7 +640,7 @@ func pagePropertiesMacro(props [][2]string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(`<ac:structured-macro name="details"><ac:rich-text-body><table><tbody>`)
+	b.WriteString(`<ac:structured-macro ac:name="details"><ac:rich-text-body><table><tbody>`)
 	for _, kv := range props {
 		b.WriteString("<tr><th>")
 		b.WriteString(escapeHTML(kv[0]))
