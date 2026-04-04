@@ -512,45 +512,52 @@ func main() {
 		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
-		// Optional Confluence export
-		if strings.TrimSpace(confURL) != "" {
-			if confFull {
-				confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
-				defer confCancel()
-				sum, cerr := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
-					BaseURL:     confURL,
-					Username:    confUser,
-					APIToken:    confToken,
-					SpaceKey:    confSpace,
-					DryRun:      confDryRun,
-					Concurrency: confConcurrency,
-					Entities:    &ent,
-				})
-				if cerr != nil {
-					log.Fatalf("confluence vault export: %v", cerr)
-				}
-				fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n",
-					sum.Created, sum.Updated, sum.Skipped, sum.Errors)
-			} else {
-				confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer confCancel()
-				if err := confluence.Export(confCtx, vault, confluence.Options{
-					BaseURL:      confURL,
-					Username:     confUser,
-					APIToken:     confToken,
-					SpaceKey:     confSpace,
-					ParentPageID: confParent,
-					TitlePrefix:  confTitlePrefix,
-					MarkdownPage: "INDEX.md",
-					DryRun:       confDryRun,
-				}); err != nil {
-					log.Fatalf("confluence export: %v", err)
-				}
-				fmt.Println("Exported INDEX.md to Confluence")
-			}
-		}
 	default:
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
+	}
+
+	// Optional Confluence export — runs after vault is written (writes vault first if needed)
+	if strings.TrimSpace(confURL) != "" {
+		// Ensure vault exists on disk (may have been written above in obsidian case, or write now)
+		if format != "obsidian" {
+			if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
+				log.Fatalf("write obsidian for confluence: %v", err)
+			}
+		}
+		if confFull {
+			confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer confCancel()
+			sum, cerr := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
+				BaseURL:     confURL,
+				Username:    confUser,
+				APIToken:    confToken,
+				SpaceKey:    confSpace,
+				DryRun:      confDryRun,
+				Concurrency: confConcurrency,
+				Entities:    &ent,
+			})
+			if cerr != nil {
+				log.Fatalf("confluence vault export: %v", cerr)
+			}
+			fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n",
+				sum.Created, sum.Updated, sum.Skipped, sum.Errors)
+		} else {
+			confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer confCancel()
+			if err := confluence.Export(confCtx, vault, confluence.Options{
+				BaseURL:      confURL,
+				Username:     confUser,
+				APIToken:     confToken,
+				SpaceKey:     confSpace,
+				ParentPageID: confParent,
+				TitlePrefix:  confTitlePrefix,
+				MarkdownPage: "INDEX.md",
+				DryRun:       confDryRun,
+			}); err != nil {
+				log.Fatalf("confluence export: %v", err)
+			}
+			fmt.Println("Exported INDEX.md to Confluence")
+		}
 	}
 
 	// Optional Jira export (works with entities and obsidian formats)
