@@ -37,7 +37,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	defDir := filepath.Join(root, "definitions")
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
+	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
+	// no longer in the entities file) don't accumulate and get exported to Confluence.
 	for _, d := range []string{defDir, findDir, occDir} {
+		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
