@@ -18,7 +18,7 @@ Findings and occurrences use short aliases for display in tables and links.
 
 ` + "`PREFIX domain-XXXX`" + `
 
-- **PREFIX** — initials of the rule name (e.g., CDM = Cross-Domain Misconfiguration, CSP = Content Security Policy)
+- **PREFIX** — initials of the rule name (e.g., CDM = Cross-Domain Misconfiguration)
 - **domain** — target host fragment (e.g., ` + "`juice-shop:3000`" + `)
 - **XXXX** — last 4 hex characters of the finding or occurrence ID
 
@@ -37,14 +37,11 @@ Findings and occurrences use short aliases for display in tables and links.
 | ABORE | Authenticated Basket Object Reference Exposure | custom |
 | ACE | Authenticated Complaints Exposure | custom |
 | AUDE | Authenticated User Directory Exposure | custom |
-| D1 | (scan-source prefix — replaces rule initials when rule name is not in the legend) | varies |
 
-_D1 and DZ prefixes appear when a finding's rule initials conflict or are not registered above. File a PR to add missing prefixes._
+_D1 and DZ prefixes appear when rule initials conflict or are unregistered — file a PR to expand this legend._
 `
 
 const triageGuideContent = `# Triage Workflow Guide
-
-This guide describes how to update finding status in Confluence.
 
 ## Status values
 
@@ -63,13 +60,12 @@ This guide describes how to update finding status in Confluence.
 3. Scroll to the **Workflow** section.
 4. Update the ` + "`Status:`" + ` line to the new value.
 5. Add your name to ` + "`Owner:`" + ` and today's date to ` + "`Updated:`" + `.
-6. Save the page — Confluence page history records the change.
+6. Save — Confluence page history records the change.
 
 ## Bulk triage
 
-To triage multiple findings of the same type:
 1. Open the definition page (e.g., CDM).
-2. Review the False Positive Conditions section.
+2. Review the **False Positive Conditions** section.
 3. For each occurrence in the findings list, open and update status.
 
 ## Escalation
@@ -80,13 +76,12 @@ To triage multiple findings of the same type:
 
 ## Governance fields
 
-Each occurrence page has a **Governance** section:
-- **False positive reason** — required when setting status to ` + "`fp`" + `
-- **Acceptance justification** — required when setting status to ` + "`accepted`" + `
-- **Acceptance expires at** — set a UTC expiry date for accepted risks
-- **Due at** — target remediation date
-
-_Keep these fields accurate — they feed compliance reporting._
+Each occurrence page has a **Workflow** section with:
+- **Status** — required; one of the values above
+- **Owner** — person responsible for resolution
+- **False positive reason** — required when status = ` + "`fp`" + `
+- **Acceptance justification** — required when status = ` + "`accepted`" + `
+- **Due at** — target remediation date (UTC)
 `
 
 // writeLegend writes LEGEND.md (static content — no entities data needed).
@@ -351,16 +346,16 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		actions = actions[:5]
 	}
 
-	// Targets scanned (distinct domains).
-	domainsSet := map[string]struct{}{}
+	// Targets scanned (distinct domains with occurrence counts).
+	domainOccCounts := map[string]int{}
 	for _, o := range ef.Occurrences {
 		dom := computeDomainLabel(o.URL, opts.SiteLabel)
 		if dom != "" {
-			domainsSet[dom] = struct{}{}
+			domainOccCounts[dom]++
 		}
 	}
 	var domains []string
-	for d := range domainsSet {
+	for d := range domainOccCounts {
 		domains = append(domains, d)
 	}
 	sort.Strings(domains)
@@ -377,7 +372,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 
 	b.WriteString("## Risk posture\n\n")
-	b.WriteString("| Severity | Open findings | Open occurrences |\n")
+	b.WriteString("| Severity | Open findings | Occurrences |\n")
 	b.WriteString("|---|---|---|\n")
 	for _, r := range sevRows {
 		fmt.Fprintf(&b, "| %s | %d | %d |\n", r.Label, r.findings, r.occs)
@@ -398,9 +393,9 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 
 	b.WriteString("## Recommended immediate actions\n\n")
-	b.WriteString("_Based on High-severity open findings:_\n\n")
+	b.WriteString("_Top High-severity findings requiring action:_\n\n")
 	if len(actions) == 0 {
-		b.WriteString("_No High findings open._\n\n")
+		b.WriteString("_No High-severity open findings._\n\n")
 	} else {
 		for i, a := range actions {
 			remedyStr := a.Remedy
@@ -417,7 +412,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		b.WriteString("_No domain data available._\n")
 	} else {
 		for _, d := range domains {
-			fmt.Fprintf(&b, "- %s\n", d)
+			fmt.Fprintf(&b, "- %s (%d occurrences)\n", d, domainOccCounts[d])
 		}
 	}
 	b.WriteString("\n")
