@@ -1414,6 +1414,87 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				)
 			}
 			domainSection.WriteString("\n")
+
+			// Per-scan breakdown: only shown when 2+ distinct scan labels exist.
+			if len(scanLabels) >= 2 {
+				type scanStats struct {
+					count                int
+					high, med, low, info int
+					minDate, maxDate     string
+				}
+				domainScanStats := make(map[string]map[string]*scanStats)
+				for _, o := range resolvedOccs {
+					dom := computeDomainLabel(o.URL, opts.SiteLabel)
+					if dom == "" {
+						continue
+					}
+					sl := strings.TrimSpace(o.ScanLabel)
+					if sl == "" {
+						sl = "unlabeled"
+					}
+					if domainScanStats[dom] == nil {
+						domainScanStats[dom] = make(map[string]*scanStats)
+					}
+					st := domainScanStats[dom][sl]
+					if st == nil {
+						st = &scanStats{}
+						domainScanStats[dom][sl] = st
+					}
+					st.count++
+					sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
+					switch strings.ToLower(strings.TrimSpace(sevTxt)) {
+					case "high":
+						st.high++
+					case "medium":
+						st.med++
+					case "low":
+						st.low++
+					default:
+						st.info++
+					}
+					dateStr := strings.TrimSpace(o.ObservedAt)
+					if len(dateStr) >= 10 {
+						dateStr = dateStr[:10]
+					}
+					if dateStr != "" {
+						if st.minDate == "" || dateStr < st.minDate {
+							st.minDate = dateStr
+						}
+						if st.maxDate == "" || dateStr > st.maxDate {
+							st.maxDate = dateStr
+						}
+					}
+				}
+
+				domainSection.WriteString("## Per scan breakdown\n\n")
+				var breakdownDoms []string
+				for d := range domainScanStats {
+					breakdownDoms = append(breakdownDoms, d)
+				}
+				sort.Strings(breakdownDoms)
+				for _, d := range breakdownDoms {
+					fmt.Fprintf(&domainSection, "### %s\n\n", d)
+					domainSection.WriteString("| Scan | Occurrences | High | Med | Low | Info | Date range |\n|---|---|---|---|---|---|---|\n")
+					scanMap := domainScanStats[d]
+					var scanNames []string
+					for sn := range scanMap {
+						scanNames = append(scanNames, sn)
+					}
+					sort.Strings(scanNames)
+					for _, sn := range scanNames {
+						st := scanMap[sn]
+						dateRange := st.minDate
+						if st.maxDate != "" && st.maxDate != st.minDate {
+							dateRange = st.minDate + " \u2192 " + st.maxDate
+						}
+						fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d | %s |\n",
+							sn, st.count, st.high, st.med, st.low, st.info, dateRange,
+						)
+					}
+					domainSection.WriteString("\n")
+				}
+			}
+
 			b.WriteString(domainSection.String())
 		}
 

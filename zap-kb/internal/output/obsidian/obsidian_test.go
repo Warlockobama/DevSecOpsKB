@@ -476,3 +476,209 @@ func TestWriteVault_DefinitionPage_FalsePositiveConditions(t *testing.T) {
 		t.Errorf("expected second FP condition in definition page, got:\n%s", body)
 	}
 }
+
+// --- Issue #39: Triage board open findings queue ---
+
+// TestWriteVault_TriageBoardOpenFindingsQueue verifies that triage-board.md
+// contains a "## Open findings queue" section with severity-ordered finding
+// links for open/untriaged findings.
+func TestWriteVault_TriageBoardOpenFindingsQueue(t *testing.T) {
+	root := t.TempDir()
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions: []entities.Definition{
+			{DefinitionID: "def-h", PluginID: "40012", Alert: "XSS Reflected"},
+			{DefinitionID: "def-m", PluginID: "10020", Alert: "X-Frame-Options Missing"},
+		},
+		Findings: []entities.Finding{
+			{FindingID: "find-h", DefinitionID: "def-h", PluginID: "40012", URL: "http://example.com/search", Method: "GET", Risk: "High", RiskCode: "3"},
+			{FindingID: "find-m", DefinitionID: "def-m", PluginID: "10020", URL: "http://example.com/home", Method: "GET", Risk: "Medium", RiskCode: "2"},
+		},
+		Occurrences: []entities.Occurrence{
+			{OccurrenceID: "occ-h1", FindingID: "find-h", DefinitionID: "def-h", URL: "http://example.com/search", Method: "GET", Risk: "High", RiskCode: "3"},
+			{OccurrenceID: "occ-m1", FindingID: "find-m", DefinitionID: "def-m", URL: "http://example.com/home", Method: "GET", Risk: "Medium", RiskCode: "2"},
+		},
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	tbData, err := os.ReadFile(filepath.Join(root, "triage-board.md"))
+	if err != nil {
+		t.Fatalf("ReadFile triage-board.md: %v", err)
+	}
+	tb := string(tbData)
+
+	if !strings.Contains(tb, "## Open findings queue") {
+		t.Errorf("triage-board.md missing '## Open findings queue' section:\n%s", tb)
+	}
+	if !strings.Contains(tb, "### High") {
+		t.Errorf("triage-board.md missing '### High' band in open findings queue:\n%s", tb)
+	}
+	if !strings.Contains(tb, "### Medium") {
+		t.Errorf("triage-board.md missing '### Medium' band in open findings queue:\n%s", tb)
+	}
+
+	// High must appear before Medium.
+	highIdx := strings.Index(tb, "### High")
+	medIdx := strings.Index(tb, "### Medium")
+	if highIdx < 0 || medIdx < 0 {
+		t.Fatalf("could not locate severity bands")
+	}
+	if highIdx >= medIdx {
+		t.Errorf("High severity band must appear before Medium; highIdx=%d medIdx=%d", highIdx, medIdx)
+	}
+
+	// Both finding links must appear.
+	if !strings.Contains(tb, "find-h") {
+		t.Errorf("triage-board.md missing High finding link:\n%s", tb)
+	}
+	if !strings.Contains(tb, "find-m") {
+		t.Errorf("triage-board.md missing Medium finding link:\n%s", tb)
+	}
+}
+
+// --- Issue #43: Definition truncation notice navigation link ---
+
+// TestWriteVault_DefinitionTruncationLink verifies that when findings are
+// truncated, the notice includes the navigation link to INDEX.md#issues.
+func TestWriteVault_DefinitionTruncationLink(t *testing.T) {
+	root := t.TempDir()
+
+	// maxFindingsPerSeverity in the definition page is 10; create 11 to trigger truncation.
+	def := entities.Definition{DefinitionID: "def-trunc", PluginID: "10001", Alert: "Test Alert"}
+	findings := make([]entities.Finding, 11)
+	occs := make([]entities.Occurrence, 11)
+	for i := 0; i < 11; i++ {
+		fid := fmt.Sprintf("find-trunc%02d", i)
+		oid := fmt.Sprintf("occ-trunc%02d", i)
+		findings[i] = entities.Finding{
+			FindingID:    fid,
+			DefinitionID: "def-trunc",
+			PluginID:     "10001",
+			URL:          fmt.Sprintf("http://example.com/path%d", i),
+			Method:       "GET",
+			Risk:         "High",
+			RiskCode:     "3",
+		}
+		occs[i] = entities.Occurrence{
+			OccurrenceID: oid,
+			FindingID:    fid,
+			DefinitionID: "def-trunc",
+			URL:          fmt.Sprintf("http://example.com/path%d", i),
+			Method:       "GET",
+			Risk:         "High",
+			RiskCode:     "3",
+		}
+	}
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      findings,
+		Occurrences:   occs,
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	defEntries, err := os.ReadDir(filepath.Join(root, "definitions"))
+	if err != nil {
+		t.Fatalf("ReadDir definitions: %v", err)
+	}
+	if len(defEntries) == 0 {
+		t.Fatal("no definition files written")
+	}
+
+	defFile := filepath.Join(root, "definitions", defEntries[0].Name())
+	raw, err := os.ReadFile(defFile)
+	if err != nil {
+		t.Fatalf("ReadFile definition: %v", err)
+	}
+	body := string(raw)
+
+	const wantLink = "[[../INDEX.md#issues|see full list]]"
+	if !strings.Contains(body, wantLink) {
+		t.Errorf("definition page missing truncation navigation link %q:\n%s", wantLink, body)
+	}
+}
+
+// --- Issue #46: defaultBodyTruncateBytes = 1024 ---
+
+// TestDefaultBodyTruncateBytes verifies the constant value is 1024.
+func TestDefaultBodyTruncateBytes(t *testing.T) {
+	if defaultBodyTruncateBytes != 1024 {
+		t.Errorf("defaultBodyTruncateBytes = %d, want 1024", defaultBodyTruncateBytes)
+	}
+}
+
+// --- Issue #48: Operational rules segregated in INDEX.md ---
+
+// TestWriteVault_OperationalRulesSegregated verifies that a finding with
+// pluginID 10116 appears in the operational section and not in the main issues table.
+func TestWriteVault_OperationalRulesSegregated(t *testing.T) {
+	root := t.TempDir()
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions: []entities.Definition{
+			{DefinitionID: "def-normal", PluginID: "10020", Alert: "X-Frame-Options Missing"},
+			{DefinitionID: "def-op", PluginID: "10116", Alert: "ZAP is Out of Date"},
+		},
+		Findings: []entities.Finding{
+			{FindingID: "find-normal", DefinitionID: "def-normal", PluginID: "10020", URL: "http://example.com/", Method: "GET", Risk: "Medium", RiskCode: "2"},
+			{FindingID: "find-op", DefinitionID: "def-op", PluginID: "10116", URL: "http://example.com/", Method: "GET", Risk: "Informational", RiskCode: "0"},
+		},
+		Occurrences: []entities.Occurrence{
+			{OccurrenceID: "occ-normal", FindingID: "find-normal", DefinitionID: "def-normal", URL: "http://example.com/", Method: "GET"},
+			{OccurrenceID: "occ-op", FindingID: "find-op", DefinitionID: "def-op", URL: "http://example.com/", Method: "GET"},
+		},
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	indexData, err := os.ReadFile(filepath.Join(root, "INDEX.md"))
+	if err != nil {
+		t.Fatalf("ReadFile INDEX.md: %v", err)
+	}
+	index := string(indexData)
+
+	// Operational section must exist.
+	if !strings.Contains(index, "## Operational / Tool info") {
+		t.Errorf("INDEX.md missing '## Operational / Tool info' section:\n%s", index)
+	}
+
+	// find-op must appear in the operational section.
+	opIdx := strings.Index(index, "## Operational / Tool info")
+	if opIdx < 0 {
+		t.Fatal("could not locate operational section")
+	}
+	opSection := index[opIdx:]
+	if !strings.Contains(opSection, "find-op") {
+		t.Errorf("operational section missing 'find-op':\n%s", opSection)
+	}
+
+	// find-op must NOT appear in the main issues table (before the operational section).
+	mainSection := index[:opIdx]
+	issuesIdx := strings.Index(mainSection, "## Issues")
+	if issuesIdx < 0 {
+		t.Fatalf("INDEX.md missing '## Issues' section before operational section:\n%s", mainSection)
+	}
+	issuesTable := mainSection[issuesIdx:]
+	if strings.Contains(issuesTable, "find-op") {
+		t.Errorf("main issues table must NOT contain 'find-op' (operational finding), got:\n%s", issuesTable)
+	}
+
+	// Normal finding must remain in the main issues table.
+	if !strings.Contains(issuesTable, "find-normal") {
+		t.Errorf("main issues table missing 'find-normal':\n%s", issuesTable)
+	}
+}
