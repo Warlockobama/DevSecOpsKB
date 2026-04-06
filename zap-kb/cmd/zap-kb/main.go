@@ -389,6 +389,7 @@ func main() {
 		// with previous runs of the same alerts, making scan-level attribution impossible.
 		if strings.TrimSpace(scanLabel) == "" && (len(alerts) > 0 || strings.TrimSpace(runIn) != "" || len(entIn.Occurrences) > 0) {
 			fmt.Fprintln(os.Stderr, "[warn] no -scan-label set; occurrences from this run will merge with previous runs of the same alerts")
+			fmt.Fprintf(os.Stderr, "[warn] Tip: pass -scan-label=<env>-<YYYYMMDD> to track this run separately (e.g. prod-%s)\n", time.Now().UTC().Format("20060102"))
 		}
 		if len(alerts) > 0 {
 			built := entities.BuildEntitiesWithOptions(alerts, entities.BuildOptions{

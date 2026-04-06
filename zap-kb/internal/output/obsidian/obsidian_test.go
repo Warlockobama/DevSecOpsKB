@@ -682,3 +682,100 @@ func TestWriteVault_OperationalRulesSegregated(t *testing.T) {
 		t.Errorf("main issues table missing 'find-normal':\n%s", issuesTable)
 	}
 }
+
+// TestOccurrenceWorkflow_ScanLabel verifies that the Workflow section of an
+// occurrence page contains "- Scan: <label>" when ScanLabel is set.
+func TestOccurrenceWorkflow_ScanLabel(t *testing.T) {
+	root := t.TempDir()
+	ef := minimalEF("occ-workflow-scan")
+	ef.Occurrences[0].ScanLabel = "my-scan-label"
+	ef.Occurrences[0].ObservedAt = "2026-04-05T00:00:00Z"
+
+	if err := WriteVault(root, ef, Options{ScanLabel: "my-scan-label"}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	occDir := filepath.Join(root, "occurrences")
+	entries, err := os.ReadDir(occDir)
+	if err != nil {
+		t.Fatalf("ReadDir occurrences: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no occurrence files written")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(occDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence: %v", err)
+	}
+	body := string(raw)
+
+	// Locate the Workflow section.
+	workflowIdx := strings.Index(body, "## Workflow")
+	if workflowIdx < 0 {
+		t.Fatalf("## Workflow section not found in occurrence page:\n%s", body)
+	}
+	workflowSection := body[workflowIdx:]
+	if !strings.Contains(workflowSection, "- Scan: my-scan-label") {
+		t.Errorf("Workflow section missing '- Scan: my-scan-label':\n%s", workflowSection)
+	}
+}
+
+// TestByDomain_PerScanBreakdown verifies that by-domain.md contains a
+// "## Per scan breakdown" section when 2+ distinct scan labels are present,
+// and that both scan label names appear in that section.
+func TestByDomain_PerScanBreakdown(t *testing.T) {
+	root := t.TempDir()
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-05T00:00:00Z",
+		Definitions: []entities.Definition{
+			{DefinitionID: "def-1", PluginID: "10001", Alert: "Test Alert"},
+		},
+		Findings: []entities.Finding{
+			{FindingID: "find-1", DefinitionID: "def-1", PluginID: "10001", URL: "http://example.com/path", Method: "GET"},
+			{FindingID: "find-2", DefinitionID: "def-1", PluginID: "10001", URL: "http://example.com/other", Method: "GET"},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-scan-a",
+				FindingID:    "find-1",
+				DefinitionID: "def-1",
+				URL:          "http://example.com/path",
+				Method:       "GET",
+				ScanLabel:    "scan-alpha",
+				ObservedAt:   "2026-04-03T10:00:00Z",
+			},
+			{
+				OccurrenceID: "occ-scan-b",
+				FindingID:    "find-2",
+				DefinitionID: "def-1",
+				URL:          "http://example.com/other",
+				Method:       "GET",
+				ScanLabel:    "scan-beta",
+				ObservedAt:   "2026-04-04T10:00:00Z",
+			},
+		},
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(root, "by-domain.md"))
+	if err != nil {
+		t.Fatalf("ReadFile by-domain.md: %v", err)
+	}
+	body := string(raw)
+
+	if !strings.Contains(body, "## Per scan breakdown") {
+		t.Errorf("by-domain.md missing '## Per scan breakdown' section:\n%s", body)
+	}
+	if !strings.Contains(body, "scan-alpha") {
+		t.Errorf("by-domain.md Per scan breakdown missing 'scan-alpha':\n%s", body)
+	}
+	if !strings.Contains(body, "scan-beta") {
+		t.Errorf("by-domain.md Per scan breakdown missing 'scan-beta':\n%s", body)
+	}
+}
