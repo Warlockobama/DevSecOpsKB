@@ -259,11 +259,9 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			continue // skip missing files
 		}
 		storageBody := mdToStorageWithTitles(content, titleMap)
-		// Change 2: for the Triage Board page, append a live Page Properties Report
-		// macro so Confluence auto-queries all kb-occurrence labeled pages.
-		if tp.file == "triage-board.md" && opts.SpaceKey != "" {
-			storageBody += pagePropertiesReportMacro(opts.SpaceKey)
-		}
+		// The Page Properties Report macro is intentionally NOT appended here —
+		// it depends on the page-properties macro which fails in Confluence Cloud
+		// via REST API. Triage is done by editing individual occurrence pages.
 		_, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, storageBody, rootID, hs)
 		if uerr != nil {
 			fmt.Printf("[confluence] error upserting %s: %v\n", tp.title, uerr)
@@ -1871,12 +1869,17 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// --- Supplementary fields ---
 	props = append(props, [2]string{"Confidence", escapeHTML(f.Confidence)})
 
-	// Definition — linked page
+	// Definition — linked page. Title must match the Confluence page title format:
+	// "<Alert> (Plugin <pluginID>)" — same as the H1 written by obsidian WriteVault.
 	if def != nil {
-		defTitle := firstNonEmptyStr(def.Alert, def.Name)
+		baseTitle := firstNonEmptyStr(def.Alert, def.Name)
+		defTitle := baseTitle
+		if def.PluginID != "" && baseTitle != "" {
+			defTitle = fmt.Sprintf("%s (Plugin %s)", baseTitle, def.PluginID)
+		}
 		if defTitle != "" {
 			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
-				escapeAttr(defTitle), defTitle)
+				escapeAttr(defTitle), baseTitle)
 			props = append(props, [2]string{"Definition", defLink})
 		}
 	}
@@ -1937,10 +1940,11 @@ func triageStatusMacro(status string) string {
 }
 
 // prependOccurrenceProperties adds structured metadata to occurrence pages.
-// The triage fields (Status/Owner/Risk/Rule/Finding) are wrapped in a
-// page-properties macro so Confluence indexes them for the Page Properties
-// Report macro. Informational fields (Scan, Observed, Tags, Updated) are
-// emitted as a plain table below the macro.
+// Triage fields (Status, Owner) come first in the table so they are immediately
+// visible and easy to edit. Informational fields follow.
+// NOTE: The Confluence page-properties macro ("Error loading the extension!") is
+// intentionally NOT used — it fails to render in Confluence Cloud via REST API.
+// The pull command reads Status/Owner from this plain table directly.
 func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex) string {
 	if o == nil {
 		return storageBody
@@ -1948,7 +1952,6 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 
 	def := ei.defByID(o.DefinitionID)
 
-	// --- Triage metadata: page-properties macro (indexed by Confluence) ---
 	status := "open"
 	owner := ""
 	if o.Analyst != nil {
@@ -1957,48 +1960,30 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		}
 		owner = o.Analyst.Owner
 	}
-	ruleName := ""
-	if def != nil {
-		ruleName = firstNonEmptyStr(def.Alert, def.Name)
-	}
 
-	// Finding link — derive page title from the finding entity
-	findingLink := ""
-	if o.FindingID != "" {
-		f := ei.finds[o.FindingID]
-		fTitle := findingPageTitle(f, ei)
-		if fTitle != "" {
-			findingLink = fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s" /></ac:link>`, escapeAttr(fTitle))
-		}
-	}
+	// Edit instruction — appears before the table
+	editInstruction := `<p><em>To triage: <strong>Edit this page</strong> → update Status/Owner in the table below → Save → run <code>zap-kb pull</code> to sync back. Valid status values: open | triaged | fp | accepted | fixed</em></p>`
 
-	var triageMacro strings.Builder
-	triageMacro.WriteString(`<ac:structured-macro ac:name="page-properties" ac:schema-version="1">`)
-	triageMacro.WriteString(`<ac:parameter ac:name="id">triage-metadata</ac:parameter>`)
-	triageMacro.WriteString(`<ac:rich-text-body>`)
-	triageMacro.WriteString(`<table><tbody>`)
-	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Status</th><td>%s</td></tr>`, escapeHTML(status)))
-	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Owner</th><td>%s</td></tr>`, escapeHTML(owner)))
-	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Risk</th><td>%s</td></tr>`, escapeHTML(o.Risk)))
-	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Rule</th><td>%s</td></tr>`, escapeHTML(ruleName)))
-	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Finding</th><td>%s</td></tr>`, findingLink))
-	triageMacro.WriteString(`</tbody></table>`)
-	triageMacro.WriteString(`</ac:rich-text-body>`)
-	triageMacro.WriteString(`</ac:structured-macro>`)
-
-	// Edit instruction
-	editInstruction := `<p><em>To triage: <strong>Edit this page</strong> → update Status in the table above → Save. Valid values: open | triaged | fp | accepted | fixed</em></p>`
-
-	// --- Informational plain table ---
+	// --- Single plain table: triage fields first, then informational ---
 	var infoProps [][2]string
+	infoProps = append(infoProps, [2]string{"Status", escapeHTML(status)})
+	infoProps = append(infoProps, [2]string{"Owner", escapeHTML(owner)})
+	infoProps = append(infoProps, [2]string{"Risk", escapeHTML(o.Risk)})
 	infoProps = append(infoProps, [2]string{"Confidence", escapeHTML(o.Confidence)})
 
 	// Definition link + taxonomy (CWE, OWASP) from the parent definition
 	if def != nil {
-		defTitle := firstNonEmptyStr(def.Alert, def.Name)
+		// The Confluence page title for a definition is "<Alert> (Plugin <pluginID>)" —
+		// matching the H1 written by obsidian WriteVault: "# <title> (Plugin <pluginID>)".
+		// Using just def.Alert produces a broken createpage link.
+		baseTitle := firstNonEmptyStr(def.Alert, def.Name)
+		defTitle := baseTitle
+		if def.PluginID != "" && baseTitle != "" {
+			defTitle = fmt.Sprintf("%s (Plugin %s)", baseTitle, def.PluginID)
+		}
 		if defTitle != "" {
 			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
-				escapeAttr(defTitle), defTitle)
+				escapeAttr(defTitle), baseTitle)
 			infoProps = append(infoProps, [2]string{"Definition", defLink})
 		}
 		if def.Taxonomy != nil {
@@ -2067,7 +2052,7 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	}
 	infoTable.WriteString(`</tbody></table>`)
 
-	return triageMacro.String() + editInstruction + infoTable.String() + storageBody
+	return editInstruction + infoTable.String() + storageBody
 }
 
 // --- Confluence Labels API ---
