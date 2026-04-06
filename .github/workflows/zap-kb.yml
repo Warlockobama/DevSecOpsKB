@@ -35,6 +35,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test (unit)
+        run: go test ./...
+
+      - name: Test (e2e tagged)
+        run: |
+          if [ -d e2e ]; then
+            go test -tags e2e ./e2e
+          else
+            echo "No top-level e2e package found; skipping tagged e2e tests."
+          fi
+
       - name: Build
         run: go build ./...
 
