@@ -1411,11 +1411,12 @@ func stripFindingBodyForConfluence(content string) string {
 // Strips: severity callout and Endpoint line (both duplicated in Properties table).
 func stripOccurrenceBodyForConfluence(content string) string {
 	// Sections that are Obsidian-only scaffolding and should not appear in Confluence.
-	// "### Checklist" is intentionally NOT in this list — it contains task list items
-	// that render as clickable checkboxes in Confluence.
+	// "### Checklist" is excluded: Confluence Cloud does not persist ac:task clicks
+	// on API-created pages, so the section was removed from occurrence pages entirely.
 	skipSections := []string{
 		"## Workflow",
 		"### Analyst notebook (from front matter)",
+		"### Checklist",
 		"### Governance",
 		"## Triage guidance",
 	}
