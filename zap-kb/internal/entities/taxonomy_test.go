@@ -99,3 +99,55 @@ func TestEnrichTaxonomy_HasCWEButNoOWASP(t *testing.T) {
 		t.Errorf("OWASPTop10 = %v, want [A03:2021]", defs[0].Taxonomy.OWASPTop10)
 	}
 }
+
+func TestCWEToCAPEC_SQLInjection(t *testing.T) {
+	got := CWEToCAPEC(89)
+	if got != "CAPEC-66" {
+		t.Errorf("CWEToCAPEC(89) = %q, want %q", got, "CAPEC-66")
+	}
+}
+
+func TestCWEToCAPEC_Unknown(t *testing.T) {
+	got := CWEToCAPEC(9999)
+	if got != "" {
+		t.Errorf("CWEToCAPEC(9999) = %q, want empty string", got)
+	}
+}
+
+func TestEnrichTaxonomy_PopulatesCAPEC(t *testing.T) {
+	// Plugin 40014 = SQL Injection = CWE-89 = CAPEC-66
+	defs := []Definition{
+		{DefinitionID: "def-sql", PluginID: "40014"},
+	}
+	EnrichTaxonomy(defs)
+	d := defs[0]
+	if d.Taxonomy == nil {
+		t.Fatal("expected Taxonomy to be set")
+	}
+	if d.Taxonomy.CWEID != 89 {
+		t.Errorf("CWEID = %d, want 89", d.Taxonomy.CWEID)
+	}
+	if len(d.Taxonomy.CAPECIDs) == 0 || d.Taxonomy.CAPECIDs[0] != 66 {
+		t.Errorf("CAPECIDs = %v, want [66]", d.Taxonomy.CAPECIDs)
+	}
+}
+
+func TestEnrichCustomTaxonomy_AuthenticatedRule_GetsIDOR(t *testing.T) {
+	defs := []Definition{
+		{
+			DefinitionID: "def-auth-basket",
+			PluginID:     "zap-authenticated-basket-item-enumeration",
+		},
+	}
+	EnrichCustomTaxonomy(defs)
+	d := defs[0]
+	if d.Taxonomy == nil {
+		t.Fatal("expected Taxonomy to be set after EnrichCustomTaxonomy")
+	}
+	if d.Taxonomy.CWEID != 639 {
+		t.Errorf("CWEID = %d, want 639", d.Taxonomy.CWEID)
+	}
+	if len(d.Taxonomy.OWASPTop10) == 0 || d.Taxonomy.OWASPTop10[0] != "A01:2021-Broken Access Control" {
+		t.Errorf("OWASPTop10 = %v, want [A01:2021-Broken Access Control]", d.Taxonomy.OWASPTop10)
+	}
+}

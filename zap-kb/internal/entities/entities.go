@@ -63,10 +63,11 @@ type Taxonomy struct {
 }
 
 type Remediation struct {
-	Summary      string   `json:"summary,omitempty"`
-	References   []string `json:"references,omitempty"`
-	Guidance     []string `json:"guidance,omitempty"`
-	ExampleFixes []string `json:"exampleFixes,omitempty"`
+	Summary                string   `json:"summary,omitempty"`
+	References             []string `json:"references,omitempty"`
+	Guidance               []string `json:"guidance,omitempty"`
+	ExampleFixes           []string `json:"exampleFixes,omitempty"`
+	FalsePositiveConditions []string `json:"falsePositiveConditions,omitempty"`
 }
 
 // Detection describes where a ZAP alert rule is implemented and how it operates.

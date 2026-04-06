@@ -419,3 +419,60 @@ func TestWriteVault_TriageBoardCounts(t *testing.T) {
 	checkCountInBoard("triaged", 3)
 	checkCountInBoard("false positive", 2) // statusOrder uses "False positive" label for "fp"
 }
+
+// TestWriteVault_DefinitionPage_FalsePositiveConditions verifies that a definition
+// with FalsePositiveConditions renders a "## False Positive Conditions" section
+// containing both condition strings.
+func TestWriteVault_DefinitionPage_FalsePositiveConditions(t *testing.T) {
+	root := t.TempDir()
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-fp",
+				PluginID:     "10098",
+				Alert:        "Cross-Domain Misconfiguration",
+				Remediation: &entities.Remediation{
+					Summary: "Configure CORS correctly.",
+					FalsePositiveConditions: []string{
+						"Public CDN endpoints with wildcard CORS are expected.",
+						"Third-party analytics scripts are legitimate cross-domain access.",
+					},
+				},
+			},
+		},
+		Findings:    []entities.Finding{},
+		Occurrences: []entities.Occurrence{},
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	defEntries, err := os.ReadDir(filepath.Join(root, "definitions"))
+	if err != nil {
+		t.Fatalf("ReadDir definitions: %v", err)
+	}
+	if len(defEntries) == 0 {
+		t.Fatal("no definition files written")
+	}
+
+	defFile := filepath.Join(root, "definitions", defEntries[0].Name())
+	raw, err := os.ReadFile(defFile)
+	if err != nil {
+		t.Fatalf("ReadFile definition: %v", err)
+	}
+	body := string(raw)
+
+	if !strings.Contains(body, "## False Positive Conditions") {
+		t.Errorf("expected '## False Positive Conditions' section in definition page, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Public CDN endpoints with wildcard CORS are expected.") {
+		t.Errorf("expected first FP condition in definition page, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Third-party analytics scripts are legitimate cross-domain access.") {
+		t.Errorf("expected second FP condition in definition page, got:\n%s", body)
+	}
+}

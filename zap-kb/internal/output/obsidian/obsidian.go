@@ -173,6 +173,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		RuleTitle      string
 		ObservedAt     string
 		ScanLabel      string
+		PluginID       string
 	}
 	var issueSummaries []issueSummary
 
@@ -426,6 +427,16 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
+		if d.Remediation != nil && len(d.Remediation.FalsePositiveConditions) > 0 {
+			b.WriteString("## False Positive Conditions\n\n")
+			for _, c := range d.Remediation.FalsePositiveConditions {
+				if strings.TrimSpace(c) != "" {
+					fmt.Fprintf(&b, "- %s\n", c)
+				}
+			}
+			b.WriteString("\n")
+		}
+
 		if len(fs) > 0 {
 			maxFindingsPerSeverity := 10
 			maxSamplesPerFinding := 3
@@ -508,7 +519,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					}
 				}
 				if limit < len(group) {
-					fmt.Fprintf(&b, "- _%d additional findings not shown_\n", len(group)-limit)
+					fmt.Fprintf(&b, "- _%d additional findings — [[../INDEX.md#issues|see full list]]_\n", len(group)-limit)
 				}
 				b.WriteString("\n")
 			}
@@ -680,7 +691,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Request.Headers))
 					writeHeadersWithLimit(&b, first.Request.Headers, 10)
 					if strings.TrimSpace(first.Request.BodySnippet) != "" || first.Request.BodyBytes > 0 {
-						writeBodySnippet(&b, first.Request.BodySnippet, first.Request.BodyBytes, 512, "http")
+						writeBodySnippet(&b, first.Request.BodySnippet, first.Request.BodyBytes, defaultBodyTruncateBytes, "http")
 					}
 				}
 				if first.Response != nil {
@@ -691,7 +702,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Response.Headers))
 					writeHeadersWithLimit(&b, first.Response.Headers, 12)
 					if strings.TrimSpace(first.Response.BodySnippet) != "" || first.Response.BodyBytes > 0 {
-						writeBodySnippet(&b, first.Response.BodySnippet, first.Response.BodyBytes, 512, "http")
+						writeBodySnippet(&b, first.Response.BodySnippet, first.Response.BodyBytes, defaultBodyTruncateBytes, "http")
 					}
 				}
 			}
@@ -749,6 +760,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			RuleTitle:      ruleTitle,
 			ObservedAt:     lastSeen,
 			ScanLabel:      fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
+			PluginID:       strings.TrimSpace(f.PluginID),
 		})
 
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -1034,6 +1046,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		// Workflow section (analyst notes)
 		b.WriteString("## Workflow\n\n")
+		scanLabelForWorkflow := strings.TrimSpace(o.ScanLabel)
+		if scanLabelForWorkflow == "" {
+			scanLabelForWorkflow = strings.TrimSpace(opts.ScanLabel)
+		}
+		if scanLabelForWorkflow == "" {
+			scanLabelForWorkflow = "unlabeled"
+		}
+		fmt.Fprintf(&b, "- Scan: %s\n", scanLabelForWorkflow)
 		fmt.Fprintf(&b, "- Status: %s\n", fallbackString(aStatus, "open"))
 		if aOwner != "" {
 			fmt.Fprintf(&b, "- Owner: %s\n", aOwner)
@@ -1180,6 +1200,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- [Occurrences](#occurrences)\n")
 		b.WriteString("- [Rules](#rules)\n")
 		b.WriteString("- [By domain](by-domain.md)\n")
+		b.WriteString("- [[LEGEND.md|Alias Legend]]\n")
+		b.WriteString("- [[TRIAGE-GUIDE.md|Triage Workflow Guide]]\n")
+		b.WriteString("- [[by-scan.md|Scans]]\n")
+		b.WriteString("- [[EXECUTIVE-SUMMARY.md|Executive Summary]]\n")
 		b.WriteString("\n")
 
 		triageSection.WriteString("## Triage board\n\n")
@@ -1230,7 +1254,18 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
-		// Issues table
+		// operationalPluginIDs holds plugin IDs for tool-health rules that are
+		// not actionable findings for the target application.
+		operationalPluginIDs := map[string]struct{}{
+			"10116": {},
+			"10109": {},
+		}
+		isOperational := func(is issueSummary) bool {
+			_, ok := operationalPluginIDs[is.PluginID]
+			return ok
+		}
+
+		// Issues table — operational rules are excluded and shown separately below.
 		if len(issueSummaries) > 0 {
 			b.WriteString("## Issues\n")
 			b.WriteString("Sorted by severity, then endpoint.\n\n")
@@ -1238,6 +1273,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
+				if isOperational(is) {
+					continue
+				}
 				status := "Open"
 				if s := strings.TrimSpace(is.PrimaryStatus); s != "" {
 					status = titleASCII(s)
@@ -1252,6 +1290,30 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				)
 			}
 			b.WriteString("\n")
+		}
+
+		// Operational / Tool info section — only written when at least one operational finding exists.
+		{
+			var opIssues []issueSummary
+			for _, is := range issueSummaries {
+				if isOperational(is) {
+					opIssues = append(opIssues, is)
+				}
+			}
+			if len(opIssues) > 0 {
+				sortIssues(opIssues)
+				b.WriteString("## Operational / Tool info\n\n")
+				b.WriteString("_Findings from tool-health rules — not actionable for the target application._\n\n")
+				b.WriteString("| Finding | Risk | Occurrences |\n|---|---|---|\n")
+				for _, is := range opIssues {
+					fmt.Fprintf(&b, "| [%s](%s) | %s | %d |\n",
+						is.Alias, is.Link,
+						titleASCII(is.Severity),
+						is.Occurrences,
+					)
+				}
+				b.WriteString("\n")
+			}
 		}
 
 		// Occurrence table
@@ -1378,6 +1440,92 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if strings.TrimSpace(tbContent) == "" {
 			tbContent = "## Triage board\n\n_No data yet_\n"
 		}
+
+		// Open findings queue — severity-sorted list of open/untriaged findings.
+		{
+			const triageCap = 50
+			// Collect findings whose primary status is open (empty counts as open).
+			type openFinding struct {
+				is       issueSummary
+				sevRank  int
+			}
+			var openFindings []openFinding
+			for _, is := range issueSummaries {
+				st := strings.TrimSpace(is.PrimaryStatus)
+				if st != "" && st != "open" {
+					continue
+				}
+				openFindings = append(openFindings, openFinding{
+					is:      is,
+					sevRank: rankSeverity(is.Severity),
+				})
+			}
+			sort.Slice(openFindings, func(i, j int) bool {
+				if openFindings[i].sevRank != openFindings[j].sevRank {
+					return openFindings[i].sevRank < openFindings[j].sevRank
+				}
+				if openFindings[i].is.URL != openFindings[j].is.URL {
+					return openFindings[i].is.URL < openFindings[j].is.URL
+				}
+				return openFindings[i].is.Alias < openFindings[j].is.Alias
+			})
+
+			if len(openFindings) > 0 {
+				var qb strings.Builder
+				qb.WriteString("## Open findings queue\n\n")
+				sevBands := []struct {
+					Label string
+					Key   string
+				}{
+					{"High", "high"},
+					{"Medium", "medium"},
+					{"Low", "low"},
+					{"Informational", "informational"},
+				}
+				for _, band := range sevBands {
+					var band_items []openFinding
+					for _, of := range openFindings {
+						sev := strings.ToLower(strings.TrimSpace(of.is.Severity))
+						if sev == "" {
+							sev = "informational"
+						}
+						if sev == band.Key || (band.Key == "informational" && (sev == "info" || sev == "informational")) {
+							band_items = append(band_items, of)
+						}
+					}
+					if len(band_items) == 0 {
+						continue
+					}
+					fmt.Fprintf(&qb, "### %s (%d)\n\n", band.Label, len(band_items))
+					limit := triageCap
+					if limit > len(band_items) {
+						limit = len(band_items)
+					}
+					for i := 0; i < limit; i++ {
+						of := band_items[i]
+						is := of.is
+						ruleTitle := fallbackString(is.RuleTitle, "Rule")
+						method := strings.TrimSpace(is.Method)
+						urlPath := ""
+						if u, err2 := neturl.Parse(is.URL); err2 == nil {
+							urlPath = u.Path
+						}
+						if urlPath == "" {
+							urlPath = is.URL
+						}
+						caption := ruleTitle + " — " + method + " " + urlPath
+						fmt.Fprintf(&qb, "- [[%s|%s]] (Risk: %s)\n",
+							is.Link, caption, titleASCII(is.Severity))
+					}
+					if limit < len(band_items) {
+						fmt.Fprintf(&qb, "_... %d more_\n", len(band_items)-limit)
+					}
+					qb.WriteString("\n")
+				}
+				tbContent += qb.String()
+			}
+		}
+
 		if err := os.WriteFile(filepath.Join(root, "triage-board.md"), []byte("# Triage board\n\n"+tbContent), 0o644); err != nil {
 			return err
 		}
@@ -1418,6 +1566,20 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 		}
 	}
+	// New static and dynamic companion pages.
+	if err := writeLegend(root); err != nil {
+		return err
+	}
+	if err := writeTriageGuide(root); err != nil {
+		return err
+	}
+	if err := writeByScan(root, ef, opts); err != nil {
+		return err
+	}
+	if err := writeExecutiveSummary(root, ef, opts, ef.GeneratedAt); err != nil {
+		return err
+	}
+
 	// Dashboard is best-effort; do not fail vault writes if it errors.
 	_ = GenerateDashboard(root)
 
@@ -1472,6 +1634,9 @@ func addStatusToYAMLStrAny(kv map[string]any, prefix string, m map[string]int) {
 		}
 	}
 }
+
+// defaultBodyTruncateBytes is the display limit for request/response body snippets.
+const defaultBodyTruncateBytes = 1024
 
 var nonWord = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 
