@@ -293,6 +293,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		title := firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		fmt.Fprintf(&b, "# %s (Plugin %s)\n\n", title, d.PluginID)
+		if isCustomRule(d.PluginID, d.Detection) {
+			b.WriteString("> [!Note] Custom rule\n> This is a project-specific detection rule, not a built-in ZAP plugin. It was written for this application's known attack surface.\n\n")
+		}
 		// Severity rollup for quick triage
 		if defSeverity["high"]+defSeverity["medium"]+defSeverity["low"]+defSeverity["info"] > 0 {
 			b.WriteString("## Severity overview\n\n")
@@ -356,6 +359,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Detection logic (if enriched)
 		if d.Detection != nil {
 			b.WriteString("## Detection logic\n\n")
+			if isCustomRule(d.PluginID, d.Detection) {
+				b.WriteString("- Rule source: Custom (project-specific)\n")
+			}
 			if strings.TrimSpace(d.Detection.LogicType) != "" {
 				fmt.Fprintf(&b, "- Logic: %s\n", d.Detection.LogicType)
 			}
@@ -1970,6 +1976,29 @@ func calloutForSeverity(sev string, text string) string {
 		kind = "note"
 	}
 	return "> [!" + strings.ToUpper(kind[:1]) + kind[1:] + "]\n> " + text + "\n\n"
+}
+
+// isCustomRule returns true when a definition is a project-specific custom rule
+// rather than a built-in ZAP plugin. Detection criteria (any one is sufficient):
+//   - pluginID starts with "zap-"
+//   - Detection.RuleSource == "custom"
+//   - Detection is nil and pluginID is not a pure numeric string
+func isCustomRule(pluginID string, det *entities.Detection) bool {
+	if strings.HasPrefix(pluginID, "zap-") {
+		return true
+	}
+	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
+		return true
+	}
+	if det == nil {
+		// Check whether pluginID is non-numeric (built-in ZAP rules use numeric IDs).
+		for _, r := range pluginID {
+			if r < '0' || r > '9' {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // headerValue finds a header value by case-insensitive name

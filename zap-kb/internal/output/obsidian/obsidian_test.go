@@ -779,3 +779,68 @@ func TestByDomain_PerScanBreakdown(t *testing.T) {
 		t.Errorf("by-domain.md Per scan breakdown missing 'scan-beta':\n%s", body)
 	}
 }
+
+// --- Custom rule labeling ---
+
+// TestWriteVault_CustomRuleDefinitionHasCallout verifies that a definition whose
+// pluginID starts with "zap-" receives the custom rule callout on its definition page.
+func TestWriteVault_CustomRuleDefinitionHasCallout(t *testing.T) {
+	root := t.TempDir()
+
+	const customPluginID = "zap-authenticated-basket-item-enumeration"
+
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-custom-1",
+				PluginID:     customPluginID,
+				Alert:        "Authenticated Basket Item Enumeration",
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "find-custom-1",
+				DefinitionID: "def-custom-1",
+				PluginID:     customPluginID,
+				URL:          "http://example.com/basket",
+				Method:       "GET",
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-custom-1",
+				FindingID:    "find-custom-1",
+				DefinitionID: "def-custom-1",
+				URL:          "http://example.com/basket",
+				Method:       "GET",
+			},
+		},
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	defEntries, err := os.ReadDir(filepath.Join(root, "definitions"))
+	if err != nil {
+		t.Fatalf("ReadDir definitions: %v", err)
+	}
+	if len(defEntries) == 0 {
+		t.Fatal("no definition files written")
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "definitions", defEntries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile definition page: %v", err)
+	}
+	body := string(data)
+
+	if !strings.Contains(body, "Custom rule") {
+		t.Errorf("definition page for custom pluginID %q missing 'Custom rule' callout:\n%s", customPluginID, body)
+	}
+	if !strings.Contains(body, "project-specific detection rule") {
+		t.Errorf("definition page for custom pluginID %q missing callout body text:\n%s", customPluginID, body)
+	}
+}
