@@ -3,7 +3,9 @@ package confluence
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +54,75 @@ type VaultSummary struct {
 	Updated int
 	Skipped int
 	Errors  int
+}
+
+// pageHashStore persists SHA-256 hashes of page storage bodies and their
+// Confluence page IDs to avoid re-pushing unchanged pages on every export run.
+// By caching page IDs alongside hashes, the skip path requires zero API calls.
+type pageHashStore struct {
+	mu   sync.Mutex
+	path string
+	data map[string]pageHashEntry // title → {hash, pageID}
+}
+
+type pageHashEntry struct {
+	Hash   string `json:"hash"`   // hex(sha256(storageBody))
+	PageID string `json:"pageId"` // Confluence page ID for child-parenting
+}
+
+func loadHashStore(path string) *pageHashStore {
+	s := &pageHashStore{path: path, data: make(map[string]pageHashEntry)}
+	b, err := os.ReadFile(path)
+	if err == nil {
+		// Try new format first
+		var newData map[string]pageHashEntry
+		if json.Unmarshal(b, &newData) == nil {
+			s.data = newData
+			return s
+		}
+		// Fall back to legacy format (title → hash string)
+		var legacyData map[string]string
+		if json.Unmarshal(b, &legacyData) == nil {
+			for title, hash := range legacyData {
+				s.data[title] = pageHashEntry{Hash: hash}
+			}
+		}
+	}
+	return s
+}
+
+func (s *pageHashStore) unchanged(title, storageBody string) bool {
+	h := sha256.Sum256([]byte(storageBody))
+	hash := hex.EncodeToString(h[:])
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data[title].Hash == hash
+}
+
+// cachedPageID returns the cached Confluence page ID for the given title,
+// or "" if not cached. Used by the skip path to avoid a findPage API call.
+func (s *pageHashStore) cachedPageID(title string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data[title].PageID
+}
+
+func (s *pageHashStore) record(title, storageBody, pageID string) {
+	h := sha256.Sum256([]byte(storageBody))
+	hash := hex.EncodeToString(h[:])
+	s.mu.Lock()
+	s.data[title] = pageHashEntry{Hash: hash, PageID: pageID}
+	s.mu.Unlock()
+}
+
+func (s *pageHashStore) save() error {
+	s.mu.Lock()
+	b, err := json.MarshalIndent(s.data, "", "  ")
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.path, b, 0o644)
 }
 
 // Export uploads the specified markdown page (default INDEX.md in vault root) to Confluence.
@@ -147,7 +218,11 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	ei := buildEntityIndex(opts.Entities)
 
 	// Build title map: vault-relative path → actual Confluence page title
-	titleMap := buildTitleMap(vaultRoot)
+	titleMap := buildTitleMap(vaultRoot, &ei)
+
+	// Load content hash store — used to skip pages that haven't changed.
+	hashStorePath := filepath.Join(vaultRoot, ".confluence-hashes.json")
+	hs := loadHashStore(hashStorePath)
 
 	var summary VaultSummary
 
@@ -161,7 +236,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		return dryRunVault(vaultRoot)
 	}
 
-	rootID, rootAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "KB Index", mdToStorageWithTitles(rootContent, titleMap), "")
+	rootID, rootAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "KB Index", mdToStorageWithTitles(rootContent, titleMap), "", hs)
 	if err != nil {
 		return summary, fmt.Errorf("upsert INDEX: %w", err)
 	}
@@ -183,7 +258,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		if ferr != nil {
 			continue // skip missing files
 		}
-		_, action, uerr := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, mdToStorageWithTitles(content, titleMap), rootID)
+		_, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, mdToStorageWithTitles(content, titleMap), rootID, hs)
 		if uerr != nil {
 			fmt.Printf("[confluence] error upserting %s: %v\n", tp.title, uerr)
 			summary.Errors++
@@ -194,7 +269,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 	// Phase 2b: Upsert scan-level posture summary page (requires EntitiesFile)
 	if opts.Entities != nil {
-		_, postureAction, postureErr := upsertPostureSummary(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities)
+		_, postureAction, postureErr := upsertPostureSummary(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs)
 		if postureErr != nil {
 			fmt.Printf("[confluence] error upserting posture summary: %v\n", postureErr)
 			summary.Errors++
@@ -204,8 +279,8 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	}
 
 	// Phase 3: Upsert "Definitions" parent page
-	defsID, defsAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "Definitions",
-		mdToStorage("# Definitions\n\nAuto-generated ZAP plugin definitions from the DevSecOps KB."), rootID)
+	defsID, defsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Definitions",
+		mdToStorage("# Definitions\n\nAuto-generated security rule definitions from the DevSecOps KB."), rootID, hs)
 	if err != nil {
 		return summary, fmt.Errorf("upsert Definitions parent: %w", err)
 	}
@@ -215,7 +290,8 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	defsDir := filepath.Join(vaultRoot, "definitions")
 	entries, err := os.ReadDir(defsDir)
 	if err != nil {
-		// No definitions dir is not fatal
+		// No definitions dir is not fatal — still write the summary page.
+		upsertExportSummary(ctx, httpClient, auth, base, opts, rootID, hs, &summary)
 		return summary, nil
 	}
 
@@ -261,7 +337,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			storageBody := mdToStorageWithTitles(content, titleMap)
 			storageBody = prependDefProperties(storageBody, def)
 
-			pageID, action, uerr := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, title, storageBody, defsID)
+			pageID, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, title, storageBody, defsID, hs)
 			if uerr == nil && def != nil {
 				applyLabels(ctx, httpClient, auth, base, pageID, defLabels(def))
 			}
@@ -291,8 +367,8 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// Phase 5: Create "Findings" folder page as a top-level sibling of "Definitions".
 	// Findings are parented here (not buried under individual definition pages) so they
 	// appear in the sidebar and are reachable from Quick navigation.
-	findingsID, findingsAction, err := upsertPage(ctx, httpClient, auth, base, opts.SpaceKey, "Findings",
-		mdToStorage("# Findings\n\nAll active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint."), rootID)
+	findingsID, findingsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Findings",
+		mdToStorage("# Findings\n\nAll active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint."), rootID, hs)
 	if err != nil {
 		return summary, fmt.Errorf("upsert Findings parent: %w", err)
 	}
@@ -302,15 +378,61 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// Falls back to flat upsertDir when entity data is absent.
 	if opts.Entities != nil {
 		findingPageIDs := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, defPageIDs, findingsID, &summary)
+			vaultRoot, concurrency, &ei, titleMap, defPageIDs, findingsID, &summary, hs)
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, findingsID, &summary)
+			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, findingsID, &summary, hs)
 	} else {
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, &summary)
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, &summary)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, &summary, hs)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, &summary, hs)
 	}
 
+	// Persist updated hashes for next run.
+	if err := hs.save(); err != nil {
+		fmt.Printf("[confluence] warning: could not save hash store: %v\n", err)
+	}
+
+	// Phase 7: Upsert the "KB Export Summary" page as a child of root.
+	upsertExportSummary(ctx, httpClient, auth, base, opts, rootID, hs, &summary)
+
 	return summary, nil
+}
+
+// upsertExportSummary writes (or dry-logs) the "KB Export Summary" page as a child of rootID.
+func upsertExportSummary(ctx context.Context, client httpDoer, auth, base string, opts VaultOptions, rootID string, hs *pageHashStore, summary *VaultSummary) {
+	var defCount, findCount, occCount int
+	if opts.Entities != nil {
+		defCount = len(opts.Entities.Definitions)
+		findCount = len(opts.Entities.Findings)
+		occCount = len(opts.Entities.Occurrences)
+	}
+	summaryBody := buildExportSummaryBody(time.Now().UTC(), defCount, findCount, occCount, summary)
+	if opts.DryRun {
+		fmt.Printf("[confluence] dry-run: KB Export Summary — defs=%d findings=%d occurrences=%d created=%d updated=%d skipped=%d errors=%d\n",
+			defCount, findCount, occCount, summary.Created, summary.Updated, summary.Skipped, summary.Errors)
+	} else {
+		_, _, _ = upsertPageCached(ctx, client, auth, base, opts.SpaceKey, "KB Export Summary", summaryBody, rootID, hs)
+	}
+}
+
+// buildExportSummaryBody constructs the storage XML body for the KB Export Summary page.
+func buildExportSummaryBody(exportedAt time.Time, defs, findings, occurrences int, s *VaultSummary) string {
+	var b strings.Builder
+	b.WriteString("<h1>KB Export Summary</h1>")
+	b.WriteString(fmt.Sprintf("<p><strong>Export timestamp (UTC):</strong> %s</p>", exportedAt.Format(time.RFC3339)))
+	b.WriteString("<h2>Entity counts</h2>")
+	b.WriteString("<table><tbody>")
+	b.WriteString(fmt.Sprintf("<tr><th>Definitions</th><td>%d</td></tr>", defs))
+	b.WriteString(fmt.Sprintf("<tr><th>Findings</th><td>%d</td></tr>", findings))
+	b.WriteString(fmt.Sprintf("<tr><th>Occurrences</th><td>%d</td></tr>", occurrences))
+	b.WriteString("</tbody></table>")
+	b.WriteString("<h2>Page export results</h2>")
+	b.WriteString("<table><tbody>")
+	b.WriteString(fmt.Sprintf("<tr><th>Created</th><td>%d</td></tr>", s.Created))
+	b.WriteString(fmt.Sprintf("<tr><th>Updated</th><td>%d</td></tr>", s.Updated))
+	b.WriteString(fmt.Sprintf("<tr><th>Skipped (unchanged)</th><td>%d</td></tr>", s.Skipped))
+	b.WriteString(fmt.Sprintf("<tr><th>Errors</th><td>%d</td></tr>", s.Errors))
+	b.WriteString("</tbody></table>")
+	return b.String()
 }
 
 // upsertFindingsHierarchical upserts finding pages as children of their definition pages.
@@ -320,7 +442,7 @@ func upsertFindingsHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
 	defPageIDs map[string]string, fallbackParentID string,
-	summary *VaultSummary,
+	summary *VaultSummary, hs *pageHashStore,
 ) map[string]string {
 	dir := filepath.Join(vaultRoot, "findings")
 	entries, err := os.ReadDir(dir)
@@ -380,8 +502,8 @@ func upsertFindingsHierarchical(
 			storageBody = prependFindingProperties(storageBody, f, ei)
 			labels := findingLabels(f)
 
-			pageID, act, uerr := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID)
-			if uerr == nil && len(labels) > 0 {
+			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
+			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
 			}
 			fid := ""
@@ -414,7 +536,7 @@ func upsertOccurrencesHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
 	findingPageIDs map[string]string, fallbackParentID string,
-	summary *VaultSummary,
+	summary *VaultSummary, hs *pageHashStore,
 ) {
 	dir := filepath.Join(vaultRoot, "occurrences")
 	entries, err := os.ReadDir(dir)
@@ -475,8 +597,8 @@ func upsertOccurrencesHierarchical(
 			storageBody = prependOccurrenceProperties(storageBody, o, ei)
 			labels := occurrenceLabels(o)
 
-			pageID, act, uerr := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID)
-			if uerr == nil && len(labels) > 0 {
+			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
+			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
 			}
 			results[i] = result{action: act, err: uerr}
@@ -496,7 +618,7 @@ func upsertOccurrencesHierarchical(
 
 // upsertDir upserts all .md files in a vault subdirectory as child pages
 // under a named parent page (itself a child of parentID).
-func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, summary *VaultSummary) {
+func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, summary *VaultSummary, hs *pageHashStore) {
 	dir := filepath.Join(vaultRoot, subdir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -515,7 +637,7 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 
 	// Upsert parent page
 	parentContent := "# " + parentTitle + "\n\nGenerated by DevSecOps KB."
-	parentID, action, err := upsertPage(ctx, client, auth, base, spaceKey, parentTitle, mdToStorage(parentContent), grandParentID)
+	parentID, action, err := upsertPageCached(ctx, client, auth, base, spaceKey, parentTitle, mdToStorage(parentContent), grandParentID, hs)
 	if err != nil {
 		fmt.Printf("[confluence] error upserting %s parent: %v\n", parentTitle, err)
 		summary.Errors++
@@ -585,8 +707,8 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 				labels = occurrenceLabels(occEnt)
 			}
 
-			pageID, act, uerr := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID)
-			if uerr == nil && len(labels) > 0 {
+			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
+			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
 			}
 			results[i] = result{action: act, err: uerr}
@@ -794,6 +916,35 @@ func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, titl
 	return created.ID, "created", nil
 }
 
+// upsertPageCached wraps upsertPage: if the page already exists and the
+// storage body hash is unchanged, it skips the API call and returns "skipped".
+// On any create/update, the hash is recorded.
+func upsertPageCached(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string, hs *pageHashStore) (string, string, error) {
+	if hs != nil && hs.unchanged(title, storageBody) {
+		// Use cached page ID — zero API calls on the skip path.
+		if cachedID := hs.cachedPageID(title); cachedID != "" {
+			return cachedID, "skipped", nil
+		}
+		// Page ID not cached (legacy hash store or first run after migration).
+		// Fall back to a single GET to resolve it.
+		existingID, _, err := findPage(ctx, client, auth, base, spaceKey, title)
+		if err != nil {
+			return "", "", fmt.Errorf("find page %q: %w", title, err)
+		}
+		if existingID != "" {
+			// Backfill the page ID into the cache for next run.
+			hs.record(title, storageBody, existingID)
+			return existingID, "skipped", nil
+		}
+		// Page doesn't exist yet despite hash match (edge case) — fall through.
+	}
+	id, action, err := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID)
+	if err == nil && hs != nil && (action == "created" || action == "updated") {
+		hs.record(title, storageBody, id)
+	}
+	return id, action, err
+}
+
 func countAction(s *VaultSummary, action string) {
 	switch action {
 	case "created":
@@ -950,12 +1101,17 @@ func httpErr(resp *http.Response) error {
 // --- Title map for wikilink resolution ---
 
 // buildTitleMap scans all .md files in the vault and builds a map from
-// vault-relative paths to their Confluence page titles (derived from H1 headings).
-// This enables wikilinks like [[definitions/10038-csp.md|CSP]] to resolve to
-// the actual page title "Content Security Policy (CSP) Header Not Set (Plugin 10038)".
-func buildTitleMap(vaultRoot string) map[string]string {
+// vault-relative paths to their Confluence page titles.
+//
+// For definitions: title is derived from H1 heading (same as Confluence page title).
+// For findings/occurrences: title is derived from findingPageTitle/occurrencePageTitle
+// because those functions produce the Confluence page title, and the H1 is stripped
+// from the body before export (so the H1 in the vault file does NOT match the page title).
+func buildTitleMap(vaultRoot string, ei *entityIndex) map[string]string {
 	tm := make(map[string]string)
-	for _, subdir := range []string{"", "definitions", "findings", "occurrences"} {
+
+	// definitions and root: use H1 heading
+	for _, subdir := range []string{"", "definitions"} {
 		dir := vaultRoot
 		if subdir != "" {
 			dir = filepath.Join(vaultRoot, subdir)
@@ -977,13 +1133,46 @@ func buildTitleMap(vaultRoot string) map[string]string {
 			if title == "" {
 				title = defTitleFromFilename(e.Name())
 			}
-			// Map the vault-relative path to the page title
 			if subdir != "" {
 				tm[subdir+"/"+e.Name()] = title
 			}
 			tm[e.Name()] = title
 		}
 	}
+
+	// findings: use findingPageTitle — the H1 is stripped before export so it
+	// does NOT match the Confluence page title.
+	if ei != nil {
+		findEntries, _ := os.ReadDir(filepath.Join(vaultRoot, "findings"))
+		for _, e := range findEntries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			f := ei.findingByFilename(e.Name())
+			title := findingPageTitle(f, ei)
+			if title == "" {
+				title = defTitleFromFilename(e.Name())
+			}
+			tm["findings/"+e.Name()] = title
+			tm[e.Name()] = title
+		}
+
+		// occurrences: use occurrencePageTitle for the same reason
+		occEntries, _ := os.ReadDir(filepath.Join(vaultRoot, "occurrences"))
+		for _, e := range occEntries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			o := ei.occurrenceByFilename(e.Name())
+			title := occurrencePageTitle(o, ei)
+			if title == "" {
+				title = defTitleFromFilename(e.Name())
+			}
+			tm["occurrences/"+e.Name()] = title
+			tm[e.Name()] = title
+		}
+	}
+
 	return tm
 }
 
@@ -997,18 +1186,22 @@ type obsRange struct {
 
 // entityIndex provides fast lookup from filenames to entity structs.
 type entityIndex struct {
-	defs       map[string]*entities.Definition // pluginID → definition
-	finds      map[string]*entities.Finding    // findingID → finding
-	occs       map[string]*entities.Occurrence // occurrenceID → occurrence
-	findingObs map[string]obsRange             // findingID → {first, last} ObservedAt
+	defs                map[string]*entities.Definition // pluginID → definition
+	finds               map[string]*entities.Finding    // findingID → finding
+	occs                map[string]*entities.Occurrence // occurrenceID → occurrence
+	findingObs          map[string]obsRange             // findingID → {first, last} ObservedAt
+	findingTriageStatus map[string]string               // findingID → dominant triage status
+	findingScans        map[string][]string             // findingID → distinct scan labels (ordered by first seen)
 }
 
 func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 	ei := entityIndex{
-		defs:       make(map[string]*entities.Definition),
-		finds:      make(map[string]*entities.Finding),
-		occs:       make(map[string]*entities.Occurrence),
-		findingObs: make(map[string]obsRange),
+		defs:                make(map[string]*entities.Definition),
+		finds:               make(map[string]*entities.Finding),
+		occs:                make(map[string]*entities.Occurrence),
+		findingObs:          make(map[string]obsRange),
+		findingTriageStatus: make(map[string]string),
+		findingScans:        make(map[string][]string),
 	}
 	if ef == nil {
 		return ei
@@ -1022,9 +1215,41 @@ func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 		f := &ef.Findings[i]
 		ei.finds[f.FindingID] = f
 	}
+	// statusPriority defines dominance order for aggregate triage status.
+	// Lower index = higher priority (open wins over fixed, etc.).
+	statusPriority := map[string]int{"open": 0, "triaged": 1, "accepted": 2, "fp": 3, "fixed": 4}
 	for i := range ef.Occurrences {
 		o := &ef.Occurrences[i]
 		ei.occs[o.OccurrenceID] = o
+		// Accumulate dominant triage status per finding (open takes priority)
+		if o.FindingID != "" {
+			oStatus := "open"
+			if o.Analyst != nil && o.Analyst.Status != "" {
+				oStatus = o.Analyst.Status
+			}
+			cur, exists := ei.findingTriageStatus[o.FindingID]
+			if !exists {
+				ei.findingTriageStatus[o.FindingID] = oStatus
+			} else {
+				if statusPriority[oStatus] < statusPriority[cur] {
+					ei.findingTriageStatus[o.FindingID] = oStatus
+				}
+			}
+		}
+		// Accumulate distinct scan labels per finding
+		if o.FindingID != "" && o.ScanLabel != "" {
+			labels := ei.findingScans[o.FindingID]
+			found := false
+			for _, l := range labels {
+				if l == o.ScanLabel {
+					found = true
+					break
+				}
+			}
+			if !found {
+				ei.findingScans[o.FindingID] = append(labels, o.ScanLabel)
+			}
+		}
 		// Accumulate first/last ObservedAt per finding
 		if o.FindingID != "" && o.ObservedAt != "" {
 			ts, err := time.Parse(time.RFC3339, strings.TrimSpace(o.ObservedAt))
@@ -1483,37 +1708,53 @@ func buildPostureStorageBody(pc postureCounts) string {
 // upsertPostureSummary creates or updates the "Security Posture" page under rootID.
 // The page title is always "Security Posture" so analysts can bookmark it;
 // the scan label appears inside the Page Properties table, not in the title.
-func upsertPostureSummary(ctx context.Context, client httpDoer, auth, base, spaceKey, rootID string, ef *entities.EntitiesFile) (string, string, error) {
+func upsertPostureSummary(ctx context.Context, client httpDoer, auth, base, spaceKey, rootID string, ef *entities.EntitiesFile, hs *pageHashStore) (string, string, error) {
 	pc := computePostureCounts(ef)
 	body := buildPostureStorageBody(pc)
-	return upsertPage(ctx, client, auth, base, spaceKey, "Security Posture", body, rootID)
+	return upsertPageCached(ctx, client, auth, base, spaceKey, "Security Posture", body, rootID, hs)
 }
 
 // --- Page Properties and Status Macros ---
 
 // prependDefProperties adds a Page Properties macro with taxonomy metadata to definition pages.
+// Canonical field order: Plugin ID, CWE, OWASP, Tags (Detection logic type), ATT&CK, NIST 800-53.
 func prependDefProperties(storageBody string, def *entities.Definition) string {
 	if def == nil {
 		return storageBody
 	}
 	var props [][2]string
+	// 1. Plugin ID
+	if def.PluginID != "" {
+		props = append(props, [2]string{"Plugin ID", escapeHTML(def.PluginID)})
+	}
+	// 2. CWE
+	if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
+		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
+		props = append(props, [2]string{"CWE", link})
+	}
+	// 3. OWASP
+	if def.Taxonomy != nil && len(def.Taxonomy.OWASPTop10) > 0 {
+		props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
+	}
+	// 3b. CAPEC
+	if def.Taxonomy != nil && len(def.Taxonomy.CAPECIDs) > 0 {
+		capecStrs := make([]string, len(def.Taxonomy.CAPECIDs))
+		for i, id := range def.Taxonomy.CAPECIDs {
+			capecStrs[i] = fmt.Sprintf("CAPEC-%d", id)
+		}
+		props = append(props, [2]string{"CAPEC", escapeHTML(strings.Join(capecStrs, ", "))})
+	}
+	// 4. Tags — represented by Detection logic type; ATT&CK and NIST follow
+	if def.Detection != nil && def.Detection.LogicType != "" {
+		props = append(props, [2]string{"Detection", escapeHTML(def.Detection.LogicType)})
+	}
 	if def.Taxonomy != nil {
-		if def.Taxonomy.CWEID > 0 {
-			link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
-			props = append(props, [2]string{"CWE", link})
-		}
-		if len(def.Taxonomy.OWASPTop10) > 0 {
-			props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
-		}
 		if len(def.Taxonomy.ATTACK) > 0 {
 			props = append(props, [2]string{"ATT&CK", escapeHTML(strings.Join(def.Taxonomy.ATTACK, ", "))})
 		}
 		if len(def.Taxonomy.NIST80053) > 0 {
 			props = append(props, [2]string{"NIST 800-53", escapeHTML(strings.Join(def.Taxonomy.NIST80053, ", "))})
 		}
-	}
-	if def.Detection != nil && def.Detection.LogicType != "" {
-		props = append(props, [2]string{"Detection", escapeHTML(def.Detection.LogicType)})
 	}
 	macro := pagePropertiesMacro(props)
 	if macro == "" {
@@ -1523,34 +1764,65 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 }
 
 // prependFindingProperties adds a Page Properties macro to finding pages.
-// Field order: Risk, Confidence, Definition, CWE, OWASP, URL, Method, Occurrences.
+// Canonical field order: Severity, Status, CWE, OWASP, Domain, Last Seen, Occurrences.
+// Additional contextual fields (Confidence, Definition, Source Tool, URL, Method, First Seen)
+// follow in supplementary positions.
 func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex) string {
 	if f == nil {
 		return storageBody
 	}
 	var props [][2]string
-	props = append(props, [2]string{"Risk", riskStatusMacro(f.Risk)})
+
+	// 1. Severity
+	props = append(props, [2]string{"Severity", riskStatusMacro(f.Risk)})
+
+	// 2. Status — aggregate triage status derived from occurrence analyst data
+	if status, ok := ei.findingTriageStatus[f.FindingID]; ok && status != "" {
+		props = append(props, [2]string{"Status", triageStatusMacro(status)})
+	}
+
+	def := ei.defByID(f.DefinitionID)
+
+	// 3. CWE
+	if def != nil && def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
+		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
+		props = append(props, [2]string{"CWE", link})
+	}
+
+	// 4. OWASP
+	if def != nil && def.Taxonomy != nil && len(def.Taxonomy.OWASPTop10) > 0 {
+		props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
+	}
+
+	// 5. Domain — extracted from the finding URL host
+	if f.URL != "" {
+		props = append(props, [2]string{"Domain", escapeHTML(hostFromURL(f.URL))})
+	}
+
+	// 6. Last Seen — always emit when non-empty; annotate with "(same run)" when equal to First
+	if obs, ok := ei.findingObs[f.FindingID]; ok {
+		if obs.Last != "" {
+			lastSeenVal := obs.Last
+			if obs.Last == obs.First {
+				lastSeenVal = obs.Last + " (same run)"
+			}
+			props = append(props, [2]string{"Last Seen", escapeHTML(lastSeenVal)})
+		}
+	}
+
+	// 7. Occurrences
+	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
+
+	// --- Supplementary fields ---
 	props = append(props, [2]string{"Confidence", escapeHTML(f.Confidence)})
 
 	// Definition — linked page
-	def := ei.defByID(f.DefinitionID)
 	if def != nil {
 		defTitle := firstNonEmptyStr(def.Alert, def.Name)
 		if defTitle != "" {
 			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
 				escapeAttr(defTitle), defTitle)
 			props = append(props, [2]string{"Definition", defLink})
-		}
-	}
-
-	// Taxonomy from linked definition
-	if def != nil && def.Taxonomy != nil {
-		if def.Taxonomy.CWEID > 0 {
-			link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
-			props = append(props, [2]string{"CWE", link})
-		}
-		if len(def.Taxonomy.OWASPTop10) > 0 {
-			props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
 		}
 	}
 
@@ -1561,19 +1833,32 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 
 	props = append(props, [2]string{"URL", escapeHTML(f.URL)})
 	props = append(props, [2]string{"Method", escapeHTML(f.Method)})
-	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
 
-	// firstSeen / lastSeen computed from occurrence ObservedAt timestamps
+	// First Seen (supplementary — appears after Occurrences)
 	if obs, ok := ei.findingObs[f.FindingID]; ok {
 		if obs.First != "" {
 			props = append(props, [2]string{"First Seen", escapeHTML(obs.First)})
 		}
-		if obs.Last != "" && obs.Last != obs.First {
-			props = append(props, [2]string{"Last Seen", escapeHTML(obs.Last)})
-		}
+	}
+
+	// Scans — distinct scan labels from contributing occurrences
+	if scans, ok := ei.findingScans[f.FindingID]; ok && len(scans) > 0 {
+		props = append(props, [2]string{"Scans", escapeHTML(strings.Join(scans, ", "))})
 	}
 
 	return pagePropertiesMacro(props) + storageBody
+}
+
+// hostFromURL extracts the hostname from a raw URL without importing net/url.
+func hostFromURL(rawURL string) string {
+	s := rawURL
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 // triageStatusMacro returns a Confluence status lozenge for analyst triage status.
@@ -1592,7 +1877,7 @@ func triageStatusMacro(status string) string {
 	case "accepted":
 		color = "Red"
 	}
-	return fmt.Sprintf(`<ac:structured-macro name="status"><ac:parameter name="colour">%s</ac:parameter><ac:parameter name="title">%s</ac:parameter></ac:structured-macro>`,
+	return fmt.Sprintf(`<ac:structured-macro ac:name="status"><ac:parameter ac:name="colour">%s</ac:parameter><ac:parameter ac:name="title">%s</ac:parameter></ac:structured-macro>`,
 		color, escapeAttr(strings.ToUpper(status)))
 }
 
@@ -1668,6 +1953,12 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 				notesLabel = "Accepted Reason"
 			}
 			props = append(props, [2]string{notesLabel, escapeHTML(o.Analyst.Notes)})
+		}
+		if len(o.Analyst.Tags) > 0 {
+			props = append(props, [2]string{"Tags", escapeHTML(strings.Join(o.Analyst.Tags, ", "))})
+		}
+		if o.Analyst.UpdatedAt != "" {
+			props = append(props, [2]string{"Updated", escapeHTML(o.Analyst.UpdatedAt)})
 		}
 	}
 

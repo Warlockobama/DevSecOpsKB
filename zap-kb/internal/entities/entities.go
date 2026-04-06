@@ -110,6 +110,8 @@ type Finding struct {
 	RiskCode     string `json:"riskcode,omitempty"`
 	Confidence   string `json:"confidence,omitempty"`
 	Occurrences  int    `json:"occurrenceCount"`
+	FirstSeen    string `json:"firstSeen,omitempty"` // earliest ObservedAt across occurrences (RFC3339)
+	LastSeen     string `json:"lastSeen,omitempty"`  // latest ObservedAt across occurrences (RFC3339)
 }
 
 type Occurrence struct {
@@ -295,6 +297,28 @@ func BuildEntitiesWithOptions(alerts []zapclient.Alert, opts BuildOptions) Entit
 		}
 		attachInlineTrafficFromAlert(&occ, a)
 		occs = append(occs, occ)
+	}
+
+	// Populate FirstSeen/LastSeen on each finding from occurrence ObservedAt values.
+	firstSeen := make(map[string]string, len(findMap))
+	lastSeen := make(map[string]string, len(findMap))
+	for _, occ := range occs {
+		ts := strings.TrimSpace(occ.ObservedAt)
+		if ts == "" {
+			continue
+		}
+		fid := strings.TrimSpace(occ.FindingID)
+		if cur, ok := firstSeen[fid]; !ok || ts < cur {
+			firstSeen[fid] = ts
+		}
+		if cur, ok := lastSeen[fid]; !ok || ts > cur {
+			lastSeen[fid] = ts
+		}
+	}
+	for fid, f := range findMap {
+		f.FirstSeen = firstSeen[fid]
+		f.LastSeen = lastSeen[fid]
+		findMap[fid] = f
 	}
 
 	// Flatten and stable sort

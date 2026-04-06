@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
@@ -931,8 +932,8 @@ func TestFindingProperties_FirstLastSeen(t *testing.T) {
 	}
 }
 
-func TestFindingProperties_SingleOccurrence_NoLastSeen(t *testing.T) {
-	// When only one occurrence exists, Last Seen should not be shown (redundant with First Seen)
+func TestFindingProperties_SingleOccurrence_LastSeenSameRun(t *testing.T) {
+	// When only one occurrence exists, Last Seen should appear with a "(same run)" annotation.
 	ei := buildEntityIndex(&entities.EntitiesFile{
 		Definitions: []entities.Definition{{DefinitionID: "def-10038", Alert: "CSP"}},
 		Findings:    []entities.Finding{{FindingID: "fin-solo", DefinitionID: "def-10038", Risk: "Low", URL: "https://x.com", Method: "GET"}},
@@ -946,8 +947,11 @@ func TestFindingProperties_SingleOccurrence_NoLastSeen(t *testing.T) {
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear")
 	}
-	if strings.Contains(out, "Last Seen") {
-		t.Error("Last Seen should not appear when first == last")
+	if !strings.Contains(out, "Last Seen") {
+		t.Error("Last Seen should appear even when first == last")
+	}
+	if !strings.Contains(out, "(same run)") {
+		t.Error("Last Seen should include (same run) annotation when first == last")
 	}
 }
 
@@ -1476,4 +1480,779 @@ func contains(ss []string, s string) bool {
 // containsStr is an alias kept for clarity in label assertion contexts.
 func containsStr(ss []string, s string) bool {
 	return contains(ss, s)
+}
+
+// --- Story 2.2: buildTitleMap occurrence resolves to page title ---
+
+func TestBuildTitleMap_OccurrenceResolvesToPageTitle(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create occurrences subdir with a fake occurrence file.
+	occDir := filepath.Join(dir, "occurrences")
+	if err := os.MkdirAll(occDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const occFilename = "occ-aabb1122.md"
+	mustWriteFile(t, filepath.Join(occDir, occFilename), "# Occurrence occ-aabb1122 — H foo\n\nSome body\n")
+
+	// Build an EntitiesFile whose occurrence matches the filename.
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{DefinitionID: "def-10042", PluginID: "10042", Alert: "Foo Header Missing"},
+		},
+		Findings: []entities.Finding{
+			{FindingID: "fin-ccdd3344", DefinitionID: "def-10042", PluginID: "10042", URL: "https://example.com/foo", Method: "GET"},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-aabb1122",
+				DefinitionID: "def-10042",
+				FindingID:    "fin-ccdd3344",
+				URL:          "https://example.com/foo",
+				Method:       "GET",
+			},
+		},
+	}
+
+	ei := buildEntityIndex(ef)
+	titleMap := buildTitleMap(dir, &ei)
+
+	o := ei.occurrenceByFilename(occFilename)
+	if o == nil {
+		t.Fatal("occurrenceByFilename returned nil — check occurrenceID matches")
+	}
+	want := occurrencePageTitle(o, &ei)
+	if want == "" {
+		t.Fatal("occurrencePageTitle returned empty string — check definition Alert and occurrence URL")
+	}
+
+	got, ok := titleMap["occurrences/"+occFilename]
+	if !ok {
+		t.Fatalf("titleMap missing key %q; map keys: %v", "occurrences/"+occFilename, titleMapKeys(titleMap))
+	}
+	if got != want {
+		t.Errorf("titleMap[%q] = %q, want %q (occurrencePageTitle)", "occurrences/"+occFilename, got, want)
+	}
+
+	// The title must NOT equal the H1 heading from the file body.
+	h1 := "Occurrence occ-aabb1122 — H foo"
+	if got == h1 {
+		t.Errorf("titleMap entry equals raw H1 %q; expected structured occurrencePageTitle instead", h1)
+	}
+}
+
+// titleMapKeys returns sorted keys from a title map for diagnostics.
+func titleMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// --- Story 2.4: pageHashStore unit tests ---
+
+func TestPageHashStore(t *testing.T) {
+	t.Run("unchanged_returns_false_for_unknown_title", func(t *testing.T) {
+		hs := loadHashStore(filepath.Join(t.TempDir(), "hashes.json"))
+		if hs.unchanged("Unknown Page", "some body") {
+			t.Error("expected unchanged=false for a title never recorded")
+		}
+	})
+
+	t.Run("record_then_unchanged_same_body_returns_true", func(t *testing.T) {
+		hs := loadHashStore(filepath.Join(t.TempDir(), "hashes.json"))
+		hs.record("My Page", "body content", "pg-1")
+		if !hs.unchanged("My Page", "body content") {
+			t.Error("expected unchanged=true after recording same body")
+		}
+	})
+
+	t.Run("record_then_unchanged_different_body_returns_false", func(t *testing.T) {
+		hs := loadHashStore(filepath.Join(t.TempDir(), "hashes.json"))
+		hs.record("My Page", "original body", "pg-2")
+		if hs.unchanged("My Page", "different body") {
+			t.Error("expected unchanged=false after body changed")
+		}
+	})
+
+	t.Run("round_trip_record_save_load_unchanged", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "hashes.json")
+		hs := loadHashStore(path)
+		hs.record("Round Trip Page", "stable content", "pg-3")
+		if err := hs.save(); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		// Load from disk into a fresh store.
+		hs2 := loadHashStore(path)
+		if !hs2.unchanged("Round Trip Page", "stable content") {
+			t.Error("expected unchanged=true after round-trip save+load")
+		}
+	})
+}
+
+func TestUpsertPageCached_SkipWhenUnchanged(t *testing.T) {
+	// Track which HTTP methods are called.
+	var putCalled bool
+	getCalled := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			getCalled++
+			w.Header().Set("Content-Type", "application/json")
+			// Return an existing page so the skip path can return its ID.
+			json.NewEncoder(w).Encode(map[string]any{
+				"results": []any{
+					map[string]any{
+						"id":      "page-99",
+						"version": map[string]any{"number": 1},
+					},
+				},
+			})
+		case r.Method == http.MethodPut:
+			putCalled = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	// Pre-record the hash so unchanged() returns true.
+	storePath := filepath.Join(t.TempDir(), "hashes.json")
+	hs := loadHashStore(storePath)
+	const title = "Cached Page"
+	const body = "<p>stable content</p>"
+	hs.record(title, body, "page-99")
+
+	client := srv.Client()
+	auth := "Basic dXNlcjp0b2tlbg==" // user:token
+	base := srv.URL
+
+	pageID, action, err := upsertPageCached(
+		context.Background(),
+		client,
+		auth,
+		base,
+		"KB",
+		title,
+		body,
+		"",
+		hs,
+	)
+	if err != nil {
+		t.Fatalf("upsertPageCached: %v", err)
+	}
+	if action != "skipped" {
+		t.Errorf("expected action=skipped, got %q", action)
+	}
+	if pageID != "page-99" {
+		t.Errorf("expected pageID=page-99, got %q", pageID)
+	}
+	if putCalled {
+		t.Error("expected no PUT when page body is unchanged")
+	}
+	// With page ID caching, the skip path should NOT need a GET.
+	if getCalled > 0 {
+		t.Errorf("expected zero GETs (page ID cached), got %d", getCalled)
+	}
+}
+
+// --- Story 5.3: KB Export Summary page ---
+
+func TestExportVault_KBExportSummaryPage(t *testing.T) {
+	var mu sync.Mutex
+	created := map[string]bool{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			created[title] = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+		default:
+			// Ignore label calls and other auxiliary requests
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# KB Index")
+
+	_, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		APIToken: "token",
+		SpaceKey: "KB",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !created["KB Export Summary"] {
+		var titles []string
+		for k := range created {
+			titles = append(titles, k)
+		}
+		t.Errorf("expected 'KB Export Summary' page to be upserted; pages created: %v", titles)
+	}
+}
+
+func TestBuildExportSummaryBody(t *testing.T) {
+	s := &VaultSummary{Created: 10, Updated: 3, Skipped: 5, Errors: 1}
+	fixedTime, _ := time.Parse(time.RFC3339, "2026-04-05T12:00:00Z")
+	body := buildExportSummaryBody(fixedTime, 7, 42, 130, s)
+
+	wantContains := []string{
+		"KB Export Summary",
+		"2026-04-05T12:00:00Z",
+		"<td>7</td>",  // definitions
+		"<td>42</td>", // findings
+		"<td>130</td>", // occurrences
+		"<td>10</td>", // created
+		"<td>3</td>",  // updated
+		"<td>5</td>",  // skipped
+		"<td>1</td>",  // errors
+	}
+	for _, want := range wantContains {
+		if !strings.Contains(body, want) {
+			t.Errorf("buildExportSummaryBody: expected %q in output\ngot: %.500s", want, body)
+		}
+	}
+}
+
+// --- Story 5.4: Page Properties field order ---
+
+func TestFindingProperties_FieldOrder(t *testing.T) {
+	ei := buildEntityIndex(&entities.EntitiesFile{
+		Definitions: []entities.Definition{{
+			DefinitionID: "def-10038",
+			Alert:        "CSP Header Not Set",
+			Taxonomy: &entities.Taxonomy{
+				CWEID:      693,
+				CWEURI:     "https://cwe.mitre.org/data/definitions/693.html",
+				OWASPTop10: []string{"A05:2021"},
+			},
+		}},
+		Findings: []entities.Finding{{
+			FindingID:    "fin-order",
+			DefinitionID: "def-10038",
+			Risk:         "High",
+			URL:          "https://example.com/login",
+			Occurrences:  2,
+		}},
+		Occurrences: []entities.Occurrence{
+			{OccurrenceID: "occ-a", FindingID: "fin-order", ObservedAt: "2026-01-01T00:00:00Z"},
+			{OccurrenceID: "occ-b", FindingID: "fin-order", ObservedAt: "2026-04-01T00:00:00Z", Analyst: &entities.Analyst{Status: "triaged"}},
+		},
+	})
+	f := ei.finds["fin-order"]
+	out := prependFindingProperties("BODY", f, &ei)
+
+	// Verify canonical field order: Severity before CWE before OWASP before Last Seen before Occurrences
+	positions := map[string]int{
+		"Severity":    strings.Index(out, "<th>Severity</th>"),
+		"CWE":         strings.Index(out, "<th>CWE</th>"),
+		"OWASP Top 10": strings.Index(out, "<th>OWASP Top 10</th>"),
+		"Last Seen":   strings.Index(out, "<th>Last Seen</th>"),
+		"Occurrences": strings.Index(out, "<th>Occurrences</th>"),
+	}
+
+	for field, pos := range positions {
+		if pos < 0 {
+			t.Errorf("field %q not found in output: %.400s", field, out)
+		}
+	}
+
+	order := []string{"Severity", "CWE", "OWASP Top 10", "Last Seen", "Occurrences"}
+	for i := 1; i < len(order); i++ {
+		prev, curr := order[i-1], order[i]
+		if positions[prev] >= positions[curr] {
+			t.Errorf("field order violated: %q (pos %d) must appear before %q (pos %d)",
+				prev, positions[prev], curr, positions[curr])
+		}
+	}
+}
+
+func TestDefProperties_FieldOrder(t *testing.T) {
+	def := &entities.Definition{
+		DefinitionID: "def-10038",
+		PluginID:     "10038",
+		Taxonomy: &entities.Taxonomy{
+			CWEID:      693,
+			CWEURI:     "https://cwe.mitre.org/data/definitions/693.html",
+			OWASPTop10: []string{"A05:2021"},
+		},
+	}
+	out := prependDefProperties("BODY", def)
+
+	positions := map[string]int{
+		"Plugin ID":    strings.Index(out, "<th>Plugin ID</th>"),
+		"CWE":          strings.Index(out, "<th>CWE</th>"),
+		"OWASP Top 10": strings.Index(out, "<th>OWASP Top 10</th>"),
+	}
+
+	for field, pos := range positions {
+		if pos < 0 {
+			t.Errorf("field %q not found in output: %.400s", field, out)
+		}
+	}
+
+	// Plugin ID must appear before CWE, CWE before OWASP
+	if positions["Plugin ID"] >= positions["CWE"] {
+		t.Errorf("Plugin ID (pos %d) must appear before CWE (pos %d)", positions["Plugin ID"], positions["CWE"])
+	}
+	if positions["CWE"] >= positions["OWASP Top 10"] {
+		t.Errorf("CWE (pos %d) must appear before OWASP Top 10 (pos %d)", positions["CWE"], positions["OWASP Top 10"])
+	}
+}
+
+// --- KB core requirement tests ---
+
+// Test 1 — Tool-agnostic: page titles contain no ZAP-specific strings derived from pluginId alone.
+func TestFindingPageTitle_ToolAgnostic(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-nuclei-sqli",
+				PluginID:     "nuclei-sqli",
+				Alert:        "SQL Injection via GET parameter",
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "fin-aabb1122",
+				DefinitionID: "def-nuclei-sqli",
+				PluginID:     "nuclei-sqli",
+				URL:          "https://example.com/search",
+				Method:       "GET",
+				Risk:         "High",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+	f := ei.finds["fin-aabb1122"]
+
+	title := findingPageTitle(f, &ei)
+
+	if title == "" {
+		t.Fatal("findingPageTitle returned empty string")
+	}
+	// Title must not contain "Plugin" or "zap" derived from the pluginId alone.
+	// The pluginId "nuclei-sqli" should not introduce those strings.
+	lowerTitle := strings.ToLower(title)
+	if strings.Contains(lowerTitle, "plugin") {
+		t.Errorf("findingPageTitle contains 'plugin' which is ZAP-specific: %q", title)
+	}
+	// Title must be derived from Alert, not from the PluginID.
+	if !strings.Contains(title, "SQL Injection") {
+		t.Errorf("findingPageTitle should contain the rule name 'SQL Injection', got %q", title)
+	}
+	// The raw pluginId string should not appear verbatim unless it is also the rule name.
+	if strings.Contains(title, "nuclei-sqli") {
+		t.Errorf("findingPageTitle should not embed the raw pluginId %q, got %q", "nuclei-sqli", title)
+	}
+}
+
+func TestOccurrencePageTitle_ToolAgnostic(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-nuclei-sqli",
+				PluginID:     "nuclei-sqli",
+				Alert:        "SQL Injection via GET parameter",
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-ccdd3344",
+				DefinitionID: "def-nuclei-sqli",
+				FindingID:    "fin-aabb1122",
+				URL:          "https://example.com/search",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+	o := ei.occs["occ-ccdd3344"]
+
+	title := occurrencePageTitle(o, &ei)
+
+	if title == "" {
+		t.Fatal("occurrencePageTitle returned empty string")
+	}
+	lowerTitle := strings.ToLower(title)
+	if strings.Contains(lowerTitle, "plugin") {
+		t.Errorf("occurrencePageTitle contains 'plugin' which is ZAP-specific: %q", title)
+	}
+	// Must be based on the rule name, not on the pluginId.
+	if !strings.Contains(title, "SQL Injection") {
+		t.Errorf("occurrencePageTitle should contain the rule name, got %q", title)
+	}
+	// The short ID suffix should come from OccurrenceID tail chars.
+	if !strings.Contains(title, "3344") {
+		t.Errorf("occurrencePageTitle should contain the OccurrenceID suffix '3344', got %q", title)
+	}
+}
+
+// Test 2 — Deterministic titles: same entity → same title on every call.
+func TestPageTitles_Deterministic(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				Alert:        "CSP Header Not Set",
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "fin-aabb1122",
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				URL:          "https://example.com/api",
+				Risk:         "Medium",
+			},
+			{
+				FindingID:    "fin-ccdd3344",
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				URL:          "https://example.com/login",
+				Risk:         "Medium",
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-11223344",
+				DefinitionID: "def-10038",
+				FindingID:    "fin-aabb1122",
+				URL:          "https://example.com/api/v1",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+	f1 := ei.finds["fin-aabb1122"]
+	f2 := ei.finds["fin-ccdd3344"]
+	o := ei.occs["occ-11223344"]
+
+	// Same finding → same title across 3 calls.
+	first := findingPageTitle(f1, &ei)
+	for i := 1; i < 3; i++ {
+		got := findingPageTitle(f1, &ei)
+		if got != first {
+			t.Errorf("findingPageTitle call %d returned %q, want %q", i+1, got, first)
+		}
+	}
+
+	// Same occurrence → same title across 3 calls.
+	firstOcc := occurrencePageTitle(o, &ei)
+	for i := 1; i < 3; i++ {
+		got := occurrencePageTitle(o, &ei)
+		if got != firstOcc {
+			t.Errorf("occurrencePageTitle call %d returned %q, want %q", i+1, got, firstOcc)
+		}
+	}
+
+	// Two different findings of the same rule at different URLs must produce different titles.
+	title1 := findingPageTitle(f1, &ei)
+	title2 := findingPageTitle(f2, &ei)
+	if title1 == title2 {
+		t.Errorf("different findings produced identical titles: %q", title1)
+	}
+}
+
+// Test 3 — Scan identity on occurrence pages.
+func TestPrependOccurrenceProperties_ScanIdentity(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				Alert:        "CSP Header Not Set",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+
+	o := &entities.Occurrence{
+		OccurrenceID: "occ-aabb1122",
+		DefinitionID: "def-10038",
+		FindingID:    "fin-aabb1122",
+		URL:          "https://example.com/",
+		ScanLabel:    "scan-2026-04-01",
+		ObservedAt:   "2026-04-01T12:00:00Z",
+	}
+
+	out := prependOccurrenceProperties("BODY", o, &ei)
+
+	if !strings.Contains(out, "scan-2026-04-01") {
+		t.Errorf("occurrence properties should contain the scan label, got: %.500s", out)
+	}
+	if !strings.Contains(out, "2026-04-01T12:00:00Z") {
+		t.Errorf("occurrence properties should contain the observed timestamp, got: %.500s", out)
+	}
+}
+
+// Test 4 — Analyst triage fields on occurrence pages.
+func TestPrependOccurrenceProperties_AnalystFields(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				Alert:        "CSP Header Not Set",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+
+	o := &entities.Occurrence{
+		OccurrenceID: "occ-aabb1122",
+		DefinitionID: "def-10038",
+		FindingID:    "fin-aabb1122",
+		URL:          "https://example.com/",
+		Risk:         "Medium",
+		Analyst: &entities.Analyst{
+			Status: "triaged",
+			Owner:  "alice",
+			Notes:  "confirmed",
+		},
+	}
+
+	out := prependOccurrenceProperties("BODY", o, &ei)
+
+	if !strings.Contains(strings.ToUpper(out), "TRIAGED") {
+		t.Errorf("occurrence properties should contain 'triaged', got: %.500s", out)
+	}
+	if !strings.Contains(out, "alice") {
+		t.Errorf("occurrence properties should contain owner 'alice', got: %.500s", out)
+	}
+	if !strings.Contains(out, "confirmed") {
+		t.Errorf("occurrence properties should contain notes 'confirmed', got: %.500s", out)
+	}
+}
+
+// Test 5 — firstSeen/lastSeen on finding pages derived from occurrences.
+func TestPrependFindingProperties_FirstLastSeen(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				Alert:        "CSP Header Not Set",
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "fin-aabb1122",
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				URL:          "https://example.com/",
+				Risk:         "Medium",
+				Occurrences:  2,
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-11111111",
+				DefinitionID: "def-10038",
+				FindingID:    "fin-aabb1122",
+				ObservedAt:   "2026-01-01T00:00:00Z",
+			},
+			{
+				OccurrenceID: "occ-22222222",
+				DefinitionID: "def-10038",
+				FindingID:    "fin-aabb1122",
+				ObservedAt:   "2026-03-01T00:00:00Z",
+			},
+		},
+	}
+	ei := buildEntityIndex(ef)
+	f := ei.finds["fin-aabb1122"]
+
+	out := prependFindingProperties("BODY", f, &ei)
+
+	// First Seen must appear (the earlier date).
+	if !strings.Contains(out, "2026-01-01T00:00:00Z") {
+		t.Errorf("finding properties should contain first-seen date '2026-01-01T00:00:00Z', got: %.600s", out)
+	}
+	// Last Seen must appear (the later date) since they differ.
+	if !strings.Contains(out, "2026-03-01T00:00:00Z") {
+		t.Errorf("finding properties should contain last-seen date '2026-03-01T00:00:00Z', got: %.600s", out)
+	}
+	// Both dates must be present, proving the range is built from occurrences.
+	firstPos := strings.Index(out, "2026-01-01T00:00:00Z")
+	lastPos := strings.Index(out, "2026-03-01T00:00:00Z")
+	if firstPos < 0 || lastPos < 0 {
+		t.Error("both first and last observed dates must appear in finding properties")
+	}
+}
+
+// Test 6 — Enrichment: taxonomy is written to definition pages.
+func TestPrependDefProperties_TaxonomyWritten(t *testing.T) {
+	def := &entities.Definition{
+		DefinitionID: "def-sqli",
+		PluginID:     "nuclei-sqli",
+		Alert:        "SQL Injection",
+		Taxonomy: &entities.Taxonomy{
+			CWEID:      89,
+			CWEURI:     "https://cwe.mitre.org/data/definitions/89.html",
+			OWASPTop10: []string{"A03:2021"},
+		},
+	}
+
+	out := prependDefProperties("BODY", def)
+
+	if !strings.Contains(out, "89") {
+		t.Errorf("def properties should contain CWE ID '89', got: %.500s", out)
+	}
+	if !strings.Contains(out, "A03") {
+		t.Errorf("def properties should contain OWASP category 'A03', got: %.500s", out)
+	}
+	if !strings.Contains(out, "BODY") {
+		t.Error("original storage body should be preserved after prepending properties")
+	}
+}
+
+// Test 7 — Enrichment: nil taxonomy does not panic.
+func TestPrependDefProperties_NilTaxonomyNoPanic(t *testing.T) {
+	def := &entities.Definition{
+		DefinitionID: "def-10038",
+		PluginID:     "10038",
+		Alert:        "CSP Header Not Set",
+		Taxonomy:     nil,
+	}
+
+	// Must not panic.
+	out := prependDefProperties("BODY", def)
+
+	// The original body must be present.
+	if !strings.Contains(out, "BODY") {
+		t.Error("storage body should be present even when taxonomy is nil")
+	}
+	// The definition ID or alert name must appear somewhere in the output
+	// OR the body is returned unchanged — both are acceptable.
+	// The key invariant is no panic and content is not lost.
+	if out == "" {
+		t.Error("prependDefProperties returned empty string for nil taxonomy def")
+	}
+}
+
+// Test 8 — ExportVault phase completeness: required pages are upserted.
+func TestExportVault_RequiredPagesUpserted(t *testing.T) {
+	var mu sync.Mutex
+	upserted := map[string]bool{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			// Always say page does not exist — all calls are creates.
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			upserted[title] = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/label"):
+			// Discard label calls — not under test here.
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# KB Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# KB Dashboard")
+	mustWriteFile(t, filepath.Join(dir, "triage-board.md"), "# Triage Board")
+
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "10038-csp-header-not-set.md"),
+		"---\nid: def-10038\n---\n# CSP Header Not Set (Plugin 10038)\n\nBody text.")
+
+	findingsDir := filepath.Join(dir, "findings")
+	os.MkdirAll(findingsDir, 0o755)
+	mustWriteFile(t, filepath.Join(findingsDir, "fin-aabb1122.md"),
+		"# CSP Header Not Set — /api — 1122\n\nFinding body.")
+
+	occDir := filepath.Join(dir, "occurrences")
+	os.MkdirAll(occDir, 0o755)
+	mustWriteFile(t, filepath.Join(occDir, "occ-ccdd3344.md"),
+		"# Occurrence occ-ccdd3344\n\nOccurrence body.")
+
+	ef := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				Alert:        "CSP Header Not Set",
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "fin-aabb1122",
+				DefinitionID: "def-10038",
+				PluginID:     "10038",
+				URL:          "https://example.com/api",
+				Risk:         "Medium",
+				Occurrences:  1,
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-ccdd3344",
+				DefinitionID: "def-10038",
+				FindingID:    "fin-aabb1122",
+				URL:          "https://example.com/api",
+				Risk:         "Medium",
+			},
+		},
+	}
+
+	_, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:      srv.URL,
+		Username:     "user",
+		APIToken:     "token",
+		SpaceKey:     "KB",
+		Concurrency:  1,
+		RequestDelay: time.Millisecond,
+		Entities:     ef,
+	})
+	if err != nil {
+		t.Fatalf("ExportVault returned error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions", "Findings"}
+	for _, title := range required {
+		if !upserted[title] {
+			t.Errorf("expected page %q to be upserted, but it was not; all upserted: %v", title, upserted)
+		}
+	}
 }

@@ -584,6 +584,127 @@ func TestMdToStorage_DetailsWithCodeBlock(t *testing.T) {
 	}
 }
 
+// TestMdToStorage_Snapshots is a table-driven snapshot test covering the full
+// breadth of inline and block markdown constructs the converter must handle.
+func TestMdToStorage_Snapshots(t *testing.T) {
+	cases := []struct {
+		name         string
+		input        string
+		wantContains []string
+	}{
+		{
+			name:         "H1_heading",
+			input:        "# Main Title",
+			wantContains: []string{"<h1>Main Title</h1>"},
+		},
+		{
+			name:         "H2_heading",
+			input:        "## Section Title",
+			wantContains: []string{"<h2>Section Title</h2>"},
+		},
+		{
+			name:         "H3_heading",
+			input:        "### Subsection",
+			wantContains: []string{"<h3>Subsection</h3>"},
+		},
+		{
+			name:         "bold",
+			input:        "**important text**",
+			wantContains: []string{"<strong>important text</strong>"},
+		},
+		{
+			name:         "italic",
+			input:        "_italic words_",
+			wantContains: []string{"<em>italic words</em>"},
+		},
+		{
+			name:  "fenced_code_block_with_language",
+			input: "```python\nprint('hello')\n```",
+			wantContains: []string{
+				`ac:name="code"`,
+				"python",
+				"print",
+			},
+		},
+		{
+			name:         "inline_code",
+			input:        "Use `os.Exit(1)` to quit",
+			wantContains: []string{"<code>os.Exit(1)</code>"},
+		},
+		{
+			name:  "blockquote_obsidian_warning_callout",
+			input: "> [!Warning]\n> Be careful here",
+			wantContains: []string{
+				`name="warning"`,
+				"Be careful here",
+			},
+		},
+		{
+			name:  "simple_table_with_header",
+			input: "| Name | Value |\n| --- | --- |\n| alpha | 1 |",
+			wantContains: []string{
+				"<table>",
+				"<th>Name</th>",
+				"<th>Value</th>",
+				"<td>alpha</td>",
+				"<td>1</td>",
+			},
+		},
+		{
+			name:  "obsidian_wikilink_with_display",
+			input: "See [[findings/fin-abc123.md|My Finding]]",
+			wantContains: []string{
+				"<ac:link>",
+				`ri:content-title="My Finding"`,
+				"My Finding",
+			},
+		},
+		{
+			name:  "external_link",
+			input: "[ZAP docs](https://www.zaproxy.org/)",
+			wantContains: []string{
+				`<a href="https://www.zaproxy.org/">ZAP docs</a>`,
+			},
+		},
+		{
+			name:  "bullet_list_with_task_item",
+			input: "- [ ] pending task\n- [x] done task\n- normal item",
+			wantContains: []string{
+				"<ac:task-list>",
+				"<ac:task-status>incomplete</ac:task-status>",
+				"<ac:task-body>pending task</ac:task-body>",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := mdToStorage(c.input)
+			for _, want := range c.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("mdToStorage(%q): expected %q in output\ngot: %s", c.input, want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestMdToStorage_AnchorMap_PackageLevel verifies that calling inlineToStorageWithTitles
+// multiple times produces consistent output for anchor-mapped links. This is a regression
+// guard for the issue where anchorPageMap was rebuilt on every call — behaviour is correct
+// (map is rebuilt locally each call, result is deterministic), so two calls must agree.
+func TestMdToStorage_AnchorMap_PackageLevel(t *testing.T) {
+	input := "[All issues](#issues)"
+	out1 := mdToStorage(input)
+	out2 := mdToStorage(input)
+	if out1 != out2 {
+		t.Errorf("inlineToStorageWithTitles is not deterministic across calls:\nfirst:  %s\nsecond: %s", out1, out2)
+	}
+	// The anchor #issues maps to the "Findings" page
+	if !strings.Contains(out1, "Findings") {
+		t.Errorf("expected anchor #issues to resolve to Findings page, got: %s", out1)
+	}
+}
+
 func TestWikilinkToTitle(t *testing.T) {
 	cases := []struct {
 		path string

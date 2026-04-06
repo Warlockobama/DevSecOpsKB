@@ -24,6 +24,10 @@ type Options struct {
 	SiteLabel string
 	// New: base URL to link back to ZAP API message JSON/HTML.
 	ZapBaseURL string
+	// TriageGuidanceFn, if non-nil, is called with a pluginID and returns
+	// plugin-specific triage tips. Keeping this as an injected function prevents
+	// the tool-agnostic vault writer from importing tool-specific packages.
+	TriageGuidanceFn func(pluginID string) []string
 }
 
 // WriteVault writes an Obsidian-ready folder tree from the Entities model.
@@ -37,6 +41,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	defDir := filepath.Join(root, "definitions")
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
+
+	// Carry forward analyst status and timestamps from any existing occurrence files BEFORE
+	// we clear the directories, so triage annotations are not silently discarded on each run.
+	existingOccMeta := loadOccurrenceMeta(occDir)
+
 	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
 	// no longer in the entities file) don't accumulate and get exported to Confluence.
 	for _, d := range []string{defDir, findDir, occDir} {
@@ -58,9 +67,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	defLinkByID := make(map[string]string, len(ef.Definitions))
 	// And map to the definition itself for alias building.
 	defByID := make(map[string]entities.Definition, len(ef.Definitions))
-
-	// Carry forward analyst status and timestamps from any existing occurrence files before we overwrite them.
-	existingOccMeta := loadOccurrenceMeta(occDir)
 
 	// Normalize occurrences up front so all later rollups use the same resolved values.
 	occsByFind := make(map[string][]entities.Occurrence)
@@ -330,6 +336,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "- %s\n", l)
 				}
 				b.WriteString("\n")
+			}
+		}
+
+		// Taxonomy completeness callout — helps analysts identify gaps before reporting.
+		{
+			missingCWE := d.Taxonomy == nil || d.Taxonomy.CWEID == 0
+			missingOWASP := d.Taxonomy == nil || len(trimStrings(d.Taxonomy.OWASPTop10)) == 0
+			if missingCWE && missingOWASP {
+				b.WriteString("> [!Warning]\n> Taxonomy incomplete — CWE and OWASP mapping missing\n\n")
+			} else if missingCWE {
+				b.WriteString("> [!Info]\n> CWE mapping absent — consider adding a CWE ID to the taxonomy\n\n")
+			} else if missingOWASP {
+				b.WriteString("> [!Info]\n> OWASP Top 10 mapping absent — consider adding an OWASP category\n\n")
 			}
 		}
 
@@ -604,7 +623,15 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			})
 			for _, o := range occs {
 				sev2, _ := deriveSeverity(o.Risk, o.RiskCode)
-				caption := strings.TrimSpace(o.Name)
+				// Use METHOD /path as the caption — o.Name may contain raw evidence
+				// snippets (e.g. "GET /ftp ev=\"<!DOCTYPE...\"") which break wikilinks
+				// and pollute Confluence page titles.
+				method := strings.ToUpper(strings.TrimSpace(o.Method))
+				oPath := ""
+				if u, err2 := neturl.Parse(o.URL); err2 == nil {
+					oPath = u.Path
+				}
+				caption := strings.TrimSpace(method + " " + oPath)
 				if caption == "" {
 					caption = urlBasename(o.URL)
 				}
@@ -941,7 +968,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "_Headers: %d_\n\n", len(o.Request.Headers))
 					b.WriteString("Headers:\n")
 					for _, h := range o.Request.Headers {
-						fmt.Fprintf(&b, "- %s: %s\n", h.Name, h.Value)
+						fmt.Fprintf(&b, "- %s: %s\n", h.Name, trafficHeaderValue(h.Name, h.Value))
 					}
 					b.WriteString("\n")
 				}
@@ -973,7 +1000,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					fmt.Fprintf(&b, "_Headers: %d_\n\n", len(o.Response.Headers))
 					b.WriteString("Headers:\n")
 					for _, h := range o.Response.Headers {
-						fmt.Fprintf(&b, "- %s: %s\n", h.Name, h.Value)
+						fmt.Fprintf(&b, "- %s: %s\n", h.Name, trafficHeaderValue(h.Name, h.Value))
 					}
 					b.WriteString("\n")
 				}
@@ -991,15 +1018,17 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("</details>\n\n")
 		}
 
-		// Triage guidance
-		if d, ok := defByID[o.DefinitionID]; ok {
-			tips := triageGuidance(d.PluginID)
-			if len(tips) > 0 {
-				b.WriteString("## Triage guidance\n\n")
-				for _, t := range tips {
-					fmt.Fprintf(&b, "- %s\n", t)
+		// Triage guidance — only written when a lookup function is injected
+		if opts.TriageGuidanceFn != nil {
+			if d, ok := defByID[o.DefinitionID]; ok {
+				tips := opts.TriageGuidanceFn(d.PluginID)
+				if len(tips) > 0 {
+					b.WriteString("## Triage guidance\n\n")
+					for _, t := range tips {
+						fmt.Fprintf(&b, "- %s\n", t)
+					}
+					b.WriteString("\n")
 				}
-				b.WriteString("\n")
 			}
 		}
 
@@ -1151,12 +1180,29 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- [Occurrences](#occurrences)\n")
 		b.WriteString("- [Rules](#rules)\n")
 		b.WriteString("- [By domain](by-domain.md)\n")
-		b.WriteString("- [Triage quickstart](docs/triage.md)\n\n")
+		b.WriteString("\n")
 
 		triageSection.WriteString("## Triage board\n\n")
 		triageSection.WriteString("| Status | Issues | Occurrences |\n| --- | --- | --- |\n")
 		for _, entry := range statusOrder {
 			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", entry.Label, issueStatusCounts[entry.Key], statusCounts[entry.Key])
+		}
+		// Emit an "Other" row for any non-canonical status values so totals always add up.
+		canonicalStatuses := map[string]struct{}{"open": {}, "triaged": {}, "fp": {}, "accepted": {}, "fixed": {}}
+		otherOccCount := 0
+		otherIssueCount := 0
+		for k, v := range statusCounts {
+			if _, known := canonicalStatuses[k]; !known {
+				otherOccCount += v
+			}
+		}
+		for k, v := range issueStatusCounts {
+			if _, known := canonicalStatuses[k]; !known {
+				otherIssueCount += v
+			}
+		}
+		if otherOccCount > 0 || otherIssueCount > 0 {
+			fmt.Fprintf(&triageSection, "| Other | %d | %d |\n", otherIssueCount, otherOccCount)
 		}
 		triageSection.WriteString("\n")
 		b.WriteString(triageSection.String())
@@ -1691,26 +1737,19 @@ func headerValue(h []entities.Header, name string) string {
 	return ""
 }
 
-// triageGuidance returns a small set of rule-specific tips
-func triageGuidance(pluginID string) []string {
-	switch strings.TrimSpace(pluginID) {
-	case "10038": // CSP header not set
-		return []string{
-			"Check response headers for Content-Security-Policy or meta CSP tags.",
-			"If behind a CDN/reverse proxy, verify headers at edge and origin.",
-			"Establish a baseline CSP (default-src 'self') and iterate.",
-		}
-	case "10020": // Missing Anti-clickjacking header
-		return []string{
-			"Confirm X-Frame-Options or CSP frame-ancestors is present.",
-			"Decide SAMEORIGIN vs DENY; prefer frame-ancestors in CSP for modern browsers.",
-		}
-	default:
-		return []string{
-			"Validate the finding manually and confirm exploitability in this context.",
-			"Document false-positive conditions and add ignores where appropriate.",
-		}
+// trafficHeaderValue applies a safe floor redaction to header values written in the
+// Traffic section of an occurrence note. Authorization and Cookie/Set-Cookie are always
+// masked, matching the behaviour of buildCurl, so that the Traffic section is never
+// more revealing than the curl snippet shown immediately below it.
+func trafficHeaderValue(name, value string) string {
+	low := strings.ToLower(strings.TrimSpace(name))
+	switch low {
+	case "authorization":
+		return "<redacted>"
+	case "cookie", "set-cookie":
+		return "<cookie>"
 	}
+	return value
 }
 
 // buildCurl creates a basic curl command with small body when safe
@@ -1743,7 +1782,7 @@ func buildCurl(o entities.Occurrence) string {
 			if low == "host" {
 				continue
 			}
-			parts = append(parts, "-H", fmt.Sprintf("%s: %s", name, val))
+			parts = append(parts, "-H", `"`+strings.ReplaceAll(name+": "+val, `"`, `\"`)+`"`)
 			added++
 			if added >= 5 {
 				break
@@ -1754,7 +1793,7 @@ func buildCurl(o entities.Occurrence) string {
 			ct := headerValue(o.Request.Headers, "Content-Type")
 			body := redactBody(o.Request.BodySnippet)
 			if strings.Contains(strings.ToLower(ct), "application/json") {
-				parts = append(parts, "-H", "Content-Type: application/json")
+				parts = append(parts, "-H", `"Content-Type: application/json"`)
 				parts = append(parts, "--data", fmt.Sprintf("%q", body))
 			} else if strings.Contains(strings.ToLower(ct), "application/x-www-form-urlencoded") {
 				parts = append(parts, "--data", fmt.Sprintf("%q", body))
@@ -2297,7 +2336,9 @@ func trimStrings(vals []string) []string {
 }
 
 // extractFrontmatter parses a minimal YAML frontmatter into a flat key/value map.
-// Only supports simple scalar lines: key: value or key: "value"; arrays are ignored here.
+// Supports simple scalar lines (key: value or key: "value") and block list values
+// (key:\n  - item\n  - item). Block list items are joined with "," so callers can
+// use splitCommaList to recover []string values (e.g., analyst.tags, analyst.ticketRefs).
 func extractFrontmatter(s string) map[string]string {
 	out := map[string]string{}
 	lines := strings.Split(s, "\n")
@@ -2305,13 +2346,25 @@ func extractFrontmatter(s string) map[string]string {
 		return out
 	}
 	i := 1
+	var lastKey string
 	for ; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) == "---" {
 			break
 		}
 		line := lines[i]
-		// skip list sections
-		if strings.HasPrefix(strings.TrimSpace(line), "-") {
+		trimmed := strings.TrimSpace(line)
+		// Block list item belonging to the previous key.
+		if strings.HasPrefix(trimmed, "-") && lastKey != "" {
+			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+			item = strings.Trim(item, "\"'")
+			if item == "" {
+				continue
+			}
+			if out[lastKey] == "" {
+				out[lastKey] = item
+			} else {
+				out[lastKey] = out[lastKey] + "," + item
+			}
 			continue
 		}
 		if idx := strings.Index(line, ":"); idx > 0 {
@@ -2319,6 +2372,10 @@ func extractFrontmatter(s string) map[string]string {
 			val := strings.TrimSpace(line[idx+1:])
 			val = strings.Trim(val, "\"'")
 			out[key] = val
+			lastKey = key
+		} else {
+			// Non-matching line; reset lastKey so stray "-" lines are not misattributed.
+			lastKey = ""
 		}
 	}
 	return out

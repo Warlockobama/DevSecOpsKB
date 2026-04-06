@@ -146,6 +146,17 @@ func main() {
 	flag.StringVar(&jiraMinRisk, "jira-min-risk", "low", "Minimum risk level to export: info|low|medium|high (default: low).")
 	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
 	flag.IntVar(&jiraConcurrency, "jira-concurrency", 3, "Max parallel Jira API requests (default: 3, max: 5).")
+	// Sub-command dispatch: if the first argument is "merge", run the merge
+	// sub-command with its own flag set and exit without touching the global flags.
+	if len(os.Args) > 1 && os.Args[1] == "merge" {
+		runMergeCommand(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "report" {
+		runReportCommand(os.Args[2:])
+		return
+	}
+
 	flag.Parse()
 
 	// Environment variable fallbacks for credentials and URLs.
@@ -197,7 +208,7 @@ func main() {
 		ef.SchemaVersion = "v1"
 		ef.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		ef.SourceTool = source
-		if err := obsidian.WriteVault(vdir, ef, obsidian.Options{ScanLabel: "", SiteLabel: "", ZapBaseURL: strings.TrimSpace(zapBase)}); err != nil {
+		if err := obsidian.WriteVault(vdir, ef, obsidian.Options{ScanLabel: "", SiteLabel: "", ZapBaseURL: strings.TrimSpace(zapBase), TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
 			log.Fatalf("refresh index: %v", err)
 		}
 		fmt.Println("Refreshed INDEX.md and DASHBOARD.md")
@@ -374,6 +385,11 @@ func main() {
 				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
+		// Warn when occurrences will be built without a scan label: they'll merge
+		// with previous runs of the same alerts, making scan-level attribution impossible.
+		if strings.TrimSpace(scanLabel) == "" && (len(alerts) > 0 || strings.TrimSpace(runIn) != "" || len(entIn.Occurrences) > 0) {
+			fmt.Fprintln(os.Stderr, "[warn] no -scan-label set; occurrences from this run will merge with previous runs of the same alerts")
+		}
 		if len(alerts) > 0 {
 			built := entities.BuildEntitiesWithOptions(alerts, entities.BuildOptions{
 				SourceTool:  source,
@@ -465,6 +481,9 @@ func main() {
 			}
 		}
 
+		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
+		entities.EnrichTaxonomy(ent.Definitions)
+
 		// Optional redaction pass
 		if strings.TrimSpace(redactOpts) != "" {
 			ro := entities.ParseRedactOptionList(redactOpts)
@@ -509,7 +528,7 @@ func main() {
 			log.Fatalf("write json entities: %v", err)
 		}
 	case "obsidian":
-		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
+		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
 	default:
@@ -520,7 +539,7 @@ func main() {
 	if strings.TrimSpace(confURL) != "" {
 		// Ensure vault exists on disk (may have been written above in obsidian case, or write now)
 		if format != "obsidian" {
-			if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase}); err != nil {
+			if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
 				log.Fatalf("write obsidian for confluence: %v", err)
 			}
 		}
@@ -744,4 +763,80 @@ func parseLookback(raw string) (time.Duration, error) {
 	default:
 		return 0, fmt.Errorf("unknown unit %q (use d,w,m,y)", string(unit))
 	}
+}
+
+// runMergeCommand implements the "merge" sub-command.
+// Usage: zap-kb merge -inputs a.json,b.json[,c.json] [-out merged.json]
+//
+// Reads each input with runartifact.ReadFlexible (handles both run artifacts and
+// bare entities JSON). Merges pairwise left-to-right using entities.Merge.
+// Writes the merged EntitiesFile as JSON to -out (stdout when "-" or omitted).
+func runMergeCommand(args []string) {
+	fs := flag.NewFlagSet("merge", flag.ExitOnError)
+	var inputsFlag string
+	var outFlag string
+	fs.StringVar(&inputsFlag, "inputs", "", "Comma-separated list of entity JSON file paths (required)")
+	fs.StringVar(&outFlag, "out", "-", "Output file path; use \"-\" or omit for stdout")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "merge: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Collect input paths: -inputs flag (comma-separated) plus any remaining positional args.
+	var paths []string
+	for _, raw := range strings.Split(inputsFlag, ",") {
+		p := strings.TrimSpace(raw)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	for _, p := range fs.Args() {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "merge: -inputs is required (provide at least one file path)")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	// Read and merge files left-to-right.
+	artifacts := make([]entities.EntitiesFile, 0, len(paths))
+	for _, p := range paths {
+		art, err := runartifact.ReadFlexible(p)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "merge: cannot read %q: %v\n", p, err)
+			os.Exit(1)
+		}
+		artifacts = append(artifacts, art.Entities)
+	}
+
+	merged := artifacts[0]
+	for _, ef := range artifacts[1:] {
+		merged = entities.Merge(merged, ef)
+	}
+
+	// Encode output.
+	enc, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "merge: encode: %v\n", err)
+		os.Exit(1)
+	}
+
+	outPath := strings.TrimSpace(outFlag)
+	if outPath == "" || outPath == "-" {
+		os.Stdout.Write(enc)
+		os.Stdout.WriteString("\n")
+	} else {
+		if werr := os.WriteFile(outPath, append(enc, '\n'), 0o644); werr != nil {
+			fmt.Fprintf(os.Stderr, "merge: write %q: %v\n", outPath, werr)
+			os.Exit(1)
+		}
+	}
+
+	// Summary to stderr.
+	fmt.Fprintf(os.Stderr, "Merged %d files: %d definitions, %d findings, %d occurrences\n",
+		len(paths), len(merged.Definitions), len(merged.Findings), len(merged.Occurrences))
 }

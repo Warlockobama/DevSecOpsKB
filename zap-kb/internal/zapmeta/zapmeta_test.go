@@ -1,6 +1,7 @@
 package zapmeta
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,63 @@ func TestScrapeCWEID_LinkTakesPrecedenceOverFallback(t *testing.T) {
 	got := scrapeCWEID(html, "10035")
 	if got != 311 {
 		t.Errorf("expected 311 (from link), got %d", got)
+	}
+}
+
+// TestTriageGuidance_KnownPlugin_CSP verifies that plugin 10038 (CSP header not
+// set) returns plugin-specific tips mentioning Content-Security-Policy.
+func TestTriageGuidance_KnownPlugin_CSP(t *testing.T) {
+	tips := TriageGuidance("10038")
+	if len(tips) == 0 {
+		t.Fatal("expected non-empty tips for plugin 10038")
+	}
+	found := false
+	for _, tip := range tips {
+		if strings.Contains(tip, "Content-Security-Policy") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected at least one tip mentioning Content-Security-Policy for plugin 10038, got: %v", tips)
+	}
+}
+
+// TestTriageGuidance_KnownPlugin_Clickjacking verifies that plugin 10020
+// (Missing Anti-clickjacking header) returns plugin-specific tips.
+func TestTriageGuidance_KnownPlugin_Clickjacking(t *testing.T) {
+	tips := TriageGuidance("10020")
+	if len(tips) == 0 {
+		t.Fatal("expected non-empty tips for plugin 10020")
+	}
+	found := false
+	for _, tip := range tips {
+		if strings.Contains(tip, "X-Frame-Options") || strings.Contains(tip, "frame-ancestors") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected tips mentioning X-Frame-Options or frame-ancestors for plugin 10020, got: %v", tips)
+	}
+}
+
+// TestTriageGuidance_UnknownPlugin verifies that an unknown plugin ID returns
+// nil (no generic tips — callers omit the section entirely).
+func TestTriageGuidance_UnknownPlugin(t *testing.T) {
+	tips := TriageGuidance("99999")
+	if len(tips) != 0 {
+		t.Fatalf("expected nil/empty tips for unknown plugin 99999, got: %v", tips)
+	}
+}
+
+// TestTriageGuidance_WithLeadingTrailingSpaces verifies that whitespace in the
+// plugin ID is tolerated (TrimSpace applied).
+func TestTriageGuidance_WithLeadingTrailingSpaces(t *testing.T) {
+	tipsWithSpaces := TriageGuidance("  10038  ")
+	tipsClean := TriageGuidance("10038")
+	if len(tipsWithSpaces) != len(tipsClean) {
+		t.Errorf("TriageGuidance should be whitespace-tolerant: got %d tips with spaces, %d without", len(tipsWithSpaces), len(tipsClean))
 	}
 }
 

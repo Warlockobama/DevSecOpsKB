@@ -52,6 +52,19 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 	for i := range e.Findings {
 		if ro.Domain || ro.Query {
 			e.Findings[i].URL = redactURL(e.Findings[i].URL, ro)
+			// Rebuild Name from the redacted URL so it no longer contains the original host.
+			if ro.Domain {
+				base, hostRoot := urlBaseOrParent(e.Findings[i].URL)
+				name := ""
+				if base != "" {
+					name = base
+				} else if hostRoot != "" {
+					name = hostRoot
+				}
+				if name != "" {
+					e.Findings[i].Name = name
+				}
+			}
 		}
 	}
 	// rawHeaderRedact is true whenever any mode that can expose credentials in the
@@ -63,6 +76,31 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 	for i := range e.Occurrences {
 		if ro.Domain || ro.Query {
 			e.Occurrences[i].URL = redactURL(e.Occurrences[i].URL, ro)
+			// Rebuild Name from the redacted URL so it no longer contains the original host.
+			if ro.Domain {
+				base, hostRoot := urlBaseOrParent(e.Occurrences[i].URL)
+				name := ""
+				if base != "" {
+					name = base
+				} else if hostRoot != "" {
+					name = hostRoot
+				}
+				if name != "" {
+					e.Occurrences[i].Name = name
+				}
+			}
+		}
+		// body mode: zero scan payload fields that can contain credentials or PII
+		if ro.Body {
+			e.Occurrences[i].Attack = ""
+			e.Occurrences[i].Evidence = ""
+			if e.Occurrences[i].Reproduce != nil {
+				e.Occurrences[i].Reproduce.Curl = ""
+			}
+		}
+		// auth mode: scrub auth headers embedded in Reproduce.Curl
+		if ro.Auth && e.Occurrences[i].Reproduce != nil && e.Occurrences[i].Reproduce.Curl != "" {
+			e.Occurrences[i].Reproduce.Curl = redactCurlAuthHeaders(e.Occurrences[i].Reproduce.Curl)
 		}
 		// headers
 		if e.Occurrences[i].Request != nil {
@@ -113,6 +151,44 @@ func redactURL(raw string, ro RedactOptions) string {
 		u.Path = path.Clean(u.Path)
 	}
 	return u.String()
+}
+
+// redactCurlAuthHeaders replaces Authorization and Cookie header values inside a
+// curl command string with sentinel tokens, matching the same patterns used in
+// buildCurl in the obsidian output package.
+func redactCurlAuthHeaders(curl string) string {
+	// Replace -H "Authorization: <anything>" patterns.
+	curl = redactCurlHeader(curl, "Authorization", "<redacted>")
+	// Replace -H "Cookie: <anything>" patterns.
+	curl = redactCurlHeader(curl, "Cookie", "<cookie>")
+	return curl
+}
+
+// redactCurlHeader replaces the value portion of a named HTTP header inside a
+// curl -H "Name: value" argument. It handles both double-quoted and unquoted forms.
+func redactCurlHeader(curl, name, sentinel string) string {
+	// We do a simple string search for the header name (case-insensitive prefix match).
+	// curl -H arguments are typically: -H "HeaderName: value"
+	lower := strings.ToLower(curl)
+	prefix := strings.ToLower(name + ": ")
+	start := 0
+	for {
+		idx := strings.Index(lower[start:], prefix)
+		if idx < 0 {
+			break
+		}
+		abs := start + idx
+		// Find end of the header value: either closing quote or end of line.
+		valStart := abs + len(prefix)
+		end := strings.IndexAny(curl[valStart:], "\"\n")
+		if end < 0 {
+			end = len(curl) - valStart
+		}
+		curl = curl[:valStart] + sentinel + curl[valStart+end:]
+		lower = strings.ToLower(curl)
+		start = valStart + len(sentinel)
+	}
+	return curl
 }
 
 func redactHeaders(hs []Header, ro RedactOptions) []Header {

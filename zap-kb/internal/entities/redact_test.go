@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -117,6 +118,154 @@ func TestRedactEntities_NilRequest(t *testing.T) {
 	}
 	// Should not panic
 	RedactEntities(ef, RedactOptions{Cookies: true, Auth: true})
+}
+
+func TestRedactEntities_BodyModeZerosAttackAndEvidence(t *testing.T) {
+	ef := &EntitiesFile{
+		Occurrences: []Occurrence{
+			{
+				OccurrenceID: "occ-1",
+				Attack:       "' OR 1=1--",
+				Evidence:     "session=supersecret",
+				Reproduce: &Reproduce{
+					Curl: `curl -X POST "https://example.com/api"`,
+				},
+			},
+		},
+	}
+	RedactEntities(ef, RedactOptions{Body: true})
+	o := ef.Occurrences[0]
+	if o.Attack != "" {
+		t.Errorf("Attack should be zeroed when Body redaction is active, got: %q", o.Attack)
+	}
+	if o.Evidence != "" {
+		t.Errorf("Evidence should be zeroed when Body redaction is active, got: %q", o.Evidence)
+	}
+	if o.Reproduce == nil || o.Reproduce.Curl != "" {
+		t.Errorf("Reproduce.Curl should be zeroed when Body redaction is active")
+	}
+}
+
+func TestRedactEntities_AuthModeRedactsCurlAuthHeaders(t *testing.T) {
+	curlIn := `curl -X POST -H "Authorization: Bearer supersecret" -H "Cookie: session=abc" "https://example.com/api"`
+	ef := &EntitiesFile{
+		Occurrences: []Occurrence{
+			{
+				OccurrenceID: "occ-2",
+				Reproduce: &Reproduce{
+					Curl: curlIn,
+				},
+			},
+		},
+	}
+	RedactEntities(ef, RedactOptions{Auth: true})
+	o := ef.Occurrences[0]
+	if o.Reproduce == nil {
+		t.Fatal("Reproduce should not be nil")
+	}
+	got := o.Reproduce.Curl
+	if strings.Contains(got, "supersecret") {
+		t.Errorf("Reproduce.Curl should not contain Authorization value after auth redaction: %q", got)
+	}
+	if !strings.Contains(got, "<redacted>") {
+		t.Errorf("Reproduce.Curl should contain <redacted> sentinel for Authorization: %q", got)
+	}
+	// Cookie inside Reproduce.Curl is also masked in auth mode (curl command context).
+	if strings.Contains(got, "session=abc") {
+		t.Errorf("Cookie value in Reproduce.Curl should be masked in auth mode: %q", got)
+	}
+	if !strings.Contains(got, "<cookie>") {
+		t.Errorf("Reproduce.Curl should contain <cookie> sentinel for Cookie: %q", got)
+	}
+}
+
+func TestRedactEntities_BodyModeNilReproduce(t *testing.T) {
+	ef := &EntitiesFile{
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-3", Attack: "payload", Evidence: "leaked"},
+		},
+	}
+	// Should not panic with nil Reproduce.
+	RedactEntities(ef, RedactOptions{Body: true})
+	o := ef.Occurrences[0]
+	if o.Attack != "" || o.Evidence != "" {
+		t.Errorf("Attack and Evidence should be zeroed")
+	}
+}
+
+// TestRedactEntities_DomainRedact_NameRebuilt verifies that after domain redaction
+// the Finding.Name and Occurrence.Name are rebuilt from the redacted URL so they
+// no longer expose the original hostname.
+func TestRedactEntities_DomainRedact_NameRebuilt(t *testing.T) {
+	ef := &EntitiesFile{
+		Findings: []Finding{
+			{
+				FindingID: "fin-1",
+				URL:       "https://internal.corp.example.com/api/v1/users",
+				Name:      "internal.corp.example.com — /api/v1/users",
+			},
+		},
+		Occurrences: []Occurrence{
+			{
+				OccurrenceID: "occ-1",
+				FindingID:    "fin-1",
+				URL:          "https://internal.corp.example.com/api/v1/users?id=42",
+				Name:         "internal.corp.example.com — /api/v1/users",
+			},
+		},
+	}
+
+	RedactEntities(ef, RedactOptions{Domain: true})
+
+	f := ef.Findings[0]
+	if strings.Contains(f.Name, "internal.corp.example.com") {
+		t.Errorf("Finding.Name still contains original host after domain redaction: %q", f.Name)
+	}
+	if f.Name == "" {
+		t.Error("Finding.Name should not be empty after domain redaction")
+	}
+
+	o := ef.Occurrences[0]
+	if strings.Contains(o.Name, "internal.corp.example.com") {
+		t.Errorf("Occurrence.Name still contains original host after domain redaction: %q", o.Name)
+	}
+	if o.Name == "" {
+		t.Error("Occurrence.Name should not be empty after domain redaction")
+	}
+}
+
+// TestRedactEntities_DomainRedact_URLRedacted verifies that the URL itself is
+// scrubbed, and the Name is rebuilt to match the redacted URL host placeholder.
+func TestRedactEntities_DomainRedact_URLRedacted(t *testing.T) {
+	ef := &EntitiesFile{
+		Findings: []Finding{
+			{
+				FindingID: "fin-2",
+				URL:       "https://secret.host.io/login",
+				Name:      "secret.host.io — /login",
+			},
+		},
+		Occurrences: []Occurrence{
+			{
+				OccurrenceID: "occ-2",
+				FindingID:    "fin-2",
+				URL:          "https://secret.host.io/login",
+				Name:         "secret.host.io — /login",
+			},
+		},
+	}
+
+	RedactEntities(ef, RedactOptions{Domain: true})
+
+	if strings.Contains(ef.Findings[0].URL, "secret.host.io") {
+		t.Errorf("Finding.URL still contains original host: %q", ef.Findings[0].URL)
+	}
+	if !strings.Contains(ef.Findings[0].URL, "<redacted>") {
+		t.Errorf("Finding.URL should contain <redacted> placeholder: %q", ef.Findings[0].URL)
+	}
+	if strings.Contains(ef.Occurrences[0].URL, "secret.host.io") {
+		t.Errorf("Occurrence.URL still contains original host: %q", ef.Occurrences[0].URL)
+	}
 }
 
 func TestParseRedactOptionList(t *testing.T) {
