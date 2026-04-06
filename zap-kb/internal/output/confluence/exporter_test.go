@@ -1107,19 +1107,17 @@ func TestExportVault_HierarchicalNesting(t *testing.T) {
 	}
 
 	// Occurrence page should be a child of the finding page
-	if findingTitle != "" {
-		findingPageID := "pid-" + findingTitle
-		occFound := false
-		for title, parent := range pageParents {
-			if parent == findingPageID {
-				occFound = true
-				_ = title
-				break
-			}
+	// Occurrences are parented to the Occurrences folder (not finding pages)
+	// so that the Occurrences folder is navigable in the sidebar.
+	occFound := false
+	for _, parent := range pageParents {
+		if parent == "pid-Occurrences" {
+			occFound = true
+			break
 		}
-		if !occFound {
-			t.Errorf("no occurrence page found as child of finding page %q; all parents: %v", findingPageID, pageParents)
-		}
+	}
+	if !occFound {
+		t.Errorf("no occurrence page found as child of Occurrences folder; all parents: %v", pageParents)
 	}
 }
 

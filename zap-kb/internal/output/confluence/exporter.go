@@ -413,8 +413,9 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	if opts.Entities != nil {
 		findingPageIDs := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
 			vaultRoot, concurrency, &ei, titleMap, defPageIDs, findingsID, &summary, hs)
+		// Parent all occurrences to the Occurrences folder so it's navigable.
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, findingsID, &summary, hs)
+			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, occurrencesID, &summary, hs)
 	} else {
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, &summary, hs)
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, &summary, hs)
@@ -619,13 +620,10 @@ func upsertOccurrencesHierarchical(
 				title = defTitleFromFilename(fname)
 			}
 
-			// Parent: finding page if known, else fallback
+			// Parent: always the Occurrences folder so the folder is navigable.
+			// (Nesting under finding pages made the Occurrences folder appear empty.)
 			parentID := fallbackParentID
-			if o != nil {
-				if id, ok := findingPageIDs[o.FindingID]; ok && id != "" {
-					parentID = id
-				}
-			}
+			_ = findingPageIDs // retained for signature compatibility
 
 			storageBody := mdToStorageWithTitles(content, titleMap)
 			storageBody = prependOccurrenceProperties(storageBody, o, ei)
@@ -1328,15 +1326,28 @@ func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 }
 
 // defByFilename resolves a definition filename like "10038-csp-header.md" to its entity.
+// Filenames have the format "<pluginID>-<slug>.md".
+// For numeric plugin IDs the first segment is sufficient; for non-numeric IDs
+// (e.g. "zap-authenticated-basket-item-enumeration-*") we prefix-match the full
+// pluginID so custom rules are resolved correctly.
 func (ei *entityIndex) defByFilename(fname string) *entities.Definition {
 	base := strings.TrimSuffix(fname, ".md")
-	// Extract pluginID (digits before first dash)
+	// Fast path: numeric plugin ID is the first dash-separated segment.
 	parts := strings.SplitN(base, "-", 2)
 	if len(parts) > 0 {
 		if d, ok := ei.defs["def-"+parts[0]]; ok {
 			return d
 		}
 		if d, ok := ei.defs[parts[0]]; ok {
+			return d
+		}
+	}
+	// Fallback: find the definition whose pluginID is a prefix of the filename base.
+	// This handles custom rules like "zap-authenticated-*" where the pluginID spans
+	// multiple dash-separated segments.
+	for id, d := range ei.defs {
+		pluginID := strings.TrimPrefix(id, "def-")
+		if base == pluginID || strings.HasPrefix(base, pluginID+"-") {
 			return d
 		}
 	}
