@@ -200,13 +200,16 @@ func TestExportVault_FullTree(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Expect: INDEX + DASHBOARD + Triage + By Domain + Definitions parent + 2 defs + Findings = 8
+	// Expect (counted in VaultSummary, excludes KB Export Summary which uses _, _, _):
+	// INDEX + DASHBOARD + Triage + By Domain + Security Rule Definitions + Custom Detections +
+	// 2 defs + Findings + Occurrences = 10
 	total := sum.Created + sum.Updated
-	if total != 8 {
-		t.Errorf("expected 8 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
+	if total != 10 {
+		t.Logf("created pages: %v", created)
+		t.Errorf("expected 10 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
 	}
-	// Verify key pages exist
-	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions", "Findings"} {
+	// Verify key pages exist (server-side, including KB Export Summary)
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "Findings", "Occurrences", "KB Export Summary"} {
 		if !created[title] {
 			t.Errorf("expected page %q to be created", title)
 		}
@@ -1083,9 +1086,9 @@ func TestExportVault_HierarchicalNesting(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Definition page should be a child of "Definitions" parent page
+	// Definition page should be a child of "Security Rule Definitions" parent page
 	defTitle := "CSP Header Not Set (Plugin 10038)"
-	defsParentID := "pid-Definitions"
+	defsParentID := "pid-Security Rule Definitions"
 	if pageParents[defTitle] != defsParentID {
 		t.Errorf("definition page parent: want %q, got %q", defsParentID, pageParents[defTitle])
 	}
@@ -2249,7 +2252,7 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Definitions", "Findings"}
+	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "Findings", "Occurrences"}
 	for _, title := range required {
 		if !upserted[title] {
 			t.Errorf("expected page %q to be upserted, but it was not; all upserted: %v", title, upserted)

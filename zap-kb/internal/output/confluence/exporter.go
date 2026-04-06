@@ -258,7 +258,13 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		if ferr != nil {
 			continue // skip missing files
 		}
-		_, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, mdToStorageWithTitles(content, titleMap), rootID, hs)
+		storageBody := mdToStorageWithTitles(content, titleMap)
+		// Change 2: for the Triage Board page, append a live Page Properties Report
+		// macro so Confluence auto-queries all kb-occurrence labeled pages.
+		if tp.file == "triage-board.md" && opts.SpaceKey != "" {
+			storageBody += pagePropertiesReportMacro(opts.SpaceKey)
+		}
+		_, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, storageBody, rootID, hs)
 		if uerr != nil {
 			fmt.Printf("[confluence] error upserting %s: %v\n", tp.title, uerr)
 			summary.Errors++
@@ -278,13 +284,23 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
-	// Phase 3: Upsert "Definitions" parent page
-	defsID, defsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Definitions",
-		mdToStorage("# Definitions\n\nAuto-generated security rule definitions from the DevSecOps KB."), rootID, hs)
+	// Phase 3: Upsert "Security Rule Definitions" parent page (built-in ZAP rules)
+	// and "Custom Detections" sibling page (project-specific custom rules).
+	defsBody := `<p>Auto-generated security rule definitions from the DevSecOps KB.</p>` + childrenMacro()
+	defsID, defsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Security Rule Definitions",
+		defsBody, rootID, hs)
 	if err != nil {
-		return summary, fmt.Errorf("upsert Definitions parent: %w", err)
+		return summary, fmt.Errorf("upsert Security Rule Definitions parent: %w", err)
 	}
 	countAction(&summary, defsAction)
+
+	customDefsBody := `<p>Project-specific custom detection rules — not built-in ZAP plugins. Written for this application&#39;s known attack surface.</p>` + childrenMacro()
+	customDefsID, customDefsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Custom Detections",
+		customDefsBody, rootID, hs)
+	if err != nil {
+		return summary, fmt.Errorf("upsert Custom Detections parent: %w", err)
+	}
+	countAction(&summary, customDefsAction)
 
 	// Phase 4: Parallel upsert of definition pages
 	defsDir := filepath.Join(vaultRoot, "definitions")
@@ -337,7 +353,13 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			storageBody := mdToStorageWithTitles(content, titleMap)
 			storageBody = prependDefProperties(storageBody, def)
 
-			pageID, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, title, storageBody, defsID, hs)
+			// Route custom definitions to the "Custom Detections" folder.
+			parentID := defsID
+			if def != nil && isConfluenceCustomRule(def.PluginID, def.Detection) {
+				parentID = customDefsID
+			}
+
+			pageID, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, title, storageBody, parentID, hs)
 			if uerr == nil && def != nil {
 				applyLabels(ctx, httpClient, auth, base, pageID, defLabels(def))
 			}
@@ -364,15 +386,29 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
-	// Phase 5: Create "Findings" folder page as a top-level sibling of "Definitions".
+	// Phase 5: Create "Findings" folder page as a top-level sibling of "Security Rule Definitions".
 	// Findings are parented here (not buried under individual definition pages) so they
 	// appear in the sidebar and are reachable from Quick navigation.
+	findingsBody := `<p>All active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint.</p>` + childrenMacro()
 	findingsID, findingsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Findings",
-		mdToStorage("# Findings\n\nAll active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint."), rootID, hs)
+		findingsBody, rootID, hs)
 	if err != nil {
 		return summary, fmt.Errorf("upsert Findings parent: %w", err)
 	}
 	countAction(&summary, findingsAction)
+
+	// Phase 5b: Create "Occurrences" folder page as a sibling (for flat fallback path
+	// and for consistency — hierarchical path nests occurrences under findings).
+	occurrencesBody := `<p>All occurrence instances. Each occurrence is a single observed instance of a finding at a specific URL.</p>` + childrenMacro()
+	occurrencesID, occurrencesAction, occErr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Occurrences",
+		occurrencesBody, rootID, hs)
+	if occErr != nil {
+		fmt.Printf("[confluence] error upserting Occurrences parent: %v\n", occErr)
+		summary.Errors++
+	} else {
+		countAction(&summary, occurrencesAction)
+	}
+	_ = occurrencesID // used in flat fallback path below
 
 	// Phase 6: Hierarchical export — findings under "Findings", occurrences under their finding.
 	// Falls back to flat upsertDir when entity data is absent.
@@ -601,6 +637,11 @@ func upsertOccurrencesHierarchical(
 			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
 			}
+			if uerr == nil && pageID != "" {
+				if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
+					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+				}
+			}
 			results[i] = result{action: act, err: uerr}
 		}(i, fname)
 	}
@@ -635,9 +676,17 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 		return
 	}
 
-	// Upsert parent page
-	parentContent := "# " + parentTitle + "\n\nGenerated by DevSecOps KB."
-	parentID, action, err := upsertPageCached(ctx, client, auth, base, spaceKey, parentTitle, mdToStorage(parentContent), grandParentID, hs)
+	// Upsert parent page — include children macro for findings/occurrences folders.
+	var parentStorageBody string
+	switch subdir {
+	case "findings":
+		parentStorageBody = `<p>All active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint.</p>` + childrenMacro()
+	case "occurrences":
+		parentStorageBody = `<p>All occurrence instances. Each occurrence is a single observed instance of a finding at a specific URL.</p>` + childrenMacro()
+	default:
+		parentStorageBody = mdToStorage("# " + parentTitle + "\n\nGenerated by DevSecOps KB.")
+	}
+	parentID, action, err := upsertPageCached(ctx, client, auth, base, spaceKey, parentTitle, parentStorageBody, grandParentID, hs)
 	if err != nil {
 		fmt.Printf("[confluence] error upserting %s parent: %v\n", parentTitle, err)
 		summary.Errors++
@@ -710,6 +759,11 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
 			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
+			}
+			if uerr == nil && pageID != "" && subdir == "occurrences" {
+				if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
+					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+				}
 			}
 			results[i] = result{action: act, err: uerr}
 		}(i, fname)
@@ -1882,61 +1936,100 @@ func triageStatusMacro(status string) string {
 		color, escapeAttr(strings.ToUpper(status)))
 }
 
-// prependOccurrenceProperties adds a Page Properties macro to occurrence pages.
-// Both the risk lozenge and triage status lozenge are row values inside the table.
-// CWE and OWASP taxonomy are pulled from the linked definition when available.
+// prependOccurrenceProperties adds structured metadata to occurrence pages.
+// The triage fields (Status/Owner/Risk/Rule/Finding) are wrapped in a
+// page-properties macro so Confluence indexes them for the Page Properties
+// Report macro. Informational fields (Scan, Observed, Tags, Updated) are
+// emitted as a plain table below the macro.
 func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex) string {
 	if o == nil {
 		return storageBody
 	}
-	var props [][2]string
-	props = append(props, [2]string{"Risk", riskStatusMacro(o.Risk)})
-	props = append(props, [2]string{"Confidence", escapeHTML(o.Confidence)})
+
+	def := ei.defByID(o.DefinitionID)
+
+	// --- Triage metadata: page-properties macro (indexed by Confluence) ---
+	status := "open"
+	owner := ""
+	if o.Analyst != nil {
+		if o.Analyst.Status != "" {
+			status = o.Analyst.Status
+		}
+		owner = o.Analyst.Owner
+	}
+	ruleName := ""
+	if def != nil {
+		ruleName = firstNonEmptyStr(def.Alert, def.Name)
+	}
+
+	// Finding link — derive page title from the finding entity
+	findingLink := ""
+	if o.FindingID != "" {
+		f := ei.finds[o.FindingID]
+		fTitle := findingPageTitle(f, ei)
+		if fTitle != "" {
+			findingLink = fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s" /></ac:link>`, escapeAttr(fTitle))
+		}
+	}
+
+	var triageMacro strings.Builder
+	triageMacro.WriteString(`<ac:structured-macro ac:name="page-properties" ac:schema-version="1">`)
+	triageMacro.WriteString(`<ac:parameter ac:name="id">triage-metadata</ac:parameter>`)
+	triageMacro.WriteString(`<ac:rich-text-body>`)
+	triageMacro.WriteString(`<table><tbody>`)
+	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Status</th><td>%s</td></tr>`, escapeHTML(status)))
+	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Owner</th><td>%s</td></tr>`, escapeHTML(owner)))
+	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Risk</th><td>%s</td></tr>`, escapeHTML(o.Risk)))
+	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Rule</th><td>%s</td></tr>`, escapeHTML(ruleName)))
+	triageMacro.WriteString(fmt.Sprintf(`<tr><th>Finding</th><td>%s</td></tr>`, findingLink))
+	triageMacro.WriteString(`</tbody></table>`)
+	triageMacro.WriteString(`</ac:rich-text-body>`)
+	triageMacro.WriteString(`</ac:structured-macro>`)
+
+	// Edit instruction
+	editInstruction := `<p><em>To triage: <strong>Edit this page</strong> → update Status in the table above → Save. Valid values: open | triaged | fp | accepted | fixed</em></p>`
+
+	// --- Informational plain table ---
+	var infoProps [][2]string
+	infoProps = append(infoProps, [2]string{"Confidence", escapeHTML(o.Confidence)})
 
 	// Definition link + taxonomy (CWE, OWASP) from the parent definition
-	def := ei.defByID(o.DefinitionID)
 	if def != nil {
 		defTitle := firstNonEmptyStr(def.Alert, def.Name)
 		if defTitle != "" {
 			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
 				escapeAttr(defTitle), defTitle)
-			props = append(props, [2]string{"Definition", defLink})
+			infoProps = append(infoProps, [2]string{"Definition", defLink})
 		}
 		if def.Taxonomy != nil {
 			if def.Taxonomy.CWEID > 0 {
 				cweLink := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
-				props = append(props, [2]string{"CWE", cweLink})
+				infoProps = append(infoProps, [2]string{"CWE", cweLink})
 			}
 			if len(def.Taxonomy.OWASPTop10) > 0 {
-				props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
+				infoProps = append(infoProps, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
 			}
 		}
 	}
 
 	// Source tool (derived from definition tags)
 	if src := sourceToolFromDef(def); src != "" {
-		props = append(props, [2]string{"Source Tool", escapeHTML(src)})
+		infoProps = append(infoProps, [2]string{"Source Tool", escapeHTML(src)})
 	}
 
-	props = append(props, [2]string{"URL", escapeHTML(o.URL)})
+	infoProps = append(infoProps, [2]string{"URL", escapeHTML(o.URL)})
 	if o.Param != "" {
-		props = append(props, [2]string{"Parameter", escapeHTML(o.Param)})
+		infoProps = append(infoProps, [2]string{"Parameter", escapeHTML(o.Param)})
 	}
 	if o.ScanLabel != "" {
-		props = append(props, [2]string{"Scan", escapeHTML(o.ScanLabel)})
+		infoProps = append(infoProps, [2]string{"Scan", escapeHTML(o.ScanLabel)})
 	}
 	if o.ObservedAt != "" {
-		props = append(props, [2]string{"Observed", escapeHTML(o.ObservedAt)})
+		infoProps = append(infoProps, [2]string{"Observed", escapeHTML(o.ObservedAt)})
 	}
 
-	// Analyst triage metadata — Status lozenge replaces the plain-text "Status" row
+	// Analyst supplementary fields (ticket refs, notes, tags, updated)
 	if o.Analyst != nil {
-		if o.Analyst.Status != "" {
-			props = append(props, [2]string{"Status", triageStatusMacro(o.Analyst.Status)})
-		}
-		if o.Analyst.Owner != "" {
-			props = append(props, [2]string{"Owner", escapeHTML(o.Analyst.Owner)})
-		}
 		if len(o.Analyst.TicketRefs) > 0 {
 			var links []string
 			for _, ref := range o.Analyst.TicketRefs {
@@ -1946,27 +2039,72 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 					links = append(links, escapeHTML(ref))
 				}
 			}
-			props = append(props, [2]string{"Tickets", strings.Join(links, ", ")})
+			infoProps = append(infoProps, [2]string{"Tickets", strings.Join(links, ", ")})
 		}
 		if o.Analyst.Notes != "" {
 			notesLabel := "Notes"
 			if strings.EqualFold(strings.TrimSpace(o.Analyst.Status), "accept-risk") {
 				notesLabel = "Accepted Reason"
 			}
-			props = append(props, [2]string{notesLabel, escapeHTML(o.Analyst.Notes)})
+			infoProps = append(infoProps, [2]string{notesLabel, escapeHTML(o.Analyst.Notes)})
 		}
 		if len(o.Analyst.Tags) > 0 {
-			props = append(props, [2]string{"Tags", escapeHTML(strings.Join(o.Analyst.Tags, ", "))})
+			infoProps = append(infoProps, [2]string{"Tags", escapeHTML(strings.Join(o.Analyst.Tags, ", "))})
 		}
 		if o.Analyst.UpdatedAt != "" {
-			props = append(props, [2]string{"Updated", escapeHTML(o.Analyst.UpdatedAt)})
+			infoProps = append(infoProps, [2]string{"Updated", escapeHTML(o.Analyst.UpdatedAt)})
 		}
 	}
 
-	return pagePropertiesMacro(props) + storageBody
+	var infoTable strings.Builder
+	infoTable.WriteString(`<table><tbody>`)
+	for _, kv := range infoProps {
+		infoTable.WriteString("<tr><th>")
+		infoTable.WriteString(escapeHTML(kv[0]))
+		infoTable.WriteString("</th><td>")
+		infoTable.WriteString(kv[1])
+		infoTable.WriteString("</td></tr>")
+	}
+	infoTable.WriteString(`</tbody></table>`)
+
+	return triageMacro.String() + editInstruction + infoTable.String() + storageBody
 }
 
 // --- Confluence Labels API ---
+
+// addPageLabel adds a single label to a Confluence page (best-effort).
+// Errors are logged but not returned so a label failure never blocks export.
+func addPageLabel(ctx context.Context, client httpDoer, auth, base, pageID, label string) error {
+	if pageID == "" || label == "" {
+		return nil
+	}
+	label = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(label, " ", "-")))
+	if len(label) > 255 {
+		label = label[:255]
+	}
+	type labelEntry struct {
+		Prefix string `json:"prefix"`
+		Name   string `json:"name"`
+	}
+	payload := []labelEntry{{Prefix: "global", Name: label}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/content/"+pageID+"/label", bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", auth)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	return nil
+}
 
 // applyLabels adds labels to a Confluence page via the Labels API.
 // Errors are logged but not returned (best-effort).
@@ -2052,4 +2190,23 @@ func occurrenceLabels(o *entities.Occurrence) []string {
 		labels = append(labels, "status-"+o.Analyst.Status)
 	}
 	return labels
+}
+
+// isConfluenceCustomRule returns true when a definition is a project-specific custom
+// rule rather than a built-in ZAP plugin. Mirrors the obsidian isCustomRule logic.
+func isConfluenceCustomRule(pluginID string, det *entities.Detection) bool {
+	if strings.HasPrefix(pluginID, "zap-") {
+		return true
+	}
+	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
+		return true
+	}
+	if det == nil {
+		for _, r := range pluginID {
+			if r < '0' || r > '9' {
+				return true
+			}
+		}
+	}
+	return false
 }

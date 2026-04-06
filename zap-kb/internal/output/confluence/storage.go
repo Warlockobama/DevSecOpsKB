@@ -642,6 +642,30 @@ func wikilinkToTitle(path string) string {
 	return base
 }
 
+// pagePropertiesReportMacro returns a Confluence Page Properties Report macro that
+// queries all pages with the kb-occurrence label in the given space.
+func pagePropertiesReportMacro(spaceKey string) string {
+	return fmt.Sprintf(
+		`<ac:structured-macro ac:name="page-properties-report" ac:schema-version="1">`+
+			`<ac:parameter ac:name="spaceKey">%s</ac:parameter>`+
+			`<ac:parameter ac:name="label">kb-occurrence</ac:parameter>`+
+			`<ac:parameter ac:name="headings">Status,Owner,Risk,Rule,Finding</ac:parameter>`+
+			`<ac:parameter ac:name="sortBy">Risk</ac:parameter>`+
+			`</ac:structured-macro>`,
+		escapeAttr(spaceKey),
+	)
+}
+
+// childrenMacro returns a Confluence Children macro that auto-lists child pages
+// sorted by title, showing all pages at depth 1.
+func childrenMacro() string {
+	return `<ac:structured-macro ac:name="children" ac:schema-version="1">` +
+		`<ac:parameter ac:name="sort">title</ac:parameter>` +
+		`<ac:parameter ac:name="depth">1</ac:parameter>` +
+		`<ac:parameter ac:name="all">true</ac:parameter>` +
+		`</ac:structured-macro>`
+}
+
 // riskStatusMacro returns a Confluence status lozenge macro for the given risk level.
 func riskStatusMacro(risk string) string {
 	color := "Grey"
