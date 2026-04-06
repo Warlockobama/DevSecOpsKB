@@ -1082,11 +1082,24 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 
 		b.WriteString("\n### Checklist\n\n")
-		b.WriteString("- [ ] Triage\n")
-		b.WriteString("- [ ] Validate\n")
-		b.WriteString("- [ ] File ticket\n")
-		b.WriteString("- [ ] Fix verified\n")
-		b.WriteString("- [ ] Close\n")
+		steps := []struct {
+			label string
+			done  bool
+		}{
+			{"Triage", aStatus == "triaged" || aStatus == "accepted" || aStatus == "fixed" || aStatus == "fp"},
+			{"Validate", aStatus == "accepted" || aStatus == "fixed"},
+			{"File ticket", aStatus == "accepted" || aStatus == "fixed"},
+			{"Fix verified", aStatus == "fixed"},
+			{"Close", aStatus == "fixed"},
+		}
+		for _, step := range steps {
+			mark := "[ ]"
+			if step.done {
+				mark = "[x]"
+			}
+			fmt.Fprintf(&b, "- %s %s\n", mark, step.label)
+		}
+		b.WriteString("\n_Update Status in the Workflow section above, then run `zap-kb pull` to sync back to entities.json._\n")
 		// Governance prompts
 		b.WriteString("\n### Governance\n\n")
 		b.WriteString("- False positive reason: \n")

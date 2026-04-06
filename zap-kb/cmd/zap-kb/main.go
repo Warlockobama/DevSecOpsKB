@@ -156,6 +156,10 @@ func main() {
 		runReportCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "pull" {
+		runPullCommand(os.Args[2:])
+		return
+	}
 
 	flag.Parse()
 
@@ -840,4 +844,102 @@ func runMergeCommand(args []string) {
 	// Summary to stderr.
 	fmt.Fprintf(os.Stderr, "Merged %d files: %d definitions, %d findings, %d occurrences\n",
 		len(paths), len(merged.Definitions), len(merged.Findings), len(merged.Occurrences))
+}
+
+// runPullCommand implements the "pull" sub-command: reads analyst triage fields
+// FROM existing Confluence occurrence pages INTO entities.json.
+//
+// Usage:
+//
+//	zap-kb pull -entities-in <path> -out <path> \
+//	    -confluence-url <url> -confluence-space <key> \
+//	    [-confluence-user <user>] [-confluence-token <token>]
+func runPullCommand(args []string) {
+	fs := flag.NewFlagSet("pull", flag.ExitOnError)
+	var (
+		entitiesIn string
+		outPath    string
+		confURL    string
+		confSpace  string
+		confUser   string
+		confToken  string
+	)
+	fs.StringVar(&entitiesIn, "entities-in", "", "Entities JSON file to read and update (required)")
+	fs.StringVar(&outPath, "out", "", "Output path for updated entities JSON (required)")
+	fs.StringVar(&confURL, "confluence-url", "", "Confluence base URL (required)")
+	fs.StringVar(&confSpace, "confluence-space", "", "Confluence space key (required)")
+	fs.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER)")
+	fs.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Environment variable fallbacks for credentials.
+	envFallback := func(p *string, envKey string) {
+		if strings.TrimSpace(*p) == "" {
+			if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+				*p = v
+			}
+		}
+	}
+	envFallback(&confUser, "CONFLUENCE_USER")
+	envFallback(&confToken, "CONFLUENCE_TOKEN")
+
+	if strings.TrimSpace(entitiesIn) == "" {
+		fmt.Fprintln(os.Stderr, "pull: -entities-in is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if strings.TrimSpace(outPath) == "" {
+		fmt.Fprintln(os.Stderr, "pull: -out is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if strings.TrimSpace(confURL) == "" || strings.TrimSpace(confSpace) == "" {
+		fmt.Fprintln(os.Stderr, "pull: -confluence-url and -confluence-space are required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	// Read existing entities file.
+	art, err := runartifact.ReadFlexible(strings.TrimSpace(entitiesIn))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pull: cannot read %q: %v\n", entitiesIn, err)
+		os.Exit(1)
+	}
+	ef := art.Entities
+
+	ctx := context.Background()
+	updated, res, err := confluence.PullAnalystData(ctx, ef, confluence.PullOptions{
+		BaseURL:  strings.TrimSpace(confURL),
+		SpaceKey: strings.TrimSpace(confSpace),
+		Username: strings.TrimSpace(confUser),
+		Token:    strings.TrimSpace(confToken),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Write the updated entities file.
+	enc, err := json.MarshalIndent(updated, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pull: encode: %v\n", err)
+		os.Exit(1)
+	}
+	if werr := os.WriteFile(strings.TrimSpace(outPath), append(enc, '\n'), 0o644); werr != nil {
+		fmt.Fprintf(os.Stderr, "pull: write %q: %v\n", outPath, werr)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Pull complete: %d occurrences updated, %d unchanged", res.Updated, res.Unchanged)
+	if res.NotFound > 0 {
+		fmt.Printf(", %d not found in Confluence", res.NotFound)
+	}
+	if res.Errors > 0 {
+		fmt.Printf(", %d errors", res.Errors)
+	}
+	fmt.Println()
+
 }
