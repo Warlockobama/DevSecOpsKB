@@ -82,8 +82,11 @@ func main() {
 		jiraComponent      string
 		jiraLabels         string
 		jiraMinRisk        string
+		jiraOptInTag       string
 		jiraDryRun         bool
 		jiraConcurrency    int
+		allowAgentPublish  bool
+		allowCustomPublish bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
@@ -143,9 +146,12 @@ func main() {
 	flag.StringVar(&jiraIssueType, "jira-issue-type", "Bug", "Jira issue type (default: Bug).")
 	flag.StringVar(&jiraComponent, "jira-component", "", "Optional Jira component name to assign.")
 	flag.StringVar(&jiraLabels, "jira-labels", "", "Comma-separated extra labels to add to each issue.")
-	flag.StringVar(&jiraMinRisk, "jira-min-risk", "low", "Minimum risk level to export: info|low|medium|high (default: low).")
+	flag.StringVar(&jiraMinRisk, "jira-min-risk", "medium", "Minimum risk level to export: info|low|medium|high (default: medium).")
+	flag.StringVar(&jiraOptInTag, "jira-opt-in-tag", "case-ticket", "Analyst tag that forces Jira export for lower-severity findings.")
 	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
 	flag.IntVar(&jiraConcurrency, "jira-concurrency", 3, "Max parallel Jira API requests (default: 3, max: 5).")
+	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
+	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	// Sub-command dispatch: if the first argument is "merge", run the merge
 	// sub-command with its own flag set and exit without touching the global flags.
 	if len(os.Args) > 1 && os.Args[1] == "merge" {
@@ -261,17 +267,26 @@ func main() {
 	}
 
 	var (
-		client *zapclient.Client
-		alerts []zapclient.Alert
-		entIn  entities.EntitiesFile
-		err    error
+		client          *zapclient.Client
+		alerts          []zapclient.Alert
+		entIn           entities.EntitiesFile
+		runInArtifact   runartifact.Artifact
+		runInIsArtifact bool
+		err             error
 	)
-
 	// If -run-in is provided, load entities and default labels/meta from it.
 	if strings.TrimSpace(runIn) != "" {
-		a, rerr := runartifact.ReadFlexible(runIn)
-		if rerr != nil {
-			log.Fatalf("read -run-in: %v", rerr)
+		var a runartifact.Artifact
+		if strict, serr := runartifact.Read(runIn); serr == nil && strings.TrimSpace(strict.Entities.SchemaVersion) != "" {
+			a = strict
+			runInArtifact = strict
+			runInIsArtifact = true
+		} else {
+			var rerr error
+			a, rerr = runartifact.ReadFlexible(runIn)
+			if rerr != nil {
+				log.Fatalf("read -run-in: %v", rerr)
+			}
 		}
 		entIn = a.Entities
 		if len(a.Alerts) > 0 {
@@ -288,7 +303,6 @@ func main() {
 			zapBase = a.Meta.ZapBaseURL
 		}
 	}
-
 	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer fetchCancel()
 
@@ -495,6 +509,11 @@ func main() {
 			entities.RedactEntities(&ent, ro)
 		}
 
+		// Normalize tool/custom definition origin and analyst status once before
+		// any output/render step so every surface uses the KB's canonical model.
+		entities.NormalizeDefinitionOrigins(&ent)
+		entities.NormalizeAnalystStatuses(&ent)
+
 		// Print a concise init/enrich summary when not fetching alerts
 		if fetchAllowed == false { // enrich-only / init flows
 			// detection stats
@@ -533,54 +552,38 @@ func main() {
 			log.Fatalf("write json entities: %v", err)
 		}
 	case "obsidian":
-		if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
+		if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, nil, ""); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
 	default:
 		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
 	}
 
-	// Optional Confluence export — runs after vault is written (writes vault first if needed)
-	if strings.TrimSpace(confURL) != "" {
-		// Ensure vault exists on disk (may have been written above in obsidian case, or write now)
-		if format != "obsidian" {
-			if err := obsidian.WriteVault(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
-				log.Fatalf("write obsidian for confluence: %v", err)
-			}
-		}
-		if confFull {
-			confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer confCancel()
-			sum, cerr := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
-				BaseURL:     confURL,
-				Username:    confUser,
-				APIToken:    confToken,
-				SpaceKey:    confSpace,
-				DryRun:      confDryRun,
-				Concurrency: confConcurrency,
-				Entities:    &ent,
-			})
-			if cerr != nil {
-				log.Fatalf("confluence vault export: %v", cerr)
-			}
-			fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n",
-				sum.Created, sum.Updated, sum.Skipped, sum.Errors)
-		} else {
-			confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer confCancel()
-			if err := confluence.Export(confCtx, vault, confluence.Options{
-				BaseURL:      confURL,
-				Username:     confUser,
-				APIToken:     confToken,
-				SpaceKey:     confSpace,
-				ParentPageID: confParent,
-				TitlePrefix:  confTitlePrefix,
-				MarkdownPage: "INDEX.md",
-				DryRun:       confDryRun,
-			}); err != nil {
-				log.Fatalf("confluence export: %v", err)
-			}
-			fmt.Println("Exported INDEX.md to Confluence")
+	if err := validatePublishSource(ent, strings.TrimSpace(confURL) != "", strings.TrimSpace(jiraURL) != "", allowAgentPublish, allowCustomPublish); err != nil {
+		log.Fatalf("publish source: %v", err)
+	}
+
+	// Optional Confluence export - when Jira is also enabled, publish after Jira
+	// keys are merged so finding pages and evidence pages stay in sync.
+	if strings.TrimSpace(confURL) != "" && strings.TrimSpace(jiraURL) == "" {
+		if _, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
+			BaseURL:          confURL,
+			Username:         confUser,
+			APIToken:         confToken,
+			SpaceKey:         confSpace,
+			ParentPageID:     confParent,
+			TitlePrefix:      confTitlePrefix,
+			DryRun:           confDryRun,
+			Full:             confFull,
+			Concurrency:      confConcurrency,
+			ScanLabel:        scanLabel,
+			SiteLabel:        siteLabel,
+			ZapBaseURL:       zapBase,
+			JiraBaseURL:      jiraURL,
+			JiraStatusByKey:  nil,
+			JiraStatusSynced: "",
+		}); err != nil {
+			log.Fatalf("%v", err)
 		}
 	}
 
@@ -605,6 +608,7 @@ func main() {
 			Component:   jiraComponent,
 			ExtraLabels: extraLabels,
 			MinRisk:     jiraMinRisk,
+			OptInTag:    jiraOptInTag,
 			DryRun:      jiraDryRun,
 			Concurrency: jiraConcurrency,
 		})
@@ -612,8 +616,93 @@ func main() {
 			log.Fatalf("jira export: %v", err)
 		}
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d\n", sum.Created, sum.Skipped, sum.Errors)
-	}
 
+		addedTicketKeys := 0
+		jiraStatusByKey := map[string]string(nil)
+		jiraStatusSynced := ""
+		if !jiraDryRun && len(sum.TicketKeys) > 0 {
+			addedTicketKeys = mergeFindingTicketKeys(&ent, sum.TicketKeys)
+		}
+		if !jiraDryRun && hasFindingTicketRefs(ent) {
+			pullCtx, pullCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer pullCancel()
+			pullRes, pullErr := jira.PullStatus(pullCtx, ent, jira.PullOptions{
+				BaseURL:  jiraURL,
+				Username: jiraUser,
+				Token:    jiraToken,
+			})
+			if pullErr != nil {
+				log.Printf("warning: jira status pull failed: %v", pullErr)
+			} else {
+				ent = pullRes.Updated
+				jiraStatusByKey = pullRes.RawStatuses
+				jiraStatusSynced = pullRes.SyncedAt
+				fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d errors=%d\n",
+					pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+			}
+		}
+		if !jiraDryRun && (addedTicketKeys > 0 || hasFindingTicketRefs(ent)) {
+			var artPtr *runartifact.Artifact
+			if runInIsArtifact {
+				artPtr = &runInArtifact
+			}
+			savePath, werr := persistJiraEntities(jiraSyncContext{
+				Format:           format,
+				Out:              out,
+				EntitiesIn:       entitiesIn,
+				RunIn:            runIn,
+				RunInputArtifact: artPtr,
+			}, ent)
+			if werr != nil {
+				log.Printf("warning: could not save Jira state to entities file: %v", werr)
+			} else if savePath != "" {
+				fmt.Printf("Jira: wrote current ticket/state data to %s\n", savePath)
+			}
+		}
+		if format == "obsidian" && !jiraDryRun && hasFindingTicketRefs(ent) {
+			if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, jiraStatusByKey, jiraStatusSynced); err != nil {
+				log.Fatalf("rewrite obsidian after jira: %v", err)
+			}
+		}
+
+		if strings.TrimSpace(confURL) != "" {
+			confSum, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
+				BaseURL:          confURL,
+				Username:         confUser,
+				APIToken:         confToken,
+				SpaceKey:         confSpace,
+				ParentPageID:     confParent,
+				TitlePrefix:      confTitlePrefix,
+				DryRun:           confDryRun,
+				Full:             confFull,
+				Concurrency:      confConcurrency,
+				ScanLabel:        scanLabel,
+				SiteLabel:        siteLabel,
+				ZapBaseURL:       zapBase,
+				JiraBaseURL:      jiraURL,
+				JiraStatusByKey:  jiraStatusByKey,
+				JiraStatusSynced: jiraStatusSynced,
+			})
+			if err != nil {
+				log.Fatalf("%v", err)
+			}
+			if !jiraDryRun && len(sum.TicketKeys) > 0 && len(confSum.FindingLinks) > 0 {
+				linkCtx, linkCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer linkCancel()
+				linkSum, lerr := jira.SyncFindingEvidenceLinks(linkCtx, sum.TicketKeys, confSum.FindingLinks, jira.Options{
+					BaseURL:     jiraURL,
+					Username:    jiraUser,
+					APIToken:    jiraToken,
+					Concurrency: jiraConcurrency,
+				})
+				if lerr != nil {
+					log.Printf("warning: jira evidence link sync failed: %v", lerr)
+				} else {
+					fmt.Printf("Jira evidence links: added=%d skipped=%d errors=%d\n", linkSum.Added, linkSum.Skipped, linkSum.Errors)
+				}
+			}
+		}
+	}
 	// Optional report generation (vault-wide, time-bounded)
 	if strings.TrimSpace(reportOut) != "" {
 		if format != "obsidian" {
@@ -853,23 +942,34 @@ func runMergeCommand(args []string) {
 //
 //	zap-kb pull -entities-in <path> -out <path> \
 //	    -confluence-url <url> -confluence-space <key> \
-//	    [-confluence-user <user>] [-confluence-token <token>]
+//	    [-confluence-user <user>] [-confluence-token <token>] \
+//	    [-confluence-pull-workflow]
 func runPullCommand(args []string) {
 	fs := flag.NewFlagSet("pull", flag.ExitOnError)
 	var (
-		entitiesIn string
-		outPath    string
-		confURL    string
-		confSpace  string
-		confUser   string
-		confToken  string
+		entitiesIn       string
+		outPath          string
+		confURL          string
+		confSpace        string
+		confUser         string
+		confToken        string
+		confPullWorkflow bool
+		jiraURL          string
+		jiraUser         string
+		jiraToken        string
+		jiraPullStatus   bool
 	)
 	fs.StringVar(&entitiesIn, "entities-in", "", "Entities JSON file to read and update (required)")
 	fs.StringVar(&outPath, "out", "", "Output path for updated entities JSON (required)")
-	fs.StringVar(&confURL, "confluence-url", "", "Confluence base URL (required)")
-	fs.StringVar(&confSpace, "confluence-space", "", "Confluence space key (required)")
+	fs.StringVar(&confURL, "confluence-url", "", "Confluence base URL")
+	fs.StringVar(&confSpace, "confluence-space", "", "Confluence space key")
 	fs.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER)")
 	fs.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN)")
+	fs.BoolVar(&confPullWorkflow, "confluence-pull-workflow", false, "Allow Confluence workflow fields to overwrite local analyst data during pull")
+	fs.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables Jira status pull)")
+	fs.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER)")
+	fs.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN)")
+	fs.BoolVar(&jiraPullStatus, "jira-pull-status", false, "Pull Jira ticket status into analyst.Status (Jira wins)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
 		os.Exit(1)
@@ -885,6 +985,8 @@ func runPullCommand(args []string) {
 	}
 	envFallback(&confUser, "CONFLUENCE_USER")
 	envFallback(&confToken, "CONFLUENCE_TOKEN")
+	envFallback(&jiraUser, "JIRA_USER")
+	envFallback(&jiraToken, "JIRA_API_TOKEN")
 
 	if strings.TrimSpace(entitiesIn) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -entities-in is required")
@@ -896,8 +998,17 @@ func runPullCommand(args []string) {
 		fs.Usage()
 		os.Exit(1)
 	}
-	if strings.TrimSpace(confURL) == "" || strings.TrimSpace(confSpace) == "" {
-		fmt.Fprintln(os.Stderr, "pull: -confluence-url and -confluence-space are required")
+
+	// Require at least one pull source.
+	wantConf := strings.TrimSpace(confURL) != ""
+	wantJira := strings.TrimSpace(jiraURL) != "" && jiraPullStatus
+	if !wantConf && !wantJira {
+		fmt.Fprintln(os.Stderr, "pull: specify -confluence-url/-confluence-space or -jira-url -jira-pull-status")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if wantConf && strings.TrimSpace(confSpace) == "" {
+		fmt.Fprintln(os.Stderr, "pull: -confluence-space is required when -confluence-url is set")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -909,21 +1020,44 @@ func runPullCommand(args []string) {
 		os.Exit(1)
 	}
 	ef := art.Entities
-
 	ctx := context.Background()
-	updated, res, err := confluence.PullAnalystData(ctx, ef, confluence.PullOptions{
-		BaseURL:  strings.TrimSpace(confURL),
-		SpaceKey: strings.TrimSpace(confSpace),
-		Username: strings.TrimSpace(confUser),
-		Token:    strings.TrimSpace(confToken),
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
-		os.Exit(1)
+
+	// Jira status pull (runs first so Confluence pull can layer on top).
+	if wantJira {
+		jRes, jErr := jira.PullStatus(ctx, ef, jira.PullOptions{
+			BaseURL:  strings.TrimSpace(jiraURL),
+			Username: strings.TrimSpace(jiraUser),
+			Token:    strings.TrimSpace(jiraToken),
+		})
+		if jErr != nil {
+			fmt.Fprintf(os.Stderr, "pull: jira: %v\n", jErr)
+			os.Exit(1)
+		}
+		ef = jRes.Updated
+		fmt.Printf("Jira pull: %d updated, %d unchanged, %d not found, %d errors\n",
+			jRes.Result.Updated, jRes.Result.Unchanged, jRes.Result.NotFound, jRes.Result.Errors)
+	}
+
+	// Confluence workflow pull (optional).
+	if wantConf {
+		updated, res, cErr := confluence.PullAnalystData(ctx, ef, confluence.PullOptions{
+			BaseURL:      strings.TrimSpace(confURL),
+			SpaceKey:     strings.TrimSpace(confSpace),
+			Username:     strings.TrimSpace(confUser),
+			Token:        strings.TrimSpace(confToken),
+			PullWorkflow: confPullWorkflow,
+		})
+		if cErr != nil {
+			fmt.Fprintf(os.Stderr, "pull: confluence: %v\n", cErr)
+			os.Exit(1)
+		}
+		ef = updated
+		fmt.Printf("Confluence pull: %d updated, %d unchanged, %d not found, %d errors\n",
+			res.Updated, res.Unchanged, res.NotFound, res.Errors)
 	}
 
 	// Write the updated entities file.
-	enc, err := json.MarshalIndent(updated, "", "  ")
+	enc, err := json.MarshalIndent(ef, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pull: encode: %v\n", err)
 		os.Exit(1)
@@ -932,14 +1066,5 @@ func runPullCommand(args []string) {
 		fmt.Fprintf(os.Stderr, "pull: write %q: %v\n", outPath, werr)
 		os.Exit(1)
 	}
-
-	fmt.Printf("Pull complete: %d occurrences updated, %d unchanged", res.Updated, res.Unchanged)
-	if res.NotFound > 0 {
-		fmt.Printf(", %d not found in Confluence", res.NotFound)
-	}
-	if res.Errors > 0 {
-		fmt.Printf(", %d errors", res.Errors)
-	}
-	fmt.Println()
-
+	fmt.Printf("Written: %s\n", outPath)
 }

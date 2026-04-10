@@ -47,12 +47,12 @@ func TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus(t *testing.T) {
 	ef := minimalEF(occID)
 
 	// First write — no analyst status yet.
-	if err := WriteVault(root, ef, Options{}); err != nil {
+	if err := WriteVault(root, ef, Options{CarryForwardOccurrenceMeta: true}); err != nil {
 		t.Fatalf("first WriteVault: %v", err)
 	}
 
 	// Inject analyst.status directly into the written occurrence file,
-	// simulating an analyst triaging inside Obsidian.
+	// simulating an analyst triaging inside Obsidian with a legacy alias.
 	occDir := filepath.Join(root, "occurrences")
 	entries, err := os.ReadDir(occDir)
 	if err != nil {
@@ -78,8 +78,8 @@ func TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus(t *testing.T) {
 		t.Fatalf("ReadFile occurrence: %v", err)
 	}
 
-	// Replace the existing analyst.status value in the frontmatter with "confirm",
-	// simulating an analyst triaging the occurrence inside Obsidian.
+	// Replace the existing analyst.status value in the frontmatter with the legacy
+	// alias "confirm"; the rewritten file should canonicalize it to "triaged".
 	content := string(raw)
 	if !strings.HasPrefix(content, "---") {
 		t.Fatal("occurrence file does not start with YAML frontmatter delimiter")
@@ -87,7 +87,7 @@ func TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus(t *testing.T) {
 	if !strings.Contains(content, "analyst.status:") {
 		t.Fatal("occurrence file frontmatter does not contain analyst.status key")
 	}
-	// Replace whatever value analyst.status currently holds with "confirm".
+	// Replace whatever value analyst.status currently holds with the legacy alias "confirm".
 	re := strings.NewReplacer(
 		`analyst.status: "open"`, `analyst.status: confirm`,
 		`analyst.status: open`, `analyst.status: confirm`,
@@ -103,7 +103,7 @@ func TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus(t *testing.T) {
 	// Second WriteVault — same entities, no Analyst field set in the struct.
 	// loadOccurrenceMeta must run before RemoveAll; otherwise the injected
 	// analyst.status will be lost.
-	if err := WriteVault(root, ef, Options{}); err != nil {
+	if err := WriteVault(root, ef, Options{CarryForwardOccurrenceMeta: true}); err != nil {
 		t.Fatalf("second WriteVault: %v", err)
 	}
 
@@ -130,8 +130,56 @@ func TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus(t *testing.T) {
 
 	// writeYAML quotes string values, so we accept both quoted and unquoted forms.
 	out2 := string(raw2)
-	if !strings.Contains(out2, `analyst.status: "confirm"`) && !strings.Contains(out2, "analyst.status: confirm") {
-		t.Errorf("expected analyst.status: confirm in re-written occurrence frontmatter, got:\n%s", out2)
+	if !strings.Contains(out2, `analyst.status: "triaged"`) && !strings.Contains(out2, "analyst.status: triaged") {
+		t.Errorf("expected analyst.status to be canonicalized to triaged in re-written occurrence frontmatter, got:\n%s", out2)
+	}
+}
+
+func TestWriteVault_DefaultDoesNotCarryForwardOccurrenceMeta(t *testing.T) {
+	root := t.TempDir()
+	const occID = "occ-no-carry-test"
+
+	ef := minimalEF(occID)
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("first WriteVault: %v", err)
+	}
+
+	occDir := filepath.Join(root, "occurrences")
+	entries, err := os.ReadDir(occDir)
+	if err != nil {
+		t.Fatalf("ReadDir occurrences: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected at least one occurrence file after first WriteVault")
+	}
+
+	occFile := filepath.Join(occDir, entries[0].Name())
+	raw, err := os.ReadFile(occFile)
+	if err != nil {
+		t.Fatalf("ReadFile occurrence: %v", err)
+	}
+	content := strings.NewReplacer(
+		`analyst.status: "open"`, `analyst.status: confirm`,
+		`analyst.status: open`, `analyst.status: confirm`,
+	).Replace(string(raw))
+	if err := os.WriteFile(occFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile inject analyst.status: %v", err)
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("second WriteVault: %v", err)
+	}
+
+	raw2, err := os.ReadFile(filepath.Join(occDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile after second WriteVault: %v", err)
+	}
+	out2 := string(raw2)
+	if strings.Contains(out2, `analyst.status: "triaged"`) || strings.Contains(out2, "analyst.status: triaged") {
+		t.Fatalf("expected stale analyst status to be dropped when carry-forward is disabled, got:\n%s", out2)
+	}
+	if !strings.Contains(out2, `analyst.status: "open"`) && !strings.Contains(out2, "analyst.status: open") {
+		t.Fatalf("expected default open status after rebuild, got:\n%s", out2)
 	}
 }
 
@@ -171,7 +219,7 @@ func TestWriteVault_HappyPath(t *testing.T) {
 		occIDs []string
 	}{
 		{
-			name:   "two occurrences one open one confirmed",
+			name:   "two occurrences one open one canonicalized triaged",
 			occIDs: []string{"occ-happyaaa", "occ-happybbb"},
 		},
 	}
@@ -608,12 +656,12 @@ func TestWriteVault_DefinitionTruncationLink(t *testing.T) {
 	}
 }
 
-// --- Issue #46: defaultBodyTruncateBytes = 1024 ---
+// --- Issue #46: defaultBodyTruncateBytes ---
 
-// TestDefaultBodyTruncateBytes verifies the constant value is 1024.
+// TestDefaultBodyTruncateBytes verifies the constant value is 4096.
 func TestDefaultBodyTruncateBytes(t *testing.T) {
-	if defaultBodyTruncateBytes != 1024 {
-		t.Errorf("defaultBodyTruncateBytes = %d, want 1024", defaultBodyTruncateBytes)
+	if defaultBodyTruncateBytes != 4096 {
+		t.Errorf("defaultBodyTruncateBytes = %d, want 4096", defaultBodyTruncateBytes)
 	}
 }
 
@@ -842,5 +890,257 @@ func TestWriteVault_CustomRuleDefinitionHasCallout(t *testing.T) {
 	}
 	if !strings.Contains(body, "project-specific detection rule") {
 		t.Errorf("definition page for custom pluginID %q missing callout body text:\n%s", customPluginID, body)
+	}
+}
+
+func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
+	root := t.TempDir()
+	findingAnalyst := &entities.Analyst{
+		Status:     "triaged",
+		Owner:      "James",
+		Tags:       []string{"internet-facing", "case-ticket"},
+		Notes:      "Use Jira as the workflow source of truth.",
+		TicketRefs: []string{"SEC-42"},
+		UpdatedAt:  "2026-04-06T14:00:00Z",
+	}
+	occAnalyst := &entities.Analyst{Status: "open", TicketRefs: []string{"LEGACY-1"}}
+	def := entities.Definition{DefinitionID: "def-flow", PluginID: "10038", Alert: "CSP Header Not Set"}
+	finding := entities.Finding{
+		FindingID:    "find-flow",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/api/login",
+		Method:       "GET",
+		Risk:         "Medium",
+		Analyst:      findingAnalyst,
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-flow",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		Analyst:      occAnalyst,
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{JiraBaseURL: "https://example.atlassian.net/jira/software/projects/KAN", JiraStatusByKey: map[string]string{"SEC-42": "In Review", "LEGACY-1": "To Do"}, JiraStatusSynced: "2026-04-08T21:00:00Z"}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(root, "findings"))
+	if err != nil {
+		t.Fatalf("ReadDir findings: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 finding page, got %d", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(root, "findings", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile finding page: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		"- Status: Triaged (open:1)",
+		"- Owners: James",
+		"- Tags: internet-facing, case-ticket",
+		"- Analyst cases: [SEC-42](https://example.atlassian.net/jira/software/projects/KAN/browse/SEC-42), [LEGACY-1](https://example.atlassian.net/jira/software/projects/KAN/browse/LEGACY-1)",
+		"- Jira status: In Review",
+		"- Workflow source: Jira analyst case (synced at publish time)",
+		"- Jira sync: 2026-04-08T21:00:00Z",
+		"Use Jira as the workflow source of truth.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("finding page missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestWriteVault_OccurrenceTrafficRendersHTTPBlocks(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
+	finding := entities.Finding{FindingID: "fin-traffic", DefinitionID: def.DefinitionID, PluginID: def.PluginID, URL: "https://example.com/api/login", Method: "POST", Risk: "High"}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-traffic",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Request:      &entities.HTTPRequest{Headers: []entities.Header{{Name: "Content-Type", Value: "application/json"}, {Name: "Authorization", Value: "Bearer secret-token"}}, BodySnippet: "{\"username\":\"admin\"}", BodyBytes: 20},
+		Response:     &entities.HTTPResponse{StatusCode: 401, Headers: []entities.Header{{Name: "Content-Type", Value: "application/json"}, {Name: "Set-Cookie", Value: "sid=abc"}}, BodySnippet: "{\"error\":\"unauthorized\"}", BodyBytes: 24},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{SchemaVersion: "1", GeneratedAt: "2026-04-08T21:00:00Z", Definitions: []entities.Definition{def}, Findings: []entities.Finding{finding}, Occurrences: []entities.Occurrence{occ}}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "occurrences", "occ-traffic.md"))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence page: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		"## Traffic",
+		"```http",
+		"POST /api/login HTTP/1.1",
+		"Host: example.com",
+		"Authorization: <redacted>",
+		"HTTP/1.1 401 Unauthorized",
+		"Set-Cookie: <cookie>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("occurrence page missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-board", PluginID: "10001", Alert: "Board Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-board",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/board",
+		Method:       "GET",
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "triaged"},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-board",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "open"},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	boardData, err := os.ReadFile(filepath.Join(root, "triage-board.md"))
+	if err != nil {
+		t.Fatalf("ReadFile triage-board.md: %v", err)
+	}
+	board := string(boardData)
+	if !strings.Contains(board, "| Triaged | 1 | 0 |") {
+		t.Errorf("triage-board should count the issue as triaged:\n%s", board)
+	}
+	if !strings.Contains(board, "| Open | 0 | 1 |") {
+		t.Errorf("triage-board should keep the occurrence history open:\n%s", board)
+	}
+}
+
+func TestWriteVault_RecurringFalsePositiveSurfacesTuningCandidate(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-tuning", PluginID: "10001", Alert: "Tuning Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-tuning",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/tuning",
+		Method:       "GET",
+		Risk:         "Low",
+		Analyst:      &entities.Analyst{Status: "fp"},
+	}
+	occs := []entities.Occurrence{
+		{OccurrenceID: "occ-tuning-1", FindingID: finding.FindingID, DefinitionID: def.DefinitionID, URL: finding.URL, Method: finding.Method, Risk: "Low", ScanLabel: "scan-a", Analyst: &entities.Analyst{Status: "fp"}},
+		{OccurrenceID: "occ-tuning-2", FindingID: finding.FindingID, DefinitionID: def.DefinitionID, URL: finding.URL, Method: finding.Method, Risk: "Low", ScanLabel: "scan-b", Analyst: &entities.Analyst{Status: "fp"}},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-07T12:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   occs,
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	findEntries, err := os.ReadDir(filepath.Join(root, "findings"))
+	if err != nil {
+		t.Fatalf("ReadDir findings: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "findings", findEntries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile finding page: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "- Tuning candidate: yes (false positive across 2 scans)") || !strings.Contains(body, "add `tune-scan` to `analyst.tags`") {
+		t.Fatalf("finding page missing tuning candidate note:\n%s", body)
+	}
+
+	boardData, err := os.ReadFile(filepath.Join(root, "triage-board.md"))
+	if err != nil {
+		t.Fatalf("ReadFile triage-board.md: %v", err)
+	}
+	board := string(boardData)
+	if !strings.Contains(board, "## Tuning candidates") || !strings.Contains(board, "false positive across 2 scans") {
+		t.Fatalf("triage board missing tuning candidates section:\n%s", board)
+	}
+}
+
+func TestWriteVault_IndexQuickNavigationPublishesCompanionPages(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-nav", PluginID: "10001", Alert: "Navigation Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-nav",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/nav",
+		Method:       "GET",
+		Risk:         "High",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-nav",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-08T12:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	indexData, err := os.ReadFile(filepath.Join(root, "INDEX.md"))
+	if err != nil {
+		t.Fatalf("ReadFile INDEX.md: %v", err)
+	}
+	indexBody := string(indexData)
+	for _, want := range []string{
+		"- [Issues](issues.md)",
+		"- [Occurrences](occurrences.md)",
+		"- [Rules](rules.md)",
+		"## Priority queue",
+	} {
+		if !strings.Contains(indexBody, want) {
+			t.Fatalf("INDEX.md missing %q:\n%s", want, indexBody)
+		}
+	}
+	if strings.Contains(indexBody, "- [ ]") {
+		t.Fatalf("INDEX.md should not contain task checkboxes in the priority queue:\n%s", indexBody)
+	}
+	for _, name := range []string{"issues.md", "occurrences.md", "rules.md"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("expected companion page %s to exist: %v", name, err)
+		}
 	}
 }

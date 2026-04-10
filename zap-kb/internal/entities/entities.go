@@ -15,7 +15,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
-const inlineTrafficSnippetLimit = 2048
+const inlineTrafficSnippetLimit = 8192
 
 type Header struct {
 	Name  string `json:"name"`
@@ -44,12 +44,37 @@ type HTTPResponse struct {
 }
 
 type Analyst struct {
-	Status     string   `json:"status,omitempty"` // open|triaged|fp|accepted|fixed
+	Status     string   `json:"status,omitempty"`    // open|triaged|fp|accepted|fixed
 	Owner      string   `json:"owner,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	Notes      string   `json:"notes,omitempty"`
+	Rationale  string   `json:"rationale,omitempty"` // decision reasoning (why this status/disposition was chosen)
 	TicketRefs []string `json:"ticketRefs,omitempty"`
 	UpdatedAt  string   `json:"updatedAt,omitempty"` // RFC3339
+}
+
+// Suppression records a deliberate analyst decision to suppress a finding
+// (false-positive or accepted risk), with scope, reasoning, and expiry.
+type Suppression struct {
+	// Scope controls how broadly the suppression applies:
+	//   "occurrence" — suppress only the specific occurrence (OccurrenceRef required)
+	//   "finding"    — suppress all occurrences of this finding
+	//   "rule"       — suppress all findings from the rule (DefinitionID level)
+	Scope         string `json:"scope"`                   // occurrence|finding|rule
+	Reason        string `json:"reason,omitempty"`        // human-readable rationale
+	DecidedBy     string `json:"decidedBy,omitempty"`     // username / email of the analyst
+	DecidedAt     string `json:"decidedAt,omitempty"`     // RFC3339
+	ExpiresAt     string `json:"expiresAt,omitempty"`     // RFC3339; empty = permanent
+	OccurrenceRef string `json:"occurrenceRef,omitempty"` // required when scope=occurrence
+}
+
+// RecurrenceInfo is set by Merge() when a finding that was previously fixed or
+// accepted reappears with new occurrences. It is advisory — it does NOT auto-
+// change analyst.Status; that remains the analyst's decision.
+type RecurrenceInfo struct {
+	PriorStatus   string `json:"priorStatus"`             // analyst.Status value before the recurrence was detected
+	RecurredAt    string `json:"recurredAt"`              // RFC3339 timestamp of detection
+	RecurredInScan string `json:"recurredInScan,omitempty"` // ScanLabel of the triggering occurrence
 }
 
 type Taxonomy struct {
@@ -63,10 +88,10 @@ type Taxonomy struct {
 }
 
 type Remediation struct {
-	Summary                string   `json:"summary,omitempty"`
-	References             []string `json:"references,omitempty"`
-	Guidance               []string `json:"guidance,omitempty"`
-	ExampleFixes           []string `json:"exampleFixes,omitempty"`
+	Summary                 string   `json:"summary,omitempty"`
+	References              []string `json:"references,omitempty"`
+	Guidance                []string `json:"guidance,omitempty"`
+	ExampleFixes            []string `json:"exampleFixes,omitempty"`
 	FalsePositiveConditions []string `json:"falsePositiveConditions,omitempty"`
 }
 
@@ -89,30 +114,39 @@ type DetectionDefaults struct {
 	Strength  string `json:"strength,omitempty"`  // AttackStrength e.g., MEDIUM
 }
 
+const (
+	DefinitionOriginTool   = "tool"
+	DefinitionOriginCustom = "custom"
+)
+
 type Definition struct {
 	DefinitionID string       `json:"definitionId"`
 	PluginID     string       `json:"pluginId"`
+	Origin       string       `json:"origin,omitempty"` // tool|custom
 	Alert        string       `json:"alert,omitempty"`
 	Name         string       `json:"name,omitempty"`
+	Description  string       `json:"description,omitempty"` // human-readable "what is this vulnerability" from the scanner
 	WASCID       int          `json:"wascid,omitempty"`
 	Taxonomy     *Taxonomy    `json:"taxonomy,omitempty"`
 	Remediation  *Remediation `json:"remediation,omitempty"`
 	Detection    *Detection   `json:"detection,omitempty"`
 }
-
 type Finding struct {
-	FindingID    string `json:"findingId"`
-	DefinitionID string `json:"definitionId"`
-	PluginID     string `json:"pluginId"`
-	URL          string `json:"url"`
-	Method       string `json:"method"`
-	Name         string `json:"name,omitempty"` // human-readable name (e.g., "GET https://example.com/login")
-	Risk         string `json:"risk,omitempty"`
-	RiskCode     string `json:"riskcode,omitempty"`
-	Confidence   string `json:"confidence,omitempty"`
-	Occurrences  int    `json:"occurrenceCount"`
-	FirstSeen    string `json:"firstSeen,omitempty"` // earliest ObservedAt across occurrences (RFC3339)
-	LastSeen     string `json:"lastSeen,omitempty"`  // latest ObservedAt across occurrences (RFC3339)
+	FindingID    string          `json:"findingId"`
+	DefinitionID string          `json:"definitionId"`
+	PluginID     string          `json:"pluginId"`
+	URL          string          `json:"url"`
+	Method       string          `json:"method"`
+	Name         string          `json:"name,omitempty"`        // human-readable name
+	Risk         string          `json:"risk,omitempty"`
+	RiskCode     string          `json:"riskcode,omitempty"`
+	Confidence   string          `json:"confidence,omitempty"`
+	Occurrences  int             `json:"occurrenceCount"`
+	FirstSeen    string          `json:"firstSeen,omitempty"`   // earliest ObservedAt (RFC3339)
+	LastSeen     string          `json:"lastSeen,omitempty"`    // latest ObservedAt (RFC3339)
+	Analyst      *Analyst        `json:"analyst,omitempty"`     // triage state and ticket references
+	Suppression  *Suppression    `json:"suppression,omitempty"` // set when analyst explicitly suppresses
+	Recurrence   *RecurrenceInfo `json:"recurrence,omitempty"`  // advisory: set by Merge() when fixed/accepted finding reappears
 }
 
 type Occurrence struct {
@@ -174,6 +208,55 @@ func defID(pluginID string) string {
 	return "def-" + strings.TrimSpace(pluginID)
 }
 
+func DefinitionOriginValue(origin, pluginID string, det *Detection) string {
+	origin = strings.ToLower(strings.TrimSpace(origin))
+	switch origin {
+	case DefinitionOriginCustom:
+		return DefinitionOriginCustom
+	case DefinitionOriginTool:
+		return DefinitionOriginTool
+	}
+	pluginID = strings.TrimSpace(pluginID)
+	if strings.HasPrefix(pluginID, "zap-") {
+		return DefinitionOriginCustom
+	}
+	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
+		return DefinitionOriginCustom
+	}
+	if det == nil {
+		for _, r := range pluginID {
+			if r < '0' || r > '9' {
+				return DefinitionOriginCustom
+			}
+		}
+	}
+	return DefinitionOriginTool
+}
+
+func IsCustomDefinition(def *Definition) bool {
+	if def == nil {
+		return false
+	}
+	return DefinitionOriginValue(def.Origin, def.PluginID, def.Detection) == DefinitionOriginCustom
+}
+
+func NormalizeDefinitionOrigins(ef *EntitiesFile) {
+	if ef == nil {
+		return
+	}
+	source := strings.ToLower(strings.TrimSpace(ef.SourceTool))
+	for i := range ef.Definitions {
+		def := &ef.Definitions[i]
+		if strings.TrimSpace(def.Origin) == "" {
+			switch source {
+			case DefinitionOriginTool, "zap", "nuclei", "multi", "burp":
+				def.Origin = DefinitionOriginTool
+				continue
+			}
+		}
+		def.Origin = DefinitionOriginValue(def.Origin, def.PluginID, def.Detection)
+	}
+}
 func findingKey(a zapclient.Alert) string {
 	return strings.Join([]string{
 		strings.TrimSpace(a.PluginID),
@@ -246,6 +329,7 @@ func BuildEntitiesWithOptions(alerts []zapclient.Alert, opts BuildOptions) Entit
 				PluginID:     a.PluginID,
 				Alert:        a.Alert,
 				Name:         a.Name,
+				Description:  strings.TrimSpace(a.Description),
 				WASCID:       a.WASCID.Int(),
 				Taxonomy:     tax,
 				Remediation: &Remediation{

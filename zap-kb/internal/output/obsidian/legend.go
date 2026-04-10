@@ -53,14 +53,13 @@ const triageGuideContent = `# Triage Workflow Guide
 | accepted | Risk accepted, no fix planned |
 | fixed | Remediation verified |
 
-## How to update status in Confluence
+## How to work the finding
 
-1. Open the **occurrence page** for the finding (linked from the finding page).
-2. Click **Edit** on the page.
-3. Scroll to the **Workflow** section.
-4. Update the ` + "`Status:`" + ` line to the new value.
-5. Add your name to ` + "`Owner:`" + ` and today's date to ` + "`Updated:`" + `.
-6. Save — Confluence page history records the change.
+1. Review the finding and occurrence evidence in Confluence.
+2. Work the analyst case in Jira.
+3. Keep linked analyst case refs in ` + "`analyst.ticketRefs`" + `.
+4. Use ` + "`case-ticket`" + ` for low/info findings that should still open an analyst case.
+5. Use ` + "`tune-scan`" + ` when a recurring false positive needs scan-tuning follow-up.
 
 ## Bulk triage
 
@@ -70,9 +69,9 @@ const triageGuideContent = `# Triage Workflow Guide
 
 ## Escalation
 
-- File a Jira ticket for findings requiring engineering action.
-- Link the ticket ID in the occurrence page ` + "`Tickets:`" + ` field.
-- Set status to ` + "`triaged`" + ` once a ticket exists.
+- Use the analyst Jira project for case management and triage.
+- Link the analyst case ID in ` + "`analyst.ticketRefs`" + `.
+- If remediation is needed, track the downstream team ticket as a linked reference rather than replacing the analyst case.
 
 ## Governance fields
 
@@ -97,13 +96,13 @@ func writeTriageGuide(root string) error {
 // writeByScan writes by-scan.md, grouping occurrences by ScanLabel.
 func writeByScan(root string, ef entities.EntitiesFile, opts Options) error {
 	type scanGroup struct {
-		Label      string
-		domains    map[string]struct{}
-		findings   map[string]struct{}
-		occCount   int
-		minObs     string
-		maxObs     string
-		sevCounts  map[string]int // high/medium/low/info
+		Label     string
+		domains   map[string]struct{}
+		findings  map[string]struct{}
+		occCount  int
+		minObs    string
+		maxObs    string
+		sevCounts map[string]int // high/medium/low/info
 	}
 
 	groups := map[string]*scanGroup{}

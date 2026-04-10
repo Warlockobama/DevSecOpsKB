@@ -255,6 +255,136 @@ func TestMergeAnalyst_AddNil(t *testing.T) {
 	}
 }
 
+// TestMerge_Recurrence_FixedFindingReappears verifies that when a finding with
+// analyst.Status="fixed" receives new occurrences in add (not present in base),
+// Merge() sets Recurrence with PriorStatus="fixed" and does NOT change the status.
+func TestMerge_Recurrence_FixedFindingReappears(t *testing.T) {
+	base := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{FindingID: "fin-r", PluginID: "10001", URL: "https://example.com/login",
+				Analyst: &Analyst{Status: "fixed"}},
+		},
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-old", FindingID: "fin-r", ObservedAt: "2025-01-01T00:00:00Z", ScanLabel: "scan-1"},
+		},
+	}
+	add := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{FindingID: "fin-r", PluginID: "10001", URL: "https://example.com/login"},
+		},
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-new", FindingID: "fin-r", ObservedAt: "2026-01-01T00:00:00Z", ScanLabel: "scan-2"},
+		},
+	}
+
+	merged := Merge(base, add)
+
+	if len(merged.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(merged.Findings))
+	}
+	f := merged.Findings[0]
+
+	// Status must NOT be changed — analyst decides.
+	if f.Analyst == nil || f.Analyst.Status != "fixed" {
+		t.Errorf("Status must remain 'fixed', got: %v", f.Analyst)
+	}
+
+	// Recurrence must be set.
+	if f.Recurrence == nil {
+		t.Fatal("expected Recurrence to be set")
+	}
+	if f.Recurrence.PriorStatus != "fixed" {
+		t.Errorf("PriorStatus: want 'fixed', got %q", f.Recurrence.PriorStatus)
+	}
+	if f.Recurrence.RecurredInScan != "scan-2" {
+		t.Errorf("RecurredInScan: want 'scan-2', got %q", f.Recurrence.RecurredInScan)
+	}
+	if f.Recurrence.RecurredAt == "" {
+		t.Error("RecurredAt must not be empty")
+	}
+}
+
+// TestMerge_Recurrence_NotSetWhenOpen verifies that Recurrence is NOT set when
+// the base finding's analyst.Status is "open" (not a suppressed status).
+func TestMerge_Recurrence_NotSetWhenOpen(t *testing.T) {
+	base := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{FindingID: "fin-o", PluginID: "10001", URL: "https://example.com/",
+				Analyst: &Analyst{Status: "open"}},
+		},
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-a", FindingID: "fin-o", ObservedAt: "2025-01-01T00:00:00Z"},
+		},
+	}
+	add := EntitiesFile{
+		SchemaVersion: "v1",
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-b", FindingID: "fin-o", ObservedAt: "2026-01-01T00:00:00Z"},
+		},
+	}
+
+	merged := Merge(base, add)
+
+	if len(merged.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(merged.Findings))
+	}
+	if merged.Findings[0].Recurrence != nil {
+		t.Error("Recurrence must be nil when prior status is 'open'")
+	}
+}
+
+// TestMerge_Recurrence_AcceptedReappears verifies accepted findings also get the advisory.
+func TestMerge_Recurrence_AcceptedReappears(t *testing.T) {
+	base := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{FindingID: "fin-a", PluginID: "10002", URL: "https://example.com/api",
+				Analyst: &Analyst{Status: "accepted"}},
+		},
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-x", FindingID: "fin-a", ObservedAt: "2025-01-01T00:00:00Z"},
+		},
+	}
+	add := EntitiesFile{
+		SchemaVersion: "v1",
+		Occurrences: []Occurrence{
+			{OccurrenceID: "occ-y", FindingID: "fin-a", ObservedAt: "2026-03-01T00:00:00Z", ScanLabel: "scan-latest"},
+		},
+	}
+
+	merged := Merge(base, add)
+
+	f := merged.Findings[0]
+	if f.Recurrence == nil {
+		t.Fatal("expected Recurrence for accepted finding that reappeared")
+	}
+	if f.Recurrence.PriorStatus != "accepted" {
+		t.Errorf("PriorStatus: want 'accepted', got %q", f.Recurrence.PriorStatus)
+	}
+}
+
+// TestMergeAnalyst_Rationale verifies that Rationale follows the same fill-gap
+// rule as Notes: base wins if non-empty, add fills when base is empty.
+func TestMergeAnalyst_Rationale(t *testing.T) {
+	base := &Analyst{Status: "accepted", Rationale: ""}
+	add := &Analyst{Status: "open", Rationale: "accepted because behind WAF"}
+	got := mergeAnalyst(base, add)
+	if got.Rationale != "accepted because behind WAF" {
+		t.Errorf("Rationale: want fill from add, got %q", got.Rationale)
+	}
+
+	// base has rationale — must win
+	base2 := &Analyst{Rationale: "original reasoning"}
+	add2 := &Analyst{Rationale: "overwrite attempt"}
+	got2 := mergeAnalyst(base2, add2)
+	if got2.Rationale != "original reasoning" {
+		t.Errorf("Rationale: base must win, got %q", got2.Rationale)
+	}
+}
+
 // TestMerge_FirstSeenLastSeen verifies that Merge() recomputes FirstSeen and
 // LastSeen on findings from the merged occurrence set. Base has one occurrence
 // with ObservedAt="2024-01-01T00:00:00Z"; add contributes a new occurrence with
@@ -351,5 +481,56 @@ func TestMerge_FirstSeenLastSeen_EmptyObservedAt(t *testing.T) {
 	}
 	if f.LastSeen != "" {
 		t.Errorf("LastSeen: want empty, got %q", f.LastSeen)
+	}
+}
+
+// TestMerge_FindingAnalyst_Preserved verifies that when a duplicate finding
+// exists in both base and add, the Analyst fields are merged via mergeAnalyst
+// rather than silently dropping add's data. Specifically:
+//   - base has TicketRefs=["KAN-1"], Status="open"
+//   - add has TicketRefs=["KAN-2"], Status="triaged", Notes="confirmed"
+//   - merged must have TicketRefs=["KAN-1","KAN-2"], Status="open" (base wins),
+//     Notes="confirmed" (add fills empty)
+func TestMerge_FindingAnalyst_Preserved(t *testing.T) {
+	base := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{
+				FindingID: "fin-1", PluginID: "10001", URL: "https://example.com/",
+				Analyst: &Analyst{Status: "open", TicketRefs: []string{"KAN-1"}},
+			},
+		},
+	}
+	add := EntitiesFile{
+		SchemaVersion: "v1",
+		Findings: []Finding{
+			{
+				FindingID: "fin-1", PluginID: "10001", URL: "https://example.com/",
+				Analyst: &Analyst{Status: "triaged", Notes: "confirmed", TicketRefs: []string{"KAN-2"}},
+			},
+		},
+	}
+
+	merged := Merge(base, add)
+	if len(merged.Findings) != 1 {
+		t.Fatalf("expected 1 finding after dedup, got %d", len(merged.Findings))
+	}
+	a := merged.Findings[0].Analyst
+	if a == nil {
+		t.Fatal("expected non-nil Analyst on merged finding")
+	}
+	if a.Status != "open" {
+		t.Errorf("Status: want %q (base wins), got %q", "open", a.Status)
+	}
+	if a.Notes != "confirmed" {
+		t.Errorf("Notes: want %q (add fills gap), got %q", "confirmed", a.Notes)
+	}
+	if len(a.TicketRefs) != 2 {
+		t.Errorf("TicketRefs: want 2 entries, got %v", a.TicketRefs)
+	} else {
+		refs := map[string]bool{a.TicketRefs[0]: true, a.TicketRefs[1]: true}
+		if !refs["KAN-1"] || !refs["KAN-2"] {
+			t.Errorf("TicketRefs: want [KAN-1 KAN-2], got %v", a.TicketRefs)
+		}
 	}
 }

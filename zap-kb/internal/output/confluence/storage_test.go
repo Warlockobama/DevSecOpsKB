@@ -699,9 +699,9 @@ func TestMdToStorage_AnchorMap_PackageLevel(t *testing.T) {
 	if out1 != out2 {
 		t.Errorf("inlineToStorageWithTitles is not deterministic across calls:\nfirst:  %s\nsecond: %s", out1, out2)
 	}
-	// The anchor #issues maps to the "Findings" page
-	if !strings.Contains(out1, "Findings") {
-		t.Errorf("expected anchor #issues to resolve to Findings page, got: %s", out1)
+	// The anchor #issues maps to the "Issues" page
+	if !strings.Contains(out1, "Issues") {
+		t.Errorf("expected anchor #issues to resolve to Issues page, got: %s", out1)
 	}
 }
 

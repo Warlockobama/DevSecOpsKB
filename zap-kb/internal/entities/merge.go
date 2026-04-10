@@ -39,6 +39,9 @@ func mergeAnalyst(base, add *Analyst) *Analyst {
 	if out.Notes == "" {
 		out.Notes = add.Notes
 	}
+	if out.Rationale == "" {
+		out.Rationale = add.Rationale
+	}
 	tBase, err1 := time.Parse(time.RFC3339, out.UpdatedAt)
 	tAdd, err2 := time.Parse(time.RFC3339, add.UpdatedAt)
 	if err1 == nil && err2 == nil {
@@ -52,6 +55,16 @@ func mergeAnalyst(base, add *Analyst) *Analyst {
 	out.Tags = unionStrings(out.Tags, add.Tags)
 	out.TicketRefs = unionStrings(out.TicketRefs, add.TicketRefs)
 	return &out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // unionStrings returns a deduplicated union of a and b, preserving order (a first).
@@ -96,6 +109,9 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 		if i, ok := defByID[id]; ok {
 			bd := &out.Definitions[i]
+			if strings.TrimSpace(bd.Origin) == "" {
+				bd.Origin = DefinitionOriginValue(nd.Origin, firstNonEmptyString(bd.PluginID, nd.PluginID), nd.Detection)
+			}
 			// Fill detection at field level so a partial base can receive missing fields from add.
 			if nd.Detection != nil {
 				if bd.Detection == nil {
@@ -154,6 +170,7 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 			}
 		} else {
 			// New definition
+			nd.Origin = DefinitionOriginValue(nd.Origin, nd.PluginID, nd.Detection)
 			out.Definitions = append(out.Definitions, nd)
 			defByID[id] = len(out.Definitions) - 1
 		}
@@ -169,14 +186,18 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		occIdx[strings.TrimSpace(o.OccurrenceID)] = i
 	}
 
-	// Add findings (if new)
+	// Add findings (dedup by id).
+	// For duplicate findings, apply field-level analyst merge so TicketRefs and
+	// triage state from both sides are preserved (base fields win, add fills gaps,
+	// tags/ticketRefs are unioned via mergeAnalyst).
 	for _, nf := range add.Findings {
 		id := strings.TrimSpace(nf.FindingID)
 		if id == "" {
 			continue
 		}
-		if _, ok := findByID[id]; ok {
-			// keep base finding; counts will be recomputed
+		if idx, ok := findByID[id]; ok {
+			// Duplicate: merge analyst data rather than silently discarding add's.
+			out.Findings[idx].Analyst = mergeAnalyst(out.Findings[idx].Analyst, nf.Analyst)
 			continue
 		}
 		out.Findings = append(out.Findings, nf)
@@ -228,6 +249,70 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 		if ls := lastSeen[fid]; ls != "" {
 			f.LastSeen = ls
+		}
+	}
+
+	// Recurrence detection: if a finding was previously fixed or accepted and new
+	// occurrences arrived (i.e., add introduced occurrences not in base), set the
+	// advisory Recurrence field. Status is NOT changed — analyst decides.
+	{
+		suppressedStatuses := map[string]struct{}{
+			"fixed": {}, "accepted": {}, "fp": {},
+		}
+		// Collect occurrence IDs that were in base (so new ones came from add).
+		baseOccIDs := make(map[string]struct{}, len(base.Occurrences))
+		for _, o := range base.Occurrences {
+			baseOccIDs[strings.TrimSpace(o.OccurrenceID)] = struct{}{}
+		}
+		// Map finding IDs from base to their analyst status.
+		baseFindStatus := make(map[string]string, len(base.Findings))
+		for _, f := range base.Findings {
+			if f.Analyst != nil {
+				baseFindStatus[strings.TrimSpace(f.FindingID)] = strings.ToLower(strings.TrimSpace(f.Analyst.Status))
+			}
+		}
+		// Find the earliest new occurrence per finding (not in base).
+		type newOccInfo struct {
+			recurredAt  string
+			scanLabel   string
+		}
+		newOccByFinding := make(map[string]newOccInfo)
+		for _, o := range out.Occurrences {
+			oid := strings.TrimSpace(o.OccurrenceID)
+			if _, wasInBase := baseOccIDs[oid]; wasInBase {
+				continue
+			}
+			fid := strings.TrimSpace(o.FindingID)
+			cur, exists := newOccByFinding[fid]
+			ts := strings.TrimSpace(o.ObservedAt)
+			if !exists || (ts != "" && ts < cur.recurredAt) {
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			}
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range out.Findings {
+			f := &out.Findings[i]
+			fid := strings.TrimSpace(f.FindingID)
+			priorStatus := baseFindStatus[fid]
+			if _, wasSuppressed := suppressedStatuses[priorStatus]; !wasSuppressed {
+				continue
+			}
+			info, hasNew := newOccByFinding[fid]
+			if !hasNew {
+				continue
+			}
+			// Advisory: set Recurrence if not already set (don't overwrite a human-written one).
+			if f.Recurrence == nil {
+				recurredAt := info.recurredAt
+				if recurredAt == "" {
+					recurredAt = now
+				}
+				f.Recurrence = &RecurrenceInfo{
+					PriorStatus:    baseFindStatus[fid],
+					RecurredAt:     recurredAt,
+					RecurredInScan: info.scanLabel,
+				}
+			}
 		}
 	}
 

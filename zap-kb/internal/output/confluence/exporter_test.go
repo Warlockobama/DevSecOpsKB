@@ -27,6 +27,17 @@ func TestExport_CreateNewPage(t *testing.T) {
 			gotPOST = true
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"id": "123"})
+		case strings.Contains(r.URL.Path, "/property"):
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
@@ -172,6 +183,17 @@ func TestExportVault_FullTree(t *testing.T) {
 			created[title] = true
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+		case strings.Contains(r.URL.Path, "/property"):
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
@@ -202,17 +224,115 @@ func TestExportVault_FullTree(t *testing.T) {
 
 	// Expect (counted in VaultSummary, excludes KB Export Summary which uses _, _, _):
 	// INDEX + DASHBOARD + Triage + By Domain + Security Rule Definitions + Custom Detections +
-	// 2 defs + Findings + Occurrences = 10
+	// 2 defs = 8 (empty Findings/Occurrences stubs are no longer created).
 	total := sum.Created + sum.Updated
-	if total != 10 {
+	if total != 8 {
 		t.Logf("created pages: %v", created)
-		t.Errorf("expected 10 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
+		t.Errorf("expected 8 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
 	}
 	// Verify key pages exist (server-side, including KB Export Summary)
-	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "Findings", "Occurrences", "KB Export Summary"} {
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "KB Export Summary"} {
 		if !created[title] {
 			t.Errorf("expected page %q to be created", title)
 		}
+	}
+}
+
+func TestExportVault_HierarchicalExportOmitsTopLevelFindingAndOccurrenceStubs(t *testing.T) {
+	created := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			created[title] = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+		case strings.Contains(r.URL.Path, "/property"):
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# Dashboard")
+	mustWriteFile(t, filepath.Join(dir, "triage-board.md"), "# Triage")
+	mustWriteFile(t, filepath.Join(dir, "by-domain.md"), "# Domains")
+
+	defsDir := filepath.Join(dir, "definitions")
+	findDir := filepath.Join(dir, "findings")
+	occDir := filepath.Join(dir, "occurrences")
+	os.MkdirAll(defsDir, 0o755)
+	os.MkdirAll(findDir, 0o755)
+	os.MkdirAll(occDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "10016-missing-headers.md"), "# Missing Security Headers (Plugin 10016)")
+	mustWriteFile(t, filepath.Join(findDir, "fin-1.md"), "# Missing Security Headers")
+	mustWriteFile(t, filepath.Join(occDir, "occ-1.md"), "# Missing Security Headers occurrence")
+
+	ef := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		GeneratedAt:   "2026-04-08T00:00:00Z",
+		SourceTool:    "zap",
+		Definitions: []entities.Definition{{
+			DefinitionID: "def-10016",
+			PluginID:     "10016",
+			Alert:        "Missing Security Headers",
+		}},
+		Findings: []entities.Finding{{
+			FindingID:    "fin-1",
+			DefinitionID: "def-10016",
+			PluginID:     "10016",
+			URL:          "http://example.com/",
+			Method:       "GET",
+		}},
+		Occurrences: []entities.Occurrence{{
+			OccurrenceID: "occ-1",
+			FindingID:    "fin-1",
+			DefinitionID: "def-10016",
+			URL:          "http://example.com/",
+			Method:       "GET",
+		}},
+	}
+
+	sum, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:     srv.URL,
+		Username:    "user",
+		APIToken:    "token",
+		SpaceKey:    "KB",
+		Concurrency: 1,
+		Entities:    ef,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created["Findings"] || created["Occurrences"] {
+		t.Fatalf("did not expect top-level Findings/Occurrences pages in hierarchical export, got: %v", created)
+	}
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Posture", "Security Rule Definitions", "Custom Detections", "Missing Security Headers (Plugin 10016)", "KB Export Summary"} {
+		if !created[title] {
+			t.Errorf("expected page %q to be created", title)
+		}
+	}
+	if sum.Errors != 0 {
+		t.Fatalf("expected no export errors, got %d", sum.Errors)
 	}
 }
 
@@ -550,6 +670,19 @@ func TestFindingLabels(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("with_analyst_status", func(t *testing.T) {
+		f := &entities.Finding{
+			FindingID: "fin-x",
+			PluginID:  "10038",
+			Risk:      "High",
+			Analyst:   &entities.Analyst{Status: "triaged"},
+		}
+		labels := findingLabels(f)
+		if !contains(labels, "status-triaged") {
+			t.Errorf("expected status label from finding analyst, got %v", labels)
+		}
+	})
 }
 
 func TestOccurrenceLabels(t *testing.T) {
@@ -880,7 +1013,7 @@ func TestOccurrenceProperties_CWEAndDefinition(t *testing.T) {
 		Confidence:   "Low",
 		URL:          "https://example.com/api",
 	}
-	out := prependOccurrenceProperties("BODY", o, &ei)
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
 
 	if !strings.Contains(out, "CWE-693") {
 		t.Error("CWE link should appear on occurrence page")
@@ -918,7 +1051,7 @@ func TestFindingProperties_FirstLastSeen(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-abc"]
-	out := prependFindingProperties("BODY", f, &ei)
+	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear in finding properties")
@@ -945,7 +1078,7 @@ func TestFindingProperties_SingleOccurrence_LastSeenSameRun(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-solo"]
-	out := prependFindingProperties("BODY", f, &ei)
+	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear")
@@ -1093,31 +1226,18 @@ func TestExportVault_HierarchicalNesting(t *testing.T) {
 		t.Errorf("definition page parent: want %q, got %q", defsParentID, pageParents[defTitle])
 	}
 
-	// Finding page should be a child of the "Findings" folder page (not the definition page)
-	findingsParentID := "pid-Findings"
-	findingTitle := ""
-	for title, parent := range pageParents {
-		if parent == findingsParentID {
-			findingTitle = title
-			break
-		}
-	}
-	if findingTitle == "" {
-		t.Errorf("no finding page found as child of Findings folder; all parents: %v", pageParents)
+	// Finding page should be nested under the definition page.
+	findingTitle := "Issue: CSP Header Not Set - /api/login - ccdd"
+	findingParentID := "pid-" + defTitle
+	if pageParents[findingTitle] != findingParentID {
+		t.Errorf("finding page parent: want %q, got %q", findingParentID, pageParents[findingTitle])
 	}
 
-	// Occurrence page should be a child of the finding page
-	// Occurrences are parented to the Occurrences folder (not finding pages)
-	// so that the Occurrences folder is navigable in the sidebar.
-	occFound := false
-	for _, parent := range pageParents {
-		if parent == "pid-Occurrences" {
-			occFound = true
-			break
-		}
-	}
-	if !occFound {
-		t.Errorf("no occurrence page found as child of Occurrences folder; all parents: %v", pageParents)
+	// Occurrence page should be nested under the finding page.
+	occurrenceTitle := "Occurrence: CSP Header Not Set - /api/login - 3344"
+	occurrenceParentID := "pid-" + findingTitle
+	if pageParents[occurrenceTitle] != occurrenceParentID {
+		t.Errorf("occurrence page parent: want %q, got %q", occurrenceParentID, pageParents[occurrenceTitle])
 	}
 }
 
@@ -1257,6 +1377,9 @@ func TestFindingPageTitle(t *testing.T) {
 		Method:       "GET",
 	}
 	title := findingPageTitle(f, &ei)
+	if !strings.HasPrefix(title, "Issue: ") {
+		t.Errorf("title should start with Issue:, got: %s", title)
+	}
 	if !strings.Contains(title, "Content Security Policy Header Not Set") {
 		t.Errorf("title should contain rule name, got: %s", title)
 	}
@@ -1290,6 +1413,9 @@ func TestOccurrencePageTitle(t *testing.T) {
 		URL:          "https://example.com/main.js",
 	}
 	title := occurrencePageTitle(o, &ei)
+	if !strings.HasPrefix(title, "Occurrence: ") {
+		t.Errorf("title should start with Occurrence:, got: %s", title)
+	}
 	if !strings.Contains(title, "CSP Header Not Set") {
 		t.Errorf("title should contain rule name, got: %s", title)
 	}
@@ -1349,7 +1475,7 @@ func TestFindingPropertiesFieldOrder(t *testing.T) {
 		Method:       "GET",
 		Occurrences:  2,
 	}
-	out := prependFindingProperties("BODY", f, &ei)
+	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
 	// Finding ID should not appear
 	if strings.Contains(out, "Finding ID") {
 		t.Error("Finding ID row should be removed")
@@ -1595,14 +1721,18 @@ func TestPageHashStore(t *testing.T) {
 func TestUpsertPageCached_SkipWhenUnchanged(t *testing.T) {
 	// Track which HTTP methods are called.
 	var putCalled bool
-	getCalled := 0
+	getByIDCalled := 0
+	getByTitleCalled := 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
-			getCalled++
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/page-99":
+			getByIDCalled++
 			w.Header().Set("Content-Type", "application/json")
-			// Return an existing page so the skip path can return its ID.
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-99"})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			getByTitleCalled++
+			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"results": []any{
 					map[string]any{
@@ -1655,9 +1785,81 @@ func TestUpsertPageCached_SkipWhenUnchanged(t *testing.T) {
 	if putCalled {
 		t.Error("expected no PUT when page body is unchanged")
 	}
-	// With page ID caching, the skip path should NOT need a GET.
-	if getCalled > 0 {
-		t.Errorf("expected zero GETs (page ID cached), got %d", getCalled)
+	if getByIDCalled != 1 {
+		t.Errorf("expected one GET to validate the cached page ID, got %d", getByIDCalled)
+	}
+	if getByTitleCalled != 0 {
+		t.Errorf("expected zero title lookups when cached page still exists, got %d", getByTitleCalled)
+	}
+}
+func TestUpsertPageCached_RefindsWhenCachedPageIDDeleted(t *testing.T) {
+	getByTitleCalled := 0
+	getByIDCalled := 0
+	putCalled := false
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/page-stale":
+			getByIDCalled++
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"missing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			getByTitleCalled++
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"results": []any{
+					map[string]any{
+						"id":      "page-live",
+						"version": map[string]any{"number": 3},
+					},
+				},
+			})
+		case r.Method == http.MethodPut:
+			putCalled = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	storePath := filepath.Join(t.TempDir(), "hashes.json")
+	hs := loadHashStore(storePath)
+	const title = "Deleted Cached Page"
+	const body = "<p>stable content</p>"
+	hs.record(title, body, "page-stale")
+
+	pageID, action, err := upsertPageCached(
+		context.Background(),
+		srv.Client(),
+		"Basic dXNlcjp0b2tlbg==",
+		srv.URL,
+		"KB",
+		title,
+		body,
+		"",
+		hs,
+	)
+	if err != nil {
+		t.Fatalf("upsertPageCached: %v", err)
+	}
+	if action != "skipped" {
+		t.Fatalf("action = %q, want skipped", action)
+	}
+	if pageID != "page-live" {
+		t.Fatalf("pageID = %q, want page-live", pageID)
+	}
+	if getByIDCalled != 1 {
+		t.Fatalf("cached page ID should be revalidated once, got %d", getByIDCalled)
+	}
+	if getByTitleCalled != 1 {
+		t.Fatalf("expected refind by title after stale cached ID, got %d", getByTitleCalled)
+	}
+	if putCalled {
+		t.Fatal("expected no PUT when live page was refound and body is unchanged")
+	}
+	if cached := hs.cachedPageID(title); cached != "page-live" {
+		t.Fatalf("cached page ID = %q, want page-live", cached)
 	}
 }
 
@@ -1720,13 +1922,13 @@ func TestBuildExportSummaryBody(t *testing.T) {
 	wantContains := []string{
 		"KB Export Summary",
 		"2026-04-05T12:00:00Z",
-		"<td>7</td>",  // definitions
-		"<td>42</td>", // findings
+		"<td>7</td>",   // definitions
+		"<td>42</td>",  // findings
 		"<td>130</td>", // occurrences
-		"<td>10</td>", // created
-		"<td>3</td>",  // updated
-		"<td>5</td>",  // skipped
-		"<td>1</td>",  // errors
+		"<td>10</td>",  // created
+		"<td>3</td>",   // updated
+		"<td>5</td>",   // skipped
+		"<td>1</td>",   // errors
 	}
 	for _, want := range wantContains {
 		if !strings.Contains(body, want) {
@@ -1761,15 +1963,15 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-order"]
-	out := prependFindingProperties("BODY", f, &ei)
+	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
 
 	// Verify canonical field order: Severity before CWE before OWASP before Last Seen before Occurrences
 	positions := map[string]int{
-		"Severity":    strings.Index(out, "<th>Severity</th>"),
-		"CWE":         strings.Index(out, "<th>CWE</th>"),
+		"Severity":     strings.Index(out, "<th>Severity</th>"),
+		"CWE":          strings.Index(out, "<th>CWE</th>"),
 		"OWASP Top 10": strings.Index(out, "<th>OWASP Top 10</th>"),
-		"Last Seen":   strings.Index(out, "<th>Last Seen</th>"),
-		"Occurrences": strings.Index(out, "<th>Occurrences</th>"),
+		"Last Seen":    strings.Index(out, "<th>Last Seen</th>"),
+		"Occurrences":  strings.Index(out, "<th>Occurrences</th>"),
 	}
 
 	for field, pos := range positions {
@@ -1788,6 +1990,84 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 	}
 }
 
+func TestBuildEntityIndex_PrefersFindingStatusOverOccurrences(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Findings: []entities.Finding{{
+			FindingID:    "fin-status",
+			DefinitionID: "def-status",
+			Analyst:      &entities.Analyst{Status: "accepted"},
+		}},
+		Occurrences: []entities.Occurrence{{
+			OccurrenceID: "occ-status",
+			FindingID:    "fin-status",
+			DefinitionID: "def-status",
+			Analyst:      &entities.Analyst{Status: "open"},
+		}},
+	}
+	ei := buildEntityIndex(ef)
+	if got := ei.findingTriageStatus["fin-status"]; got != "accepted" {
+		t.Fatalf("findingTriageStatus = %q, want accepted", got)
+	}
+}
+
+func TestAppendJiraOverviewSection_RendersLinkedCases(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{{DefinitionID: "def-10038", Alert: "CSP Header Not Set"}},
+		Findings: []entities.Finding{{
+			FindingID:    "fin-workflow",
+			DefinitionID: "def-10038",
+			Risk:         "High",
+			Analyst: &entities.Analyst{
+				Status:     "triaged",
+				TicketRefs: []string{"SEC-42"},
+			},
+		}},
+	}
+	ei := buildEntityIndex(ef)
+	out := appendJiraOverviewSection("Triage Board", "<h1>Triage board</h1>", &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, "2026-04-08T21:00:00Z")
+	for _, want := range []string{"Linked Jira Cases", "browse/SEC-42", "In Review</ac:parameter>", "TRIAGED</ac:parameter>", "HIGH</ac:parameter>", "Last Jira sync: 2026-04-08T21:00:00Z"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("appendJiraOverviewSection missing %q:\n%s", want, out)
+		}
+	}
+}
+func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{{DefinitionID: "def-10038", Alert: "CSP Header Not Set"}},
+		Findings: []entities.Finding{{
+			FindingID:    "fin-workflow",
+			DefinitionID: "def-10038",
+			Risk:         "Medium",
+			URL:          "https://example.com/login",
+			Method:       "GET",
+			Occurrences:  2,
+			Analyst: &entities.Analyst{
+				Status:     "accepted",
+				Owner:      "James",
+				TicketRefs: []string{"SEC-42"},
+				Tags:       []string{"jira", "internet-facing"},
+				Notes:      "Business exception approved.",
+				UpdatedAt:  "2026-04-06T14:00:00Z",
+			},
+		}},
+		Occurrences: []entities.Occurrence{{
+			OccurrenceID: "occ-workflow-a",
+			FindingID:    "fin-workflow",
+			DefinitionID: "def-10038",
+			ObservedAt:   "2026-04-01T00:00:00Z",
+			Analyst:      &entities.Analyst{Status: "open"},
+		}},
+	}
+	ei := buildEntityIndex(ef)
+	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, "2026-04-08T21:00:00Z", "")
+	// Status row is intentionally absent — Jira owns workflow state.
+	// Workflow Source row is intentionally absent — removed as noise.
+	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Status</th><td><ac:structured-macro ac:name=\"status\"", "In Review</ac:parameter>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prependFindingProperties missing %q:\n%s", want, out)
+		}
+	}
+}
 func TestDefProperties_FieldOrder(t *testing.T) {
 	def := &entities.Definition{
 		DefinitionID: "def-10038",
@@ -1996,7 +2276,7 @@ func TestPrependOccurrenceProperties_ScanIdentity(t *testing.T) {
 		ObservedAt:   "2026-04-01T12:00:00Z",
 	}
 
-	out := prependOccurrenceProperties("BODY", o, &ei)
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
 
 	if !strings.Contains(out, "scan-2026-04-01") {
 		t.Errorf("occurrence properties should contain the scan label, got: %.500s", out)
@@ -2032,7 +2312,7 @@ func TestPrependOccurrenceProperties_AnalystFields(t *testing.T) {
 		},
 	}
 
-	out := prependOccurrenceProperties("BODY", o, &ei)
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
 
 	if !strings.Contains(strings.ToUpper(out), "TRIAGED") {
 		t.Errorf("occurrence properties should contain 'triaged', got: %.500s", out)
@@ -2042,6 +2322,34 @@ func TestPrependOccurrenceProperties_AnalystFields(t *testing.T) {
 	}
 	if !strings.Contains(out, "confirmed") {
 		t.Errorf("occurrence properties should contain notes 'confirmed', got: %.500s", out)
+	}
+}
+
+func TestPrependOccurrenceProperties_IncludesFindingTickets(t *testing.T) {
+	ef := &entities.EntitiesFile{
+		Definitions: []entities.Definition{{
+			DefinitionID: "def-10038",
+			PluginID:     "10038",
+			Alert:        "CSP Header Not Set",
+		}},
+		Findings: []entities.Finding{{
+			FindingID:    "fin-aabb1122",
+			DefinitionID: "def-10038",
+			Analyst:      &entities.Analyst{TicketRefs: []string{"SEC-42"}},
+		}},
+	}
+	ei := buildEntityIndex(ef)
+	o := &entities.Occurrence{
+		OccurrenceID: "occ-aabb1122",
+		DefinitionID: "def-10038",
+		FindingID:    "fin-aabb1122",
+		URL:          "https://example.com/",
+		Risk:         "Medium",
+	}
+
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
+	if !strings.Contains(out, "SEC-42") {
+		t.Errorf("occurrence properties should include inherited finding ticket refs, got: %.500s", out)
 	}
 }
 
@@ -2083,7 +2391,7 @@ func TestPrependFindingProperties_FirstLastSeen(t *testing.T) {
 	ei := buildEntityIndex(ef)
 	f := ei.finds["fin-aabb1122"]
 
-	out := prependFindingProperties("BODY", f, &ei)
+	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
 
 	// First Seen must appear (the earlier date).
 	if !strings.Contains(out, "2026-01-01T00:00:00Z") {
@@ -2178,6 +2486,24 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 			// Discard label calls — not under test here.
 			w.WriteHeader(http.StatusOK)
 
+		case strings.Contains(r.URL.Path, "/property"):
+			// Page property API (kb-state-sig) — return 404 on GET (new property),
+			// 200 on POST (create). Not under test here.
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rest/api/content/"):
+			// Fetch page body for analyst log extraction — return empty body.
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"body": map[string]any{
+					"storage": map[string]string{"value": ""},
+				},
+			})
+
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
@@ -2250,10 +2576,143 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "Findings", "Occurrences"}
+	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections"}
 	for _, title := range required {
 		if !upserted[title] {
 			t.Errorf("expected page %q to be upserted, but it was not; all upserted: %v", title, upserted)
+		}
+	}
+}
+
+func TestPrependDefProperties_IncludesOrigin(t *testing.T) {
+	def := &entities.Definition{DefinitionID: "def-custom", PluginID: "zap-custom-rule", Origin: entities.DefinitionOriginCustom}
+	out := prependDefProperties("BODY", def)
+	if !strings.Contains(out, "<th>Origin</th>") {
+		t.Fatalf("expected Origin property in definition properties: %.300s", out)
+	}
+	if !strings.Contains(out, ">custom<") {
+		t.Fatalf("expected custom origin value in definition properties: %.300s", out)
+	}
+}
+
+func TestUpsertPage_RetriesConflictOnce(t *testing.T) {
+	var getCount, putCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			getCount++
+			w.Header().Set("Content-Type", "application/json")
+			version := 1
+			if getCount > 1 {
+				version = 2
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"results": []any{map[string]any{"id": "page-1", "version": map[string]any{"number": version}}},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/content/page-1":
+			putCount++
+			if putCount == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(`{"message":"version conflict"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	pageID, action, err := upsertPage(context.Background(), srv.Client(), "Basic dXNlcjp0b2tlbg==", srv.URL, "KB", "Retry Page", "<p>body</p>", "")
+	if err != nil {
+		t.Fatalf("upsertPage: %v", err)
+	}
+	if pageID != "page-1" || action != "updated" {
+		t.Fatalf("got (%q, %q), want (page-1, updated)", pageID, action)
+	}
+	if getCount < 2 {
+		t.Fatalf("expected second GET after conflict, got %d", getCount)
+	}
+	if putCount != 2 {
+		t.Fatalf("expected two PUT attempts, got %d", putCount)
+	}
+}
+
+func TestPrependOccurrenceProperties_JiraWorkflowGuidance(t *testing.T) {
+	ef := &entities.EntitiesFile{Definitions: []entities.Definition{{DefinitionID: "def-1", PluginID: "10001", Alert: "Test Alert"}}}
+	ei := buildEntityIndex(ef)
+	out := prependOccurrenceProperties("BODY", &entities.Occurrence{OccurrenceID: "occ-1", DefinitionID: "def-1", FindingID: "fin-1", URL: "https://example.com", Analyst: &entities.Analyst{Status: "confirm"}}, &ei, "", nil, "")
+	if !strings.Contains(out, "Workflow is managed in Jira") {
+		t.Fatalf("expected Jira workflow guidance, got: %.400s", out)
+	}
+	if strings.Contains(out, "run <code>zap-kb pull</code>") {
+		t.Fatalf("expected legacy pull guidance to be removed, got: %.400s", out)
+	}
+	if !strings.Contains(out, "<th>Status</th><td>triaged</td>") {
+		t.Fatalf("expected legacy confirm status to be canonicalized, got: %.400s", out)
+	}
+}
+
+func TestExportVault_PublishesQuickNavigationCompanionPages(t *testing.T) {
+	created := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			created[title] = true
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + title})
+		case strings.Contains(r.URL.Path, "/property"):
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# KB Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# KB Dashboard")
+	mustWriteFile(t, filepath.Join(dir, "triage-board.md"), "# Triage Board")
+	mustWriteFile(t, filepath.Join(dir, "issues.md"), "# Issues")
+	mustWriteFile(t, filepath.Join(dir, "occurrences.md"), "# Occurrences")
+	mustWriteFile(t, filepath.Join(dir, "rules.md"), "# Rules")
+	mustWriteFile(t, filepath.Join(dir, "by-domain.md"), "# By Domain")
+	mustWriteFile(t, filepath.Join(dir, "LEGEND.md"), "# Alias Legend")
+	mustWriteFile(t, filepath.Join(dir, "TRIAGE-GUIDE.md"), "# Triage Workflow Guide")
+	mustWriteFile(t, filepath.Join(dir, "by-scan.md"), "# Scans")
+	mustWriteFile(t, filepath.Join(dir, "EXECUTIVE-SUMMARY.md"), "# Executive Summary")
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "10001-nav.md"), "# Navigation Alert (Plugin 10001)")
+
+	_, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		APIToken: "token",
+		SpaceKey: "KB",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, title := range []string{"Issues", "Occurrences", "Rules", "Alias Legend", "Triage Workflow Guide", "Scans", "Executive Summary"} {
+		if !created[title] {
+			t.Fatalf("expected companion page %q to be created; got %v", title, created)
 		}
 	}
 }

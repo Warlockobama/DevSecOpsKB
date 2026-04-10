@@ -17,10 +17,11 @@ import (
 
 // PullOptions configures the pull operation.
 type PullOptions struct {
-	BaseURL  string
-	SpaceKey string
-	Username string
-	Token    string
+	BaseURL      string
+	SpaceKey     string
+	Username     string
+	Token        string
+	PullWorkflow bool // when true, allow Confluence workflow fields to write back into entities
 }
 
 // PullResult reports what the pull operation did.
@@ -31,16 +32,19 @@ type PullResult struct {
 	Errors    int
 }
 
-// PullAnalystData fetches analyst triage data from Confluence occurrence pages
-// and merges it back into the provided EntitiesFile. Returns modified EntitiesFile.
+// PullAnalystData optionally fetches workflow data from Confluence finding and
+// occurrence pages and merges it back into the provided EntitiesFile. Returns
+// a modified EntitiesFile.
 //
-// For each occurrence, it looks up the Confluence page by title (using
-// occurrencePageTitle), fetches the storage body, and parses the Workflow
-// section for Status/Owner/Tags/Tickets lines.
-//
-// Merge rule: Confluence value wins when non-empty (Confluence is source of truth
-// for analyst edits). Existing entities.Analyst values are used as fallback.
+// By default, Confluence pull does not overwrite analyst workflow fields because
+// Confluence is the evidence/publishing surface while Jira owns analyst workflow.
+// Set PullOptions.PullWorkflow to true only for legacy/manual workflows where
+// Confluence should be allowed to write workflow data back into entities.
 func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOptions) (entities.EntitiesFile, PullResult, error) {
+	if !opts.PullWorkflow {
+		return ef, PullResult{Unchanged: len(ef.Findings) + len(ef.Occurrences)}, nil
+	}
+
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" ||
 		strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.Token) == "" {
 		return ef, PullResult{}, fmt.Errorf("pull: missing required fields (base URL, space key, username, token)")
@@ -55,14 +59,15 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 	const concurrency = 3
 	sem := make(chan struct{}, concurrency)
 
-	type occResult struct {
+	type pageResult struct {
 		idx     int
 		analyst *entities.Analyst
 		found   bool
 		err     error
 	}
 
-	results := make([]occResult, len(ef.Occurrences))
+	occResults := make([]pageResult, len(ef.Occurrences))
+	findingResults := make([]pageResult, len(ef.Findings))
 	var wg sync.WaitGroup
 
 	for i := range ef.Occurrences {
@@ -75,28 +80,51 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 			o := &ef.Occurrences[i]
 			title := occurrencePageTitle(o, &ei)
 			if title == "" {
-				results[i] = occResult{idx: i, err: fmt.Errorf("could not derive page title for occurrence %s", o.OccurrenceID)}
+				occResults[i] = pageResult{idx: i, err: fmt.Errorf("could not derive page title for occurrence %s", o.OccurrenceID)}
 				return
 			}
 
 			body, err := fetchPageBody(ctx, client, auth, base, opts.SpaceKey, title)
 			if err != nil {
-				// Page not found is not a fatal error — just mark as not found.
-				results[i] = occResult{idx: i, found: false}
+				occResults[i] = pageResult{idx: i, found: false}
 				return
 			}
 
 			fields := parseWorkflowFromStorage(body)
 			confluenceAnalyst := fieldsToAnalyst(fields)
+			occResults[i] = pageResult{idx: i, analyst: mergeAnalystConfluenceWins(confluenceAnalyst, o.Analyst), found: true}
+		}(i)
+	}
 
-			merged := mergeAnalystConfluenceWins(confluenceAnalyst, o.Analyst)
-			results[i] = occResult{idx: i, analyst: merged, found: true}
+	for i := range ef.Findings {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			f := &ef.Findings[i]
+			title := findingPageTitle(f, &ei)
+			if title == "" {
+				findingResults[i] = pageResult{idx: i, err: fmt.Errorf("could not derive page title for finding %s", f.FindingID)}
+				return
+			}
+
+			body, err := fetchPageBody(ctx, client, auth, base, opts.SpaceKey, title)
+			if err != nil {
+				findingResults[i] = pageResult{idx: i, found: false}
+				return
+			}
+
+			fields := parseWorkflowFromStorage(body)
+			confluenceAnalyst := fieldsToAnalyst(fields)
+			findingResults[i] = pageResult{idx: i, analyst: mergeAnalystConfluenceWins(confluenceAnalyst, f.Analyst), found: true}
 		}(i)
 	}
 	wg.Wait()
 
 	var res PullResult
-	for _, r := range results {
+	for _, r := range occResults {
 		if r.err != nil {
 			fmt.Printf("[pull] warning: occurrence index %d: %v\n", r.idx, r.err)
 			res.Errors++
@@ -106,12 +134,29 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 			res.NotFound++
 			continue
 		}
-		// Determine if anything actually changed.
 		before := ef.Occurrences[r.idx].Analyst
 		if analystEqual(before, r.analyst) {
 			res.Unchanged++
 		} else {
 			ef.Occurrences[r.idx].Analyst = r.analyst
+			res.Updated++
+		}
+	}
+	for _, r := range findingResults {
+		if r.err != nil {
+			fmt.Printf("[pull] warning: finding index %d: %v\n", r.idx, r.err)
+			res.Errors++
+			continue
+		}
+		if !r.found {
+			res.NotFound++
+			continue
+		}
+		before := ef.Findings[r.idx].Analyst
+		if analystEqual(before, r.analyst) {
+			res.Unchanged++
+		} else {
+			ef.Findings[r.idx].Analyst = r.analyst
 			res.Updated++
 		}
 	}
@@ -139,9 +184,14 @@ func fetchPageBody(ctx context.Context, client httpDoer, auth, base, spaceKey, t
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	const maxBodyBytes = 2 << 20 // 2 MiB
+	lr := io.LimitReader(resp.Body, maxBodyBytes+1)
+	raw, err := io.ReadAll(lr)
 	if err != nil {
 		return "", fmt.Errorf("read body: %w", err)
+	}
+	if len(raw) > maxBodyBytes {
+		return "", fmt.Errorf("confluence page body exceeds %d bytes, refusing to parse", maxBodyBytes)
 	}
 
 	var result struct {
@@ -170,12 +220,18 @@ func stripHTMLTags(s string) string {
 	return reHTMLTag.ReplaceAllString(s, "")
 }
 
+// reParagraphBreak matches closing block-level tags that act as line delimiters.
+var reParagraphBreak = regexp.MustCompile(`(?i)</(p|li|tr|br|div)>|<br\s*/?>`)
+
 // parseWorkflowFromStorage parses the Workflow section from a Confluence storage body.
 // It extracts Status, Owner, Tags, and Tickets fields from lines of the form "- Key: value".
-// HTML tags are stripped from each line before parsing.
+// Block-level HTML tags (</p>, <br>, etc.) are normalised to newlines before stripping so
+// that fields stored on a single HTML line are still parsed correctly.
 func parseWorkflowFromStorage(storageBody string) map[string]string {
+	// Replace block-level closing tags with newlines so each field lands on its own line.
+	normalised := reParagraphBreak.ReplaceAllString(storageBody, "\n")
 	fields := make(map[string]string)
-	lines := strings.Split(storageBody, "\n")
+	lines := strings.Split(normalised, "\n")
 	for _, line := range lines {
 		plain := strings.TrimSpace(stripHTMLTags(line))
 		if !strings.HasPrefix(plain, "- ") {
@@ -196,26 +252,61 @@ func parseWorkflowFromStorage(storageBody string) map[string]string {
 	return fields
 }
 
+// validStatuses is the allowlist for Analyst.Status values accepted from Confluence pages.
+var validStatuses = map[string]struct{}{
+	"open": {}, "triaged": {}, "fp": {}, "accepted": {}, "fixed": {},
+}
+
+const (
+	maxOwnerBytes     = 200
+	maxTicketRefBytes = 64
+	maxTicketRefs     = 50
+	maxTags           = 50
+	maxTagBytes       = 128
+)
+
+// truncateBytes returns s truncated to at most n bytes at a valid UTF-8 boundary.
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && s[n]&0xC0 == 0x80 {
+		n-- // step back past continuation bytes
+	}
+	return s[:n]
+}
+
 // fieldsToAnalyst builds an Analyst struct from parsed workflow fields.
+// Status is validated against an allowlist; Owner, TicketRefs, and Tags are
+// length-capped to prevent oversized data from entering the entities file.
 func fieldsToAnalyst(fields map[string]string) *entities.Analyst {
 	a := &entities.Analyst{}
 	if v := fields["status"]; v != "" {
-		a.Status = v
+		status := entities.CanonicalAnalystStatus(v)
+		if _, ok := validStatuses[status]; ok {
+			a.Status = status
+		}
 	}
 	if v := fields["owner"]; v != "" {
-		a.Owner = v
+		a.Owner = truncateBytes(strings.TrimSpace(v), maxOwnerBytes)
 	}
 	if v := fields["tags"]; v != "" {
 		for _, t := range strings.Split(v, ",") {
 			if t = strings.TrimSpace(t); t != "" {
-				a.Tags = append(a.Tags, t)
+				a.Tags = append(a.Tags, truncateBytes(t, maxTagBytes))
+				if len(a.Tags) >= maxTags {
+					break
+				}
 			}
 		}
 	}
 	if v := fields["tickets"]; v != "" {
 		for _, t := range strings.Split(v, ",") {
 			if t = strings.TrimSpace(t); t != "" {
-				a.TicketRefs = append(a.TicketRefs, t)
+				a.TicketRefs = append(a.TicketRefs, truncateBytes(t, maxTicketRefBytes))
+				if len(a.TicketRefs) >= maxTicketRefs {
+					break
+				}
 			}
 		}
 	}

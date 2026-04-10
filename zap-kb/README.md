@@ -63,10 +63,12 @@ Examples:
 - Findings are deduped per rule+URL+method; occurrences are per alert event. Identical alerts in different scans stay separate because the occurrence ID includes the scan label.
 - IDs: finding front matter `id` uses `finding/<findingId>`; occurrence `id` uses `occurrence/<occurrenceId>`.
 - Timestamps: `generatedAt` marks build time; occurrences carry `observedAt` (defaults to generatedAt); findings derive `firstSeen`/`lastSeen` from occurrences.
-- Status/triage: `analyst.*` fields are preserved on regeneration and roll up to INDEX/DASHBOARD/triage-board.
+- Status/triage: finding-level `analyst.*` fields are the primary workflow overlay; occurrence data remains scan evidence and roll up to INDEX/DASHBOARD/triage-board.
 - Safety: “Next actions” endpoints are neutered (schemes stripped). Use `-redact domain,query,cookies,auth,headers,body` to scrub sensitive data.
 - Helper pages: vault emits `INDEX.md`, `DASHBOARD.md`, plus `triage-board.md` and `by-domain.md`.
 - Run artifacts: `-run-out` writes `run.json` (entities + meta + alerts); multiple runs can be merged (`-entities-in`) to build a multi-scan vault.
+- Jira/Confluence workflow: medium/high findings auto-export to analyst Jira; low/info findings require the `case-ticket` tag; recurring false positives are surfaced as tuning candidates and can be marked with `tune-scan` for follow-up. Confluence pull does not overwrite workflow unless `pull -confluence-pull-workflow` is explicitly used.
+- Definition separation: definitions carry `origin` (`tool` or `custom`) so project-owned detections stay distinct from native tool rules.
 
 ## Scripts
 PowerShell helper `scripts/kb.ps1` wraps common flows:

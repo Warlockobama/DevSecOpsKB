@@ -402,10 +402,10 @@ func inlineToStorageWithTitles(s string, titleMap map[string]string) string {
 						// Confluence folder page titles; others render as bold text.
 						if strings.HasPrefix(url, "#") {
 							anchorPageMap := map[string]string{
-								"#issues":      "Findings",
-								"#findings":    "Findings",
-								"#occurrences": "Findings",
-								"#rules":       "Definitions",
+								"#issues":      "Issues",
+								"#findings":    "Issues",
+								"#occurrences": "Occurrences",
+								"#rules":       "Rules",
 							}
 							if pageTitle, ok := anchorPageMap[url]; ok {
 								out.WriteString(`<ac:link><ri:page ri:content-title="`)

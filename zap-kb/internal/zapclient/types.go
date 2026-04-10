@@ -25,8 +25,9 @@ type Alert struct {
 	Param      string `json:"param"`
 	Attack     string `json:"attack"`
 	Evidence   string `json:"evidence"`
-	Other      string `json:"other"`
-	Solution   string `json:"solution"`
+	Other       string `json:"other"`
+	Description string `json:"desc"` // ZAP alert description ("desc" in API / report JSON)
+	Solution    string `json:"solution"`
 	Reference  string `json:"reference"`
 	CWEID      Intish `json:"cweid"`
 	WASCID     Intish `json:"wascid"`

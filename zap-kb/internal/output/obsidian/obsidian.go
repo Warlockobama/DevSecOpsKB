@@ -2,6 +2,7 @@ package obsidian
 
 import (
 	"fmt"
+	"net/http"
 	neturl "net/url"
 	"os"
 	pathpkg "path"
@@ -24,10 +25,20 @@ type Options struct {
 	SiteLabel string
 	// New: base URL to link back to ZAP API message JSON/HTML.
 	ZapBaseURL string
+	// JiraBaseURL, when set, turns analyst ticket refs into live Jira browse links.
+	JiraBaseURL string
+	// JiraStatusByKey carries raw Jira workflow statuses fetched at publish time.
+	JiraStatusByKey map[string]string
+	// JiraStatusSynced records when JiraStatusByKey was fetched.
+	JiraStatusSynced string
 	// TriageGuidanceFn, if non-nil, is called with a pluginID and returns
 	// plugin-specific triage tips. Keeping this as an injected function prevents
 	// the tool-agnostic vault writer from importing tool-specific packages.
 	TriageGuidanceFn func(pluginID string) []string
+	// CarryForwardOccurrenceMeta rehydrates analyst state and selected metadata
+	// from existing occurrence notes before the vault is rebuilt. Leave false for
+	// raw scanner publishes so old local triage state does not contaminate a clean run.
+	CarryForwardOccurrenceMeta bool
 }
 
 // WriteVault writes an Obsidian-ready folder tree from the Entities model.
@@ -42,9 +53,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
 
-	// Carry forward analyst status and timestamps from any existing occurrence files BEFORE
-	// we clear the directories, so triage annotations are not silently discarded on each run.
-	existingOccMeta := loadOccurrenceMeta(occDir)
+	// Optionally carry forward analyst status and timestamps from existing
+	// occurrence files BEFORE we clear the directories. Raw scanner publishes
+	// should start from the input entities file, not from stale local markdown.
+	existingOccMeta := map[string]occMeta{}
+	if opts.CarryForwardOccurrenceMeta {
+		existingOccMeta = loadOccurrenceMeta(occDir)
+	}
 
 	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
 	// no longer in the entities file) don't accumulate and get exported to Confluence.
@@ -162,18 +177,20 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	var defSummaries []defSummary
 
 	type issueSummary struct {
-		Link           string
-		Alias          string
-		Method         string
-		URL            string
-		Severity       string
-		Occurrences    int
-		PrimaryStatus  string
-		StatusOverview string
-		RuleTitle      string
-		ObservedAt     string
-		ScanLabel      string
-		PluginID       string
+		Link            string
+		Alias           string
+		Method          string
+		URL             string
+		Severity        string
+		Occurrences     int
+		PrimaryStatus   string
+		StatusOverview  string
+		RuleTitle       string
+		ObservedAt      string
+		ScanLabel       string
+		PluginID        string
+		TuningCandidate bool
+		TuningScans     int
 	}
 	var issueSummaries []issueSummary
 
@@ -248,6 +265,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		kv := map[string]any{
 			"id":            d.DefinitionID,
 			"pluginId":      d.PluginID,
+			"origin":        entities.DefinitionOriginValue(d.Origin, d.PluginID, d.Detection),
 			"name":          firstNonEmpty(d.Alert, d.Name),
 			"schemaVersion": ef.SchemaVersion,
 			"sourceTool":    ef.SourceTool,
@@ -293,7 +311,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		title := firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		fmt.Fprintf(&b, "# %s (Plugin %s)\n\n", title, d.PluginID)
-		if isCustomRule(d.PluginID, d.Detection) {
+		if isCustomRule(d) {
 			b.WriteString("> [!Note] Custom rule\n> This is a project-specific detection rule, not a built-in ZAP plugin. It was written for this application's known attack surface.\n\n")
 		}
 		// Severity rollup for quick triage
@@ -356,10 +374,16 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 		}
 
+		// Description — "what is this vulnerability" from the scanner.
+		if strings.TrimSpace(d.Description) != "" {
+			b.WriteString("## Description\n\n")
+			b.WriteString(strings.TrimSpace(d.Description) + "\n\n")
+		}
+
 		// Detection logic (if enriched)
 		if d.Detection != nil {
 			b.WriteString("## Detection logic\n\n")
-			if isCustomRule(d.PluginID, d.Detection) {
+			if isCustomRule(d) {
 				b.WriteString("- Rule source: Custom (project-specific)\n")
 			}
 			if strings.TrimSpace(d.Detection.LogicType) != "" {
@@ -591,6 +615,20 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		sevTxt, _ := deriveSeverity(f.Risk, f.RiskCode)
 		b.WriteString(calloutForSeverity(sevTxt, fmt.Sprintf("Risk: %s (%s) — Confidence: %s", f.Risk, f.RiskCode, f.Confidence)))
 
+		// Recurrence advisory banner (shown before body so it's immediately visible)
+		if r := f.Recurrence; r != nil {
+			priorLabel := titleASCII(r.PriorStatus)
+			fmt.Fprintf(&b, "> [!Warning] Recurrence detected\n")
+			fmt.Fprintf(&b, "> This finding was previously **%s** but new occurrences appeared", priorLabel)
+			if strings.TrimSpace(r.RecurredAt) != "" {
+				fmt.Fprintf(&b, " on %s", formatShortDate(r.RecurredAt))
+			}
+			if strings.TrimSpace(r.RecurredInScan) != "" {
+				fmt.Fprintf(&b, " (scan: %s)", r.RecurredInScan)
+			}
+			fmt.Fprintf(&b, ".\n> Review and update the analyst status as needed.\n\n")
+		}
+
 		defTitle := f.DefinitionID
 		if def, ok := defByID[f.DefinitionID]; ok {
 			if t := firstNonEmpty(def.Alert, def.Name, def.PluginID); strings.TrimSpace(t) != "" {
@@ -681,40 +719,31 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
-		// Most recent occurrence traffic (if present)
+		// Most recent occurrence traffic (if present) — rendered as raw HTTP code
+		// blocks matching the occurrence page format so analysts see headers + body
+		// in a single scannable block rather than bullet lists.
 		if len(occs) > 0 {
 			first := occs[0]
 			if first.Request != nil || first.Response != nil {
 				b.WriteString("## Most recent occurrence traffic\n\n")
+				b.WriteString("<details>\n<summary>Show traffic</summary>\n\n")
 				if first.Request != nil {
-					reqURL, _ := neturl.Parse(first.URL)
 					b.WriteString("### Request\n\n")
-					fmt.Fprintf(&b, "- Method: %s\n", strings.ToUpper(strings.TrimSpace(first.Method)))
-					if reqURL != nil {
-						fmt.Fprintf(&b, "- Host: %s\n", reqURL.Host)
-						fmt.Fprintf(&b, "- Path: %s\n", reqURL.Path)
-					}
-					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Request.Headers))
-					writeHeadersWithLimit(&b, first.Request.Headers, 10)
-					if strings.TrimSpace(first.Request.BodySnippet) != "" || first.Request.BodyBytes > 0 {
-						writeBodySnippet(&b, first.Request.BodySnippet, first.Request.BodyBytes, defaultBodyTruncateBytes, "http")
-					}
+					writeHTTPRequestBlock(&b, first.Method, first.URL, first.Request)
+					b.WriteString("\n")
 				}
 				if first.Response != nil {
 					b.WriteString("### Response\n\n")
-					if first.Response.StatusCode > 0 {
-						fmt.Fprintf(&b, "- Status: %d\n", first.Response.StatusCode)
-					}
-					fmt.Fprintf(&b, "- Headers captured: %d\n\n", len(first.Response.Headers))
-					writeHeadersWithLimit(&b, first.Response.Headers, 12)
-					if strings.TrimSpace(first.Response.BodySnippet) != "" || first.Response.BodyBytes > 0 {
-						writeBodySnippet(&b, first.Response.BodySnippet, first.Response.BodyBytes, defaultBodyTruncateBytes, "http")
-					}
+					writeHTTPResponseBlock(&b, first.Response)
+					b.WriteString("\n")
 				}
+				b.WriteString("</details>\n\n")
 			}
 		}
 
-		// Issue-level Workflow
+		// Issue-level workflow keeps finding-level triage authoritative while
+		// preserving occurrence-derived history and counts.
+		workflowStatus := primaryStatus
 		owners := collectAnalystSet(occs, func(a *entities.Analyst) []string {
 			if strings.TrimSpace(a.Owner) == "" {
 				return nil
@@ -725,13 +754,52 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		tickets := collectAnalystSet(occs, func(a *entities.Analyst) []string { return a.TicketRefs })
 		updated := latestAnalystUpdate(occs)
 		notes := collectAnalystNotes(occs, 5)
+		if f.Analyst != nil {
+			if status := entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)); status != "" {
+				workflowStatus = status
+			}
+			if owner := strings.TrimSpace(f.Analyst.Owner); owner != "" {
+				owners = unionStringsOrdered([]string{owner}, owners)
+			}
+			tags = unionStringsOrdered(trimStrings(f.Analyst.Tags), tags)
+			tickets = unionStringsOrdered(trimStrings(f.Analyst.TicketRefs), tickets)
+			updated = latestTimestampString(strings.TrimSpace(f.Analyst.UpdatedAt), updated)
+			notes = mergeAnalystNotes(f.Analyst.Notes, notes, 5)
+		}
+		tuningCandidate, tuningScans := recurringFalsePositiveTuningCandidate(workflowStatus, occs)
 
 		b.WriteString("## Workflow\n\n")
-		fmt.Fprintf(&b, "- Status: %s (%s)\n", titleASCII(primaryStatus), statusSummary)
+		fmt.Fprintf(&b, "- Status: %s (%s)\n", titleASCII(workflowStatus), statusSummary)
 		fmt.Fprintf(&b, "- Owners: %s\n", formatListOrPlaceholder(owners, "_None recorded_"))
 		fmt.Fprintf(&b, "- Tags: %s\n", formatListOrPlaceholder(tags, "_None_"))
-		fmt.Fprintf(&b, "- Tickets: %s\n", formatListOrPlaceholder(tickets, "_None_"))
+		fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(tickets, opts.JiraBaseURL, "_None_"))
+		if raw := primaryJiraStatus(tickets, opts.JiraStatusByKey); raw != "" {
+			fmt.Fprintf(&b, "- Jira status: %s\n", raw)
+		}
+		if len(tickets) > 0 {
+			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
+			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
+				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
+			}
+		}
 		fmt.Fprintf(&b, "- Updated: %s\n", fallbackString(updated, "_Not recorded_"))
+		if tuningCandidate {
+			fmt.Fprintf(&b, "- Tuning candidate: yes (false positive across %d scans)\n", tuningScans)
+			if containsStringFold(tags, "tune-scan") {
+				b.WriteString("- Tuning follow-up requested: yes (`tune-scan`)\n")
+			} else {
+				b.WriteString("- Tuning follow-up requested: no (add `tune-scan` to `analyst.tags` if scan tuning work is needed)\n")
+			}
+		}
+		// Rationale (finding-level, separate from per-occurrence notes)
+		rationale := ""
+		if f.Analyst != nil && strings.TrimSpace(f.Analyst.Rationale) != "" {
+			rationale = strings.TrimSpace(f.Analyst.Rationale)
+		}
+		if rationale != "" {
+			fmt.Fprintf(&b, "- Rationale: %s\n", rationale)
+		}
+
 		if len(notes) > 0 {
 			b.WriteString("\n### Analyst Notes\n\n")
 			for _, note := range notes {
@@ -740,9 +808,35 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
+		// Suppression block
+		if sup := f.Suppression; sup != nil {
+			b.WriteString("### Suppression\n\n")
+			fmt.Fprintf(&b, "- Scope: %s\n", sup.Scope)
+			if strings.TrimSpace(sup.Reason) != "" {
+				fmt.Fprintf(&b, "- Reason: %s\n", sup.Reason)
+			}
+			if strings.TrimSpace(sup.DecidedBy) != "" {
+				fmt.Fprintf(&b, "- Decided by: %s\n", sup.DecidedBy)
+			}
+			if strings.TrimSpace(sup.DecidedAt) != "" {
+				fmt.Fprintf(&b, "- Decided at: %s\n", formatShortDate(sup.DecidedAt))
+			}
+			if strings.TrimSpace(sup.ExpiresAt) != "" {
+				fmt.Fprintf(&b, "- Expires at: %s\n", formatShortDate(sup.ExpiresAt))
+			} else {
+				b.WriteString("- Expires: permanent\n")
+			}
+			if strings.TrimSpace(sup.OccurrenceRef) != "" {
+				fmt.Fprintf(&b, "- Occurrence ref: %s\n", sup.OccurrenceRef)
+			}
+			b.WriteString("\n")
+		}
+
 		b.WriteString("### Quick triage shortcuts\n\n")
 		b.WriteString("- Set `analyst.status` to: open | triaged | fp | accepted | fixed\n")
+		b.WriteString("- Add `case-ticket` to `analyst.tags` to export low/info findings to the analyst Jira project\n")
 		b.WriteString("- Add ticket IDs under `analyst.ticketRefs` (YAML list)\n")
+		b.WriteString("- Add `tune-scan` to `analyst.tags` when a recurring false positive needs detection tuning follow-up\n")
 		b.WriteString("- Assign `analyst.owner` and `analyst.tags` to drive queues\n\n")
 
 		b.WriteString("### Analyst notebook\n\n")
@@ -754,19 +848,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if d, ok := defByID[f.DefinitionID]; ok {
 			ruleTitle = firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		}
+
 		issueSummaries = append(issueSummaries, issueSummary{
-			Link:           filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
-			Alias:          alias,
-			Method:         strings.TrimSpace(f.Method),
-			URL:            strings.TrimSpace(f.URL),
-			Severity:       strings.ToLower(strings.TrimSpace(sevTxt)),
-			Occurrences:    len(occs),
-			PrimaryStatus:  primaryStatus,
-			StatusOverview: statusSummary,
-			RuleTitle:      ruleTitle,
-			ObservedAt:     lastSeen,
-			ScanLabel:      fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
-			PluginID:       strings.TrimSpace(f.PluginID),
+			Link:            filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
+			Alias:           alias,
+			Method:          strings.TrimSpace(f.Method),
+			URL:             strings.TrimSpace(f.URL),
+			Severity:        strings.ToLower(strings.TrimSpace(sevTxt)),
+			Occurrences:     len(occs),
+			PrimaryStatus:   workflowStatus,
+			StatusOverview:  statusSummary,
+			RuleTitle:       ruleTitle,
+			ObservedAt:      lastSeen,
+			ScanLabel:       fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
+			PluginID:        strings.TrimSpace(f.PluginID),
+			TuningCandidate: tuningCandidate,
+			TuningScans:     tuningScans,
 		})
 
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -828,7 +925,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		var aTags []string
 		var aTickets []string
 		if o.Analyst != nil {
-			aStatus = strings.TrimSpace(o.Analyst.Status)
+			aStatus = entities.CanonicalAnalystStatus(strings.TrimSpace(o.Analyst.Status))
 			if aStatus == "" {
 				aStatus = "open"
 			}
@@ -966,72 +1063,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("_Note: review/redact sensitive headers/cookies before sharing externally._\n\n")
 		// No deep links to ZAP here (requested)
 
-		// Traffic with content-type/length hints (collapsible)
+		// Traffic rendered as HTTP blocks so analysts can scan request/response quickly.
 		if o.Request != nil || o.Response != nil {
 			b.WriteString("## Traffic\n\n")
 			b.WriteString("<details>\n<summary>Show traffic</summary>\n\n")
 			if o.Request != nil {
 				b.WriteString("### Request\n\n")
-				fmt.Fprintf(&b, "%s %s\n\n", strings.ToUpper(strings.TrimSpace(o.Method)), o.URL)
-				if len(o.Request.Headers) > 0 {
-					// quick summary
-					ct := headerValue(o.Request.Headers, "Content-Type")
-					cl := headerValue(o.Request.Headers, "Content-Length")
-					if ct != "" {
-						fmt.Fprintf(&b, "_Content-Type: %s_\n\n", ct)
-					}
-					if cl != "" {
-						fmt.Fprintf(&b, "_Content-Length: %s_\n\n", cl)
-					}
-					fmt.Fprintf(&b, "_Headers: %d_\n\n", len(o.Request.Headers))
-					b.WriteString("Headers:\n")
-					for _, h := range o.Request.Headers {
-						fmt.Fprintf(&b, "- %s: %s\n", h.Name, trafficHeaderValue(h.Name, h.Value))
-					}
-					b.WriteString("\n")
-				}
-				if o.Request.BodySnippet != "" {
-					b.WriteString("```http\n")
-					b.WriteString(o.Request.BodySnippet)
-					b.WriteString("\n```\n\n")
-					if o.Request.BodyBytes > len(o.Request.BodySnippet) {
-						fmt.Fprintf(&b, "_Request body truncated to %d bytes (of %d)_\n\n", len(o.Request.BodySnippet), o.Request.BodyBytes)
-					}
-				} else if o.Request.BodyBytes > 0 {
-					fmt.Fprintf(&b, "_Request body: %d bytes_\n\n", o.Request.BodyBytes)
-				}
+				writeHTTPRequestBlock(&b, o.Method, o.URL, o.Request)
+				b.WriteString("\n")
 			}
 			if o.Response != nil {
 				b.WriteString("### Response\n\n")
-				if o.Response.StatusCode > 0 {
-					fmt.Fprintf(&b, "Status: %d\n\n", o.Response.StatusCode)
-				}
-				if len(o.Response.Headers) > 0 {
-					ct := headerValue(o.Response.Headers, "Content-Type")
-					cl := headerValue(o.Response.Headers, "Content-Length")
-					if ct != "" {
-						fmt.Fprintf(&b, "_Content-Type: %s_\n\n", ct)
-					}
-					if cl != "" {
-						fmt.Fprintf(&b, "_Content-Length: %s_\n\n", cl)
-					}
-					fmt.Fprintf(&b, "_Headers: %d_\n\n", len(o.Response.Headers))
-					b.WriteString("Headers:\n")
-					for _, h := range o.Response.Headers {
-						fmt.Fprintf(&b, "- %s: %s\n", h.Name, trafficHeaderValue(h.Name, h.Value))
-					}
-					b.WriteString("\n")
-				}
-				if o.Response.BodySnippet != "" {
-					b.WriteString("```http\n")
-					b.WriteString(o.Response.BodySnippet)
-					b.WriteString("\n```\n\n")
-					if o.Response.BodyBytes > len(o.Response.BodySnippet) {
-						fmt.Fprintf(&b, "_Response body truncated to %d bytes (of %d)_\n\n", len(o.Response.BodySnippet), o.Response.BodyBytes)
-					}
-				} else if o.Response.BodyBytes > 0 {
-					fmt.Fprintf(&b, "_Response body: %d bytes_\n\n", o.Response.BodyBytes)
-				}
+				writeHTTPResponseBlock(&b, o.Response)
+				b.WriteString("\n")
 			}
 			b.WriteString("</details>\n\n")
 		}
@@ -1068,7 +1112,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(aTags, ", "))
 		}
 		if len(aTickets) > 0 {
-			fmt.Fprintf(&b, "- Tickets: %s\n", strings.Join(aTickets, ", "))
+			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(aTickets, opts.JiraBaseURL, "_None_"))
+			if raw := primaryJiraStatus(aTickets, opts.JiraStatusByKey); raw != "" {
+				fmt.Fprintf(&b, "- Jira status: %s\n", raw)
+			}
+			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
+			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
+				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
+			}
 		}
 		if aUpdated != "" {
 			fmt.Fprintf(&b, "- Updated: %s\n", aUpdated)
@@ -1081,7 +1132,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("_Add `analyst.notes` in front matter for findings, evidence pointers, and next steps._\n\n")
 		}
 
-		b.WriteString("\n> **To update status:** edit this page, change the `Status:` line above to one of `open | triaged | fp | accepted | fixed`, then run `zap-kb pull` to sync back to entities.json.\n")
+		b.WriteString("\n> **Workflow note:** use Jira for analyst workflow state. This page is the evidence view; keep `analyst.ticketRefs`, notes, and tags aligned with the linked analyst case. Pull-based workflow writeback is legacy-only.\n")
 		// Governance prompts
 		b.WriteString("\n### Governance\n\n")
 		b.WriteString("- False positive reason: \n")
@@ -1197,14 +1248,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		b.WriteString("## Quick navigation\n")
 		b.WriteString("- [Triage board](triage-board.md)\n")
-		b.WriteString("- [Issues](#issues)\n")
-		b.WriteString("- [Occurrences](#occurrences)\n")
-		b.WriteString("- [Rules](#rules)\n")
+		b.WriteString("- [Issues](issues.md)\n")
+		b.WriteString("- [Occurrences](occurrences.md)\n")
+		b.WriteString("- [Rules](rules.md)\n")
 		b.WriteString("- [By domain](by-domain.md)\n")
-		b.WriteString("- [[LEGEND.md|Alias Legend]]\n")
-		b.WriteString("- [[TRIAGE-GUIDE.md|Triage Workflow Guide]]\n")
-		b.WriteString("- [[by-scan.md|Scans]]\n")
-		b.WriteString("- [[EXECUTIVE-SUMMARY.md|Executive Summary]]\n")
+		b.WriteString("- [Alias Legend](LEGEND.md)\n")
+		b.WriteString("- [Triage Workflow Guide](TRIAGE-GUIDE.md)\n")
+		b.WriteString("- [Scans](by-scan.md)\n")
+		b.WriteString("- [Executive Summary](EXECUTIVE-SUMMARY.md)\n")
 		b.WriteString("\n")
 
 		triageSection.WriteString("## Triage board\n\n")
@@ -1232,25 +1283,40 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		triageSection.WriteString("\n")
 		b.WriteString(triageSection.String())
 
-		// Next-actions: top issues by severity/count
-		b.WriteString("Next actions (edit these):\n")
-		allIssues := append([]issueSummary(nil), issueSummaries...)
-		sortIssues(allIssues)
-		if len(allIssues) == 0 {
-			b.WriteString("- [ ] Add next actions\n\n")
+		// Priority queue: highest-severity actionable work first.
+		// Resolved findings (fixed, accepted, fp) are excluded — they belong in the
+		// closed queue, not the priority list.
+		isActionable := func(status string) bool {
+			switch strings.ToLower(strings.TrimSpace(status)) {
+			case "fixed", "accepted", "fp":
+				return false
+			}
+			return true // open, triaged, or unset
+		}
+		b.WriteString("## Priority queue\n\n")
+		var actionableIssues []issueSummary
+		for _, is := range issueSummaries {
+			if isActionable(is.PrimaryStatus) {
+				actionableIssues = append(actionableIssues, is)
+			}
+		}
+		sortIssues(actionableIssues)
+		if len(actionableIssues) == 0 {
+			b.WriteString("_No open issues._\n\n")
 		} else {
-			maxActions := 3
-			if maxActions > len(allIssues) {
-				maxActions = len(allIssues)
+			maxActions := 5
+			if maxActions > len(actionableIssues) {
+				maxActions = len(actionableIssues)
 			}
 			for i := 0; i < maxActions; i++ {
-				is := allIssues[i]
+				is := actionableIssues[i]
 				rule := is.RuleTitle
 				if rule == "" {
 					rule = "Rule"
 				}
 				endpoint := fmt.Sprintf("%s %s", strings.TrimSpace(is.Method), neuterURL(is.URL))
-				fmt.Fprintf(&b, "- [ ] %s: `%s` (`%s`) | %s\n", titleASCII(is.Severity), endpoint, rule, titleASCII(fallbackString(is.PrimaryStatus, "open")))
+				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, titleASCII(fallbackString(is.PrimaryStatus, "open")))
+				fmt.Fprintf(&b, "  Rule: %s\n", rule)
 			}
 			b.WriteString("\n")
 		}
@@ -1514,7 +1580,17 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
-		if err := os.WriteFile(index, []byte(b.String()), 0o644); err != nil {
+		indexContent := b.String()
+		if err := os.WriteFile(index, []byte(indexContent), 0o644); err != nil {
+			return err
+		}
+		if err := writeSectionPage(root, "issues.md", "Issues", extractMarkdownSection(indexContent, "Issues")); err != nil {
+			return err
+		}
+		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(indexContent, "Occurrences")); err != nil {
+			return err
+		}
+		if err := writeSectionPage(root, "rules.md", "Rules", extractMarkdownSection(indexContent, "Rules")); err != nil {
 			return err
 		}
 		// Companion pages for quick navigation
@@ -1528,8 +1604,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			const triageCap = 50
 			// Collect findings whose primary status is open (empty counts as open).
 			type openFinding struct {
-				is       issueSummary
-				sevRank  int
+				is      issueSummary
+				sevRank int
 			}
 			var openFindings []openFinding
 			for _, is := range issueSummaries {
@@ -1606,6 +1682,29 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				}
 				tbContent += qb.String()
 			}
+		}
+
+		var tuningCandidates []issueSummary
+		for _, is := range issueSummaries {
+			if is.TuningCandidate {
+				tuningCandidates = append(tuningCandidates, is)
+			}
+		}
+		if len(tuningCandidates) > 0 {
+			sort.Slice(tuningCandidates, func(i, j int) bool {
+				if tuningCandidates[i].TuningScans != tuningCandidates[j].TuningScans {
+					return tuningCandidates[i].TuningScans > tuningCandidates[j].TuningScans
+				}
+				return tuningCandidates[i].Alias < tuningCandidates[j].Alias
+			})
+			var tb strings.Builder
+			tb.WriteString("## Tuning candidates\n\n")
+			for _, is := range tuningCandidates {
+				ruleTitle := fallbackString(is.RuleTitle, "Rule")
+				fmt.Fprintf(&tb, "- [[%s|%s]] - false positive across %d scans\n", is.Link, ruleTitle, is.TuningScans)
+			}
+			tb.WriteString("\n")
+			tbContent += tb.String()
 		}
 
 		if err := os.WriteFile(filepath.Join(root, "triage-board.md"), []byte("# Triage board\n\n"+tbContent), 0o644); err != nil {
@@ -1718,7 +1817,7 @@ func addStatusToYAMLStrAny(kv map[string]any, prefix string, m map[string]int) {
 }
 
 // defaultBodyTruncateBytes is the display limit for request/response body snippets.
-const defaultBodyTruncateBytes = 1024
+const defaultBodyTruncateBytes = 4096
 
 var nonWord = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 
@@ -1978,22 +2077,8 @@ func calloutForSeverity(sev string, text string) string {
 //   - pluginID starts with "zap-"
 //   - Detection.RuleSource == "custom"
 //   - Detection is nil and pluginID is not a pure numeric string
-func isCustomRule(pluginID string, det *entities.Detection) bool {
-	if strings.HasPrefix(pluginID, "zap-") {
-		return true
-	}
-	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
-		return true
-	}
-	if det == nil {
-		// Check whether pluginID is non-numeric (built-in ZAP rules use numeric IDs).
-		for _, r := range pluginID {
-			if r < '0' || r > '9' {
-				return true
-			}
-		}
-	}
-	return false
+func isCustomRule(def entities.Definition) bool {
+	return entities.IsCustomDefinition(&def)
 }
 
 // headerValue finds a header value by case-insensitive name
@@ -2240,7 +2325,7 @@ func scanVaultOccurrences(occDir string) (map[string]int, map[string]map[string]
 		if dom == "" {
 			dom = computeDomainLabel(strings.TrimSpace(y["url"]), "")
 		}
-		st := strings.TrimSpace(y["analyst.status"]) // may be empty
+		st := entities.CanonicalAnalystStatus(strings.TrimSpace(y["analyst.status"])) // may be empty
 		if st == "" {
 			st = "open"
 		}
@@ -2295,7 +2380,7 @@ func loadOccurrenceMeta(occDir string) map[string]occMeta {
 			ScanLabel:  strings.TrimSpace(y["scan.label"]),
 		}
 		analyst := entities.Analyst{
-			Status:    strings.TrimSpace(y["analyst.status"]),
+			Status:    entities.CanonicalAnalystStatus(strings.TrimSpace(y["analyst.status"])),
 			Owner:     strings.TrimSpace(y["analyst.owner"]),
 			Notes:     strings.TrimSpace(y["analyst.notes"]),
 			UpdatedAt: strings.TrimSpace(y["analyst.updatedAt"]),
@@ -2448,6 +2533,127 @@ func collectAnalystSet(occs []entities.Occurrence, fn func(*entities.Analyst) []
 	return out
 }
 
+func unionStringsOrdered(preferred []string, fallback []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	appendAll := func(values []string) {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	appendAll(preferred)
+	appendAll(fallback)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func recurringFalsePositiveTuningCandidate(status string, occs []entities.Occurrence) (bool, int) {
+	if strings.TrimSpace(status) != "fp" {
+		return false, 0
+	}
+	scans := distinctScanLabels(occs)
+	if len(scans) < 2 {
+		return false, len(scans)
+	}
+	return true, len(scans)
+}
+
+func distinctScanLabels(occs []entities.Occurrence) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, occ := range occs {
+		scan := strings.TrimSpace(occ.ScanLabel)
+		if scan == "" {
+			continue
+		}
+		if _, ok := seen[scan]; ok {
+			continue
+		}
+		seen[scan] = struct{}{}
+		out = append(out, scan)
+	}
+	sort.Strings(out)
+	return out
+}
+func latestTimestampString(values ...string) string {
+	var latest time.Time
+	latestRaw := ""
+	hasParsed := false
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, value); err == nil {
+			if !hasParsed || t.After(latest) {
+				latest = t
+				latestRaw = value
+				hasParsed = true
+			}
+			continue
+		}
+		if !hasParsed && (latestRaw == "" || strings.Compare(value, latestRaw) > 0) {
+			latestRaw = value
+		}
+	}
+	return latestRaw
+}
+
+func mergeAnalystNotes(preferred string, fallback []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	appendLines := func(note string) {
+		for _, line := range strings.Split(strings.TrimSpace(note), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if _, ok := seen[line]; ok {
+				continue
+			}
+			seen[line] = struct{}{}
+			out = append(out, line)
+			if len(out) >= limit {
+				return
+			}
+		}
+	}
+	appendLines(preferred)
+	if len(out) >= limit {
+		return out
+	}
+	for _, note := range fallback {
+		note = strings.TrimSpace(note)
+		if note == "" {
+			continue
+		}
+		if _, ok := seen[note]; ok {
+			continue
+		}
+		seen[note] = struct{}{}
+		out = append(out, note)
+		if len(out) >= limit {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 func latestAnalystUpdate(occs []entities.Occurrence) string {
 	var latest time.Time
 	var latestRaw string
@@ -2505,11 +2711,236 @@ func collectAnalystNotes(occs []entities.Occurrence, limit int) []string {
 	return notes
 }
 
+func containsStringFold(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
+}
+
 func formatListOrPlaceholder(items []string, placeholder string) string {
 	if len(items) == 0 {
 		return placeholder
 	}
 	return strings.Join(items, ", ")
+}
+
+func formatTicketRefsMarkdown(refs []string, jiraBaseURL, placeholder string) string {
+	items := trimStrings(refs)
+	if len(items) == 0 {
+		return placeholder
+	}
+	formatted := make([]string, 0, len(items))
+	for _, ref := range items {
+		formatted = append(formatted, formatTicketRefMarkdown(ref, jiraBaseURL))
+	}
+	return strings.Join(formatted, ", ")
+}
+
+func formatTicketRefMarkdown(ref, jiraBaseURL string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if isHTTPURL(ref) {
+		return fmt.Sprintf("[%s](%s)", ref, ref)
+	}
+	if isJiraIssueKey(ref) && strings.TrimSpace(jiraBaseURL) != "" {
+		base := strings.TrimRight(strings.TrimSpace(jiraBaseURL), "/")
+		return fmt.Sprintf("[%s](%s/browse/%s)", ref, base, ref)
+	}
+	return ref
+}
+
+func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
+	if len(refs) == 0 || len(statusByKey) == 0 {
+		return ""
+	}
+	for _, ref := range refs {
+		key := strings.TrimSpace(ref)
+		if isHTTPURL(key) {
+			parts := strings.Split(strings.TrimRight(key, "/"), "/")
+			key = parts[len(parts)-1]
+		}
+		if !isJiraIssueKey(key) {
+			continue
+		}
+		if raw := strings.TrimSpace(statusByKey[key]); raw != "" {
+			return raw
+		}
+	}
+	return ""
+}
+
+func writeHTTPRequestBlock(b *strings.Builder, method, rawURL string, req *entities.HTTPRequest) {
+	if b == nil || req == nil {
+		return
+	}
+	b.WriteString("```http\n")
+	b.WriteString(formatHTTPRequestBlock(method, rawURL, req))
+	b.WriteString("\n```\n")
+	if req.BodyBytes > len(strings.TrimRight(req.BodySnippet, "\n")) {
+		fmt.Fprintf(b, "\n_Request body truncated to %d bytes (of %d)_\n", len(strings.TrimRight(req.BodySnippet, "\n")), req.BodyBytes)
+	}
+}
+
+func formatHTTPRequestBlock(method, rawURL string, req *entities.HTTPRequest) string {
+	var out strings.Builder
+	parsed, _ := neturl.Parse(strings.TrimSpace(rawURL))
+	verb := strings.ToUpper(strings.TrimSpace(method))
+	if verb == "" {
+		verb = "GET"
+	}
+	target := strings.TrimSpace(rawURL)
+	if parsed != nil && parsed.Host != "" {
+		target = parsed.EscapedPath()
+		if target == "" {
+			target = "/"
+		}
+		if parsed.RawQuery != "" {
+			target += "?" + parsed.RawQuery
+		}
+	}
+	fmt.Fprintf(&out, "%s %s HTTP/1.1\n", verb, target)
+	if parsed != nil && parsed.Host != "" && !hasHeader(req.Headers, "Host") {
+		fmt.Fprintf(&out, "Host: %s\n", parsed.Host)
+	}
+	writeHTTPHeaders(&out, req.Headers)
+	body := strings.TrimRight(redactBody(req.BodySnippet), "\n")
+	if body != "" || req.BodyBytes > 0 {
+		out.WriteString("\n")
+		if body != "" {
+			out.WriteString(body)
+		} else {
+			fmt.Fprintf(&out, "[body omitted, %d bytes]", req.BodyBytes)
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func writeHTTPResponseBlock(b *strings.Builder, resp *entities.HTTPResponse) {
+	if b == nil || resp == nil {
+		return
+	}
+	b.WriteString("```http\n")
+	b.WriteString(formatHTTPResponseBlock(resp))
+	b.WriteString("\n```\n")
+	if resp.BodyBytes > len(strings.TrimRight(resp.BodySnippet, "\n")) {
+		fmt.Fprintf(b, "\n_Response body truncated to %d bytes (of %d)_\n", len(strings.TrimRight(resp.BodySnippet, "\n")), resp.BodyBytes)
+	}
+}
+
+func formatHTTPResponseBlock(resp *entities.HTTPResponse) string {
+	var out strings.Builder
+	statusText := strings.TrimSpace(http.StatusText(resp.StatusCode))
+	if resp.StatusCode > 0 {
+		if statusText != "" {
+			fmt.Fprintf(&out, "HTTP/1.1 %d %s\n", resp.StatusCode, statusText)
+		} else {
+			fmt.Fprintf(&out, "HTTP/1.1 %d\n", resp.StatusCode)
+		}
+	} else {
+		out.WriteString("HTTP/1.1\n")
+	}
+	writeHTTPHeaders(&out, resp.Headers)
+	body := strings.TrimRight(redactBody(resp.BodySnippet), "\n")
+	if body != "" || resp.BodyBytes > 0 {
+		out.WriteString("\n")
+		if body != "" {
+			out.WriteString(body)
+		} else {
+			fmt.Fprintf(&out, "[body omitted, %d bytes]", resp.BodyBytes)
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func writeHTTPHeaders(out *strings.Builder, headers []entities.Header) {
+	for _, h := range headers {
+		name := strings.TrimSpace(h.Name)
+		if name == "" || strings.EqualFold(name, "_line") {
+			continue
+		}
+		fmt.Fprintf(out, "%s: %s\n", name, trafficHeaderValue(name, strings.TrimSpace(h.Value)))
+	}
+}
+
+func hasHeader(headers []entities.Header, want string) bool {
+	want = strings.TrimSpace(strings.ToLower(want))
+	for _, h := range headers {
+		if strings.ToLower(strings.TrimSpace(h.Name)) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func isJiraIssueKey(value string) bool {
+	if value == "" {
+		return false
+	}
+	parts := strings.Split(value, "-")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, r := range parts[0] {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isHTTPURL(value string) bool {
+	u, err := neturl.Parse(strings.TrimSpace(value))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
+}
+
+func extractMarkdownSection(content, heading string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(content, "\n")
+	target := "## " + heading
+	start := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == target {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return ""
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "## ") {
+			end = i
+			break
+		}
+	}
+	section := strings.TrimSpace(strings.Join(lines[start:end], "\n"))
+	if section == "" {
+		return ""
+	}
+	return section + "\n"
+}
+
+func writeSectionPage(root, filename, title, section string) error {
+	body := strings.TrimSpace(section)
+	if body == "" {
+		body = fmt.Sprintf("## %s\n\n_No data yet._", title)
+	}
+	return os.WriteFile(filepath.Join(root, filename), []byte(fmt.Sprintf("# %s\n\n%s\n", title, body)), 0o644)
 }
 
 func fallbackString(value, placeholder string) string {

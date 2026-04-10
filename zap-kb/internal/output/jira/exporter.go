@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -25,11 +24,12 @@ type Options struct {
 	IssueType    string   // default "Bug"
 	Component    string   // optional component name
 	ExtraLabels  []string // additional labels beyond zap-finding:<id>
-	MinRisk      string   // minimum risk to export: info|low|medium|high (default "low")
+	MinRisk      string   // minimum risk to export: info|low|medium|high (default "medium")
 	DryRun       bool
 	Concurrency  int           // max parallel requests (default 3, capped at 5)
 	Timeout      time.Duration // default 30s
 	RequestDelay time.Duration // minimum delay between API requests; default 250ms
+	OptInTag     string        // analyst tag that forces Jira export below MinRisk (default "case-ticket")
 }
 
 // httpDoer abstracts HTTP request execution for throttling and testing.
@@ -71,12 +71,13 @@ func (tc *throttledClient) Do(req *http.Request) (*http.Response, error) {
 
 // Summary reports the outcome of an export run.
 type Summary struct {
-	Created int
-	Skipped int // already existed
-	Errors  int
+	Created    int
+	Skipped    int // already existed
+	Errors     int
+	TicketKeys map[string]string // findingID → Jira issue key (KAN-42)
 }
 
-// Export creates Jira issues for each Finding at or above opts.MinRisk.
+// Export creates Jira issues for each Finding at or above opts.MinRisk, or when an analyst opt-in tag is present.
 // Findings that already have a matching issue (by label zap-finding:<findingID>) are skipped.
 // Issues are created in parallel up to opts.Concurrency.
 func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summary, error) {
@@ -111,8 +112,12 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	)
 	base := strings.TrimRight(opts.BaseURL, "/")
 	floor := severityFloor(opts.MinRisk)
-	if opts.MinRisk == "" {
-		floor = severityFloor("low")
+	if strings.TrimSpace(opts.MinRisk) == "" {
+		floor = severityFloor("medium")
+	}
+	optInTag := strings.TrimSpace(opts.OptInTag)
+	if optInTag == "" {
+		optInTag = "case-ticket"
 	}
 
 	// Index definitions for quick lookup
@@ -122,10 +127,10 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		defByID[d.DefinitionID] = d
 	}
 
-	// Filter findings by minimum risk
+	// Filter findings by minimum risk or explicit analyst opt-in.
 	var candidates []entities.Finding
 	for _, f := range ef.Findings {
-		if severityFloor(f.Risk) >= floor {
+		if severityFloor(f.Risk) >= floor || findingHasOptInTag(f, optInTag) {
 			candidates = append(candidates, f)
 		}
 	}
@@ -167,7 +172,9 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		wg.Wait()
 	}
 
-	// Separate into to-create and skipped
+	ticketKeys := make(map[string]string)
+
+	// Separate into to-create and skipped; record keys for already-existing issues.
 	var toCreate []entities.Finding
 	var skipped int
 	for i, r := range dedupResults {
@@ -178,6 +185,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		}
 		if r.exists {
 			skipped++
+			ticketKeys[candidates[i].FindingID] = r.issueKey
 		} else {
 			toCreate = append(toCreate, candidates[i])
 		}
@@ -185,7 +193,9 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 
 	// Phase 2 (batch parallel): create issues
 	type createResult struct {
-		err error
+		findingID string
+		issueKey  string
+		err       error
 	}
 	createResults := make([]createResult, len(toCreate))
 	{
@@ -197,8 +207,8 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				err := createIssue(ctx, httpClient, auth, base, issueType, f, defByID[f.DefinitionID], opts)
-				createResults[i] = createResult{err: err}
+				key, err := createIssue(ctx, httpClient, auth, base, issueType, f, defByID[f.DefinitionID], opts)
+				createResults[i] = createResult{findingID: f.FindingID, issueKey: key, err: err}
 			}(i, f)
 		}
 		wg.Wait()
@@ -210,26 +220,59 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			errCount++
 		} else {
 			created++
+			if r.issueKey != "" {
+				ticketKeys[r.findingID] = r.issueKey
+			}
 		}
 	}
-	return Summary{Created: created, Skipped: skipped, Errors: errCount}, nil
+	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys}, nil
 }
 
-// findExistingIssue searches for an issue with label zap-finding:<findingID>.
-// Returns the issue key if found, empty string if not found.
-func findExistingIssue(ctx context.Context, client httpDoer, auth, base, findingID string) (string, error) {
-	label := findingLabel(findingID)
-	jql := fmt.Sprintf(`labels = "%s"`, label)
-	q := url.Values{}
-	q.Set("jql", jql)
-	q.Set("maxResults", "1")
-	q.Set("fields", "id,key")
+func findingHasOptInTag(f entities.Finding, tag string) bool {
+	if f.Analyst == nil {
+		return false
+	}
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	if tag == "" {
+		return false
+	}
+	for _, candidate := range f.Analyst.Tags {
+		if strings.ToLower(strings.TrimSpace(candidate)) == tag {
+			return true
+		}
+	}
+	return false
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/rest/api/3/search?"+q.Encode(), nil)
+// findExistingIssue searches for an issue with either the current or legacy
+// dedup label for a finding. This keeps exports backward-compatible across
+// label scheme changes and avoids duplicate issues for already-exported findings.
+// Returns the issue key if found, empty string if not found.
+// Uses POST /rest/api/3/search/jql (Jira Cloud v3 current endpoint).
+func findExistingIssue(ctx context.Context, client httpDoer, auth, base, findingID string) (string, error) {
+	labels := []string{findingLabel(findingID), legacyFindingLabel(findingID)}
+	var quoted []string
+	for _, label := range labels {
+		quoted = append(quoted, fmt.Sprintf(`"%s"`, label))
+	}
+	jql := fmt.Sprintf("labels in (%s)", strings.Join(quoted, ", "))
+
+	body := map[string]any{
+		"jql":        jql,
+		"maxResults": 1,
+		"fields":     []string{"id", "key"},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("marshal search: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/3/search/jql", bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Authorization", auth)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := doWithRetry(client, req, 3)
@@ -239,7 +282,6 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 	defer resp.Body.Close()
 
 	var result struct {
-		Total  int `json:"total"`
 		Issues []struct {
 			Key string `json:"key"`
 		} `json:"issues"`
@@ -247,20 +289,27 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode search: %w", err)
 	}
-	if result.Total > 0 && len(result.Issues) > 0 {
+	if len(result.Issues) > 0 {
 		return result.Issues[0].Key, nil
 	}
 	return "", nil
 }
 
 // createIssue POSTs a new Jira issue for the given Finding.
-func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, opts Options) error {
+// Returns the new issue key (e.g. "KAN-42") and any error.
+func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, opts Options) (string, error) {
 	labels := []string{findingLabel(f.FindingID)}
 	if def != nil && def.Taxonomy != nil {
-		labels = append(labels, def.Taxonomy.OWASPTop10...)
-		labels = append(labels, def.Taxonomy.Tags...)
+		for _, l := range def.Taxonomy.OWASPTop10 {
+			labels = append(labels, sanitizeLabel(l))
+		}
+		for _, l := range def.Taxonomy.Tags {
+			labels = append(labels, sanitizeLabel(l))
+		}
 	}
-	labels = append(labels, opts.ExtraLabels...)
+	for _, l := range opts.ExtraLabels {
+		labels = append(labels, sanitizeLabel(l))
+	}
 
 	fields := map[string]any{
 		"project":     map[string]string{"key": opts.ProjectKey},
@@ -277,12 +326,12 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 	body := map[string]any{"fields": fields}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("marshal issue: %w", err)
+		return "", fmt.Errorf("marshal issue: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/3/issue", bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
@@ -290,10 +339,21 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 
 	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
-		return fmt.Errorf("post issue: %w", err)
+		return "", fmt.Errorf("post issue: %w", err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return "", jiraHTTPErr(resp)
+	}
+
+	var created struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", fmt.Errorf("decode create response: %w", err)
+	}
+	return created.Key, nil
 }
 
 // issueSummary returns a concise Jira issue summary for a Finding.
@@ -310,14 +370,69 @@ func issueSummary(f entities.Finding) string {
 }
 
 // findingLabel returns the dedup label for a finding.
+// Uses hyphen separator — Jira labels cannot contain colons.
 func findingLabel(findingID string) string {
+	return "zap-finding-" + findingID
+}
+
+// legacyFindingLabel returns the pre-migration dedup label used by older
+// exporter versions. Jira lookup still searches for it to avoid duplicates.
+func legacyFindingLabel(findingID string) string {
 	return "zap-finding:" + findingID
 }
 
+// sanitizeLabel makes s safe for use as a Jira label:
+//   - Replaces spaces, colons, slashes, and backslashes with hyphens.
+//   - Strips ASCII control characters (< 0x20) and DEL (0x7F).
+//   - Truncates to 255 bytes (Jira Cloud label length limit), avoiding split of multi-byte runes.
+func sanitizeLabel(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r < 0x20 || r == 0x7F: // control chars / DEL — strip
+			continue
+		case r == ' ' || r == ':' || r == '/' || r == '\\':
+			b.WriteRune('-')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	result := b.String()
+	// Truncate to 255 bytes without splitting a multi-byte rune.
+	if len(result) > 255 {
+		result = result[:255]
+		for len(result) > 0 && result[len(result)-1]&0xC0 == 0x80 {
+			result = result[:len(result)-1]
+		}
+	}
+	return result
+}
+
 // doWithRetry executes a request, retrying on 429 with exponential backoff.
+// bodyData must be the raw request body bytes so each retry can construct a
+// fresh reader — http.Request bodies are consumed after the first Do() call
+// and cannot be replayed without this.
 func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
+	// Snapshot the body bytes once so we can replay on 429 retries.
+	var bodyData []byte
+	if req.Body != nil && req.Body != http.NoBody {
+		var err error
+		bodyData, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("jira: read request body: %w", err)
+		}
+		req.Body.Close()
+	}
+
 	backoff := 2 * time.Second
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Attach a fresh body reader for each attempt.
+		if bodyData != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyData))
+			req.ContentLength = int64(len(bodyData))
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
@@ -328,9 +443,8 @@ func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Res
 			if ra := resp.Header.Get("Retry-After"); ra != "" {
 				if secs := parseRetryAfter(ra); secs > 0 {
 					backoff = time.Duration(secs) * time.Second
-				} else {
-					backoff = 100 * time.Millisecond
 				}
+				// On unparseable Retry-After keep existing backoff (don't reset to 100ms).
 			}
 			fmt.Printf("[jira] rate limited, retrying in %s (attempt %d/%d)\n", backoff, attempt+1, maxAttempts)
 			select {
@@ -383,10 +497,11 @@ func sanitizeErrorBody(s string) string {
 	if len(s) > 200 {
 		s = s[:200] + "…"
 	}
+	// Apply all redactions (not just first match) so multiple credential patterns
+	// in the same response body are all scrubbed.
 	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
 		if idx := strings.Index(s, pat); idx >= 0 {
 			s = s[:idx] + "<redacted>…"
-			break
 		}
 	}
 	return s

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,23 +38,27 @@ type Options struct {
 
 // VaultOptions controls full-vault export to Confluence.
 type VaultOptions struct {
-	BaseURL      string
-	Username     string
-	APIToken     string
-	SpaceKey     string
-	DryRun       bool
-	Concurrency  int                    // default 3, capped at 5
-	Timeout      time.Duration          // per-request timeout; default 30s
-	RequestDelay time.Duration          // minimum delay between API requests; default 250ms
-	Entities     *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
+	BaseURL          string
+	Username         string
+	APIToken         string
+	SpaceKey         string
+	DryRun           bool
+	Concurrency      int                    // default 3, capped at 5
+	Timeout          time.Duration          // per-request timeout; default 30s
+	RequestDelay     time.Duration          // minimum delay between API requests; default 250ms
+	JiraBaseURL      string                 // optional; turns Jira issue keys into browse links in properties/workflow views
+	JiraStatusByKey  map[string]string      // optional; raw Jira status names keyed by issue key
+	JiraStatusSynced string                 // optional; RFC3339 time when JiraStatusByKey was fetched
+	Entities         *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
 }
 
 // VaultSummary reports what the vault export did.
 type VaultSummary struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  int
+	Created      int
+	Updated      int
+	Skipped      int
+	Errors       int
+	FindingLinks map[string]string // findingID -> published Confluence URL
 }
 
 // pageHashStore persists SHA-256 hashes of page storage bodies and their
@@ -112,6 +117,12 @@ func (s *pageHashStore) record(title, storageBody, pageID string) {
 	hash := hex.EncodeToString(h[:])
 	s.mu.Lock()
 	s.data[title] = pageHashEntry{Hash: hash, PageID: pageID}
+	s.mu.Unlock()
+}
+
+func (s *pageHashStore) delete(title string) {
+	s.mu.Lock()
+	delete(s.data, title)
 	s.mu.Unlock()
 }
 
@@ -223,6 +234,14 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// Load content hash store — used to skip pages that haven't changed.
 	hashStorePath := filepath.Join(vaultRoot, ".confluence-hashes.json")
 	hs := loadHashStore(hashStorePath)
+	// If the cached root page was deleted remotely, invalidate the whole local cache.
+	// Otherwise child pages may try to attach to parent IDs that no longer exist.
+	if hs.cachedPageID("KB Index") != "" {
+		existingRootID, _, ferr := findPage(ctx, httpClient, auth, base, opts.SpaceKey, "KB Index")
+		if ferr == nil && strings.TrimSpace(existingRootID) == "" {
+			hs = &pageHashStore{path: hashStorePath, data: make(map[string]pageHashEntry)}
+		}
+	}
 
 	var summary VaultSummary
 
@@ -249,7 +268,14 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	}{
 		{"DASHBOARD.md", "KB Dashboard"},
 		{"triage-board.md", "Triage Board"},
+		{"issues.md", "Issues"},
+		{"occurrences.md", "Occurrences"},
+		{"rules.md", "Rules"},
 		{"by-domain.md", "By Domain"},
+		{"LEGEND.md", "Alias Legend"},
+		{"TRIAGE-GUIDE.md", "Triage Workflow Guide"},
+		{"by-scan.md", "Scans"},
+		{"EXECUTIVE-SUMMARY.md", "Executive Summary"},
 		{"latest-scan.md", "Latest Scan"},
 	}
 
@@ -259,6 +285,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			continue // skip missing files
 		}
 		storageBody := mdToStorageWithTitles(content, titleMap)
+		storageBody = appendJiraOverviewSection(tp.title, storageBody, &ei, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced)
 		// The Page Properties Report macro is intentionally NOT appended here —
 		// it depends on the page-properties macro which fails in Confluence Cloud
 		// via REST API. Triage is done by editing individual occurrence pages.
@@ -353,7 +380,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 			// Route custom definitions to the "Custom Detections" folder.
 			parentID := defsID
-			if def != nil && isConfluenceCustomRule(def.PluginID, def.Detection) {
+			if def != nil && isConfluenceCustomRule(def) {
 				parentID = customDefsID
 			}
 
@@ -384,41 +411,17 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
-	// Phase 5: Create "Findings" folder page as a top-level sibling of "Security Rule Definitions".
-	// Findings are parented here (not buried under individual definition pages) so they
-	// appear in the sidebar and are reachable from Quick navigation.
-	findingsBody := `<p>All active security findings. Each finding groups one or more occurrences of the same rule at the same endpoint.</p>` + childrenMacro()
-	findingsID, findingsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Findings",
-		findingsBody, rootID, hs)
-	if err != nil {
-		return summary, fmt.Errorf("upsert Findings parent: %w", err)
-	}
-	countAction(&summary, findingsAction)
-
-	// Phase 5b: Create "Occurrences" folder page as a sibling (for flat fallback path
-	// and for consistency — hierarchical path nests occurrences under findings).
-	occurrencesBody := `<p>All occurrence instances. Each occurrence is a single observed instance of a finding at a specific URL.</p>` + childrenMacro()
-	occurrencesID, occurrencesAction, occErr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Occurrences",
-		occurrencesBody, rootID, hs)
-	if occErr != nil {
-		fmt.Printf("[confluence] error upserting Occurrences parent: %v\n", occErr)
-		summary.Errors++
-	} else {
-		countAction(&summary, occurrencesAction)
-	}
-	_ = occurrencesID // used in flat fallback path below
-
-	// Phase 6: Hierarchical export — findings under "Findings", occurrences under their finding.
-	// Falls back to flat upsertDir when entity data is absent.
+	// Phase 5: Export findings and occurrences.
+	// In hierarchical/entity-aware mode, findings live under their definition pages and
+	// occurrences live under their finding pages, so top-level stub pages would just be empty noise.
 	if opts.Entities != nil {
-		findingPageIDs := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, defPageIDs, findingsID, &summary, hs)
-		// Parent all occurrences to the Occurrences folder so it's navigable.
+		findingPageIDs, _ := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
+			vaultRoot, concurrency, &ei, titleMap, defPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, occurrencesID, &summary, hs)
+			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
 	} else {
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, &summary, hs)
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, &summary, hs)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
 	}
 
 	// Persist updated hashes for next run.
@@ -471,18 +474,19 @@ func buildExportSummaryBody(exportedAt time.Time, defs, findings, occurrences in
 }
 
 // upsertFindingsHierarchical upserts finding pages as children of their definition pages.
-// Returns a map of findingID → Confluence pageID for use by upsertOccurrencesHierarchical.
+// Returns a map of findingID → Confluence pageID for use by upsertOccurrencesHierarchical,
+// and a map of findingID → logSummary for building definition-page Analyst History rollups.
 // Findings whose definition page ID is not in defPageIDs are parented to fallbackParentID.
 func upsertFindingsHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
-	defPageIDs map[string]string, fallbackParentID string,
+	defPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string,
 	summary *VaultSummary, hs *pageHashStore,
-) map[string]string {
+) (map[string]string, map[string]logSummary) {
 	dir := filepath.Join(vaultRoot, "findings")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var mdFiles []string
 	for _, e := range entries {
@@ -491,14 +495,15 @@ func upsertFindingsHierarchical(
 		}
 	}
 	if len(mdFiles) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	type result struct {
-		action    string
-		err       error
-		pageID    string
-		findingID string
+		action     string
+		err        error
+		pageID     string
+		findingID  string
+		logSummary logSummary
 	}
 	results := make([]result, len(mdFiles))
 	sem := make(chan struct{}, concurrency)
@@ -528,29 +533,88 @@ func upsertFindingsHierarchical(
 				title = defTitleFromFilename(fname)
 			}
 
-			// Parent: always the Findings folder page so findings are visible in the sidebar.
-			// The Definition link is already shown in the Page Properties table.
+			// Prefer nesting findings under their definition pages. Fall back to
+			// the top-level Findings page when the definition page is missing.
 			parentID := fallbackParentID
-			_ = defPageIDs // retained for signature compatibility
+			if f != nil {
+				if pid := strings.TrimSpace(defPageIDs[f.DefinitionID]); pid != "" {
+					parentID = pid
+				}
+			}
 
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			storageBody = prependFindingProperties(storageBody, f, ei)
+
+			// --- Analyst Log ---
+			// Fetch the existing page body (if any) to extract the preserved log.
+			// The state signature is stored as a Confluence page property (not in body)
+			// to avoid polluting the rendered page with hidden text.
+			var existingLog, existingSig string
+			existingPageID := hs.cachedPageID(title)
+			if existingPageID == "" {
+				// Not in cache — try a live lookup so we can fetch the body.
+				// This is only reached on first run or after cache invalidation.
+				existingPageID, _, _ = findPage(ctx, client, auth, base, spaceKey, title)
+			}
+			if existingPageID != "" {
+				if body, ferr2 := fetchPageStorageBody(ctx, client, auth, base, existingPageID); ferr2 == nil {
+					existingLog = extractAnalystLog(body)
+				} else {
+					fmt.Printf("[confluence] warning: could not fetch existing body for %q: %v\n", title, ferr2)
+				}
+				existingSig = fetchPageProperty(ctx, client, auth, base, existingPageID, "kb-state-sig")
+			}
+
+			publishedAt := time.Now().UTC().Format(time.RFC3339)
+			jiraStatus := ""
+			if f != nil && f.Analyst != nil {
+				jiraStatus = primaryJiraStatus(f.Analyst.TicketRefs, jiraStatusByKey)
+			}
+			currentSig := findingStateSig(f, jiraStatus)
+
+			newEntry := ""
+			if currentSig != existingSig {
+				// State changed (or first publish) — prepend a new log entry.
+				newEntry = buildLogEntry(f, ei, jiraBaseURL, jiraStatusByKey, publishedAt, true)
+			}
+			analystLogSection := buildAnalystLogSection(newEntry, existingLog)
+			// Analyst log is injected into prependFindingProperties so it sits
+			// directly after the properties table — the first thing an analyst sees.
+			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced, analystLogSection)
+
+			// Build log summary for the definition-page rollup
+			ls := buildLogSummaryForFinding(f, jiraBaseURL, jiraStatusByKey, publishedAt, existingLog)
+
 			labels := findingLabels(f)
 
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
+			if uerr != nil && parentID != fallbackParentID && isConfluenceNotFoundError(uerr) && f != nil {
+				if refoundParentID, ok := refindDefinitionParentID(ctx, client, auth, base, spaceKey, ei.defByID(f.DefinitionID)); ok {
+					pageID, act, uerr = upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, refoundParentID, hs)
+				}
+			}
 			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
+			}
+			// Persist the state signature as a page property (invisible to users).
+			if uerr == nil && pageID != "" && act != "skipped" {
+				if perr := upsertPageProperty(ctx, client, auth, base, pageID, "kb-state-sig", currentSig); perr != nil {
+					fmt.Printf("[confluence] warning: could not store state sig for %q: %v\n", title, perr)
+				}
 			}
 			fid := ""
 			if f != nil {
 				fid = f.FindingID
 			}
-			results[i] = result{action: act, err: uerr, pageID: pageID, findingID: fid}
+			if pageID != "" && ls.FindingID != "" {
+				ls.FindingURL = pageWebURL(base, spaceKey, pageID)
+			}
+			results[i] = result{action: act, err: uerr, pageID: pageID, findingID: fid, logSummary: ls}
 		}(i, fname)
 	}
 	wg.Wait()
 
 	findingPageIDs := make(map[string]string)
+	logSummaries := make(map[string]logSummary)
 	for i, r := range results {
 		if r.err != nil {
 			fmt.Printf("[confluence] error upserting finding %s: %v\n", mdFiles[i], r.err)
@@ -560,9 +624,12 @@ func upsertFindingsHierarchical(
 			if r.findingID != "" && r.pageID != "" {
 				findingPageIDs[r.findingID] = r.pageID
 			}
+			if r.logSummary.FindingID != "" {
+				logSummaries[r.logSummary.FindingID] = r.logSummary
+			}
 		}
 	}
-	return findingPageIDs
+	return findingPageIDs, logSummaries
 }
 
 // upsertOccurrencesHierarchical upserts occurrence pages as children of their finding pages.
@@ -570,7 +637,7 @@ func upsertFindingsHierarchical(
 func upsertOccurrencesHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
-	findingPageIDs map[string]string, fallbackParentID string,
+	findingPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string,
 	summary *VaultSummary, hs *pageHashStore,
 ) {
 	dir := filepath.Join(vaultRoot, "occurrences")
@@ -620,16 +687,25 @@ func upsertOccurrencesHierarchical(
 				title = defTitleFromFilename(fname)
 			}
 
-			// Parent: always the Occurrences folder so the folder is navigable.
-			// (Nesting under finding pages made the Occurrences folder appear empty.)
+			// Prefer nesting occurrences under their finding pages. Fall back to
+			// the top-level Occurrences page when the finding page is missing.
 			parentID := fallbackParentID
-			_ = findingPageIDs // retained for signature compatibility
+			if o != nil {
+				if pid := strings.TrimSpace(findingPageIDs[o.FindingID]); pid != "" {
+					parentID = pid
+				}
+			}
 
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			storageBody = prependOccurrenceProperties(storageBody, o, ei)
+			storageBody = prependOccurrenceProperties(storageBody, o, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
 			labels := occurrenceLabels(o)
 
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
+			if uerr != nil && parentID != fallbackParentID && isConfluenceNotFoundError(uerr) && o != nil {
+				if refoundParentID, ok := refindFindingParentID(ctx, client, auth, base, spaceKey, ei, o.FindingID); ok {
+					pageID, act, uerr = upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, refoundParentID, hs)
+				}
+			}
 			if uerr == nil && len(labels) > 0 && act != "skipped" {
 				applyLabels(ctx, client, auth, base, pageID, labels)
 			}
@@ -655,7 +731,7 @@ func upsertOccurrencesHierarchical(
 
 // upsertDir upserts all .md files in a vault subdirectory as child pages
 // under a named parent page (itself a child of parentID).
-func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, summary *VaultSummary, hs *pageHashStore) {
+func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string, summary *VaultSummary, hs *pageHashStore) {
 	dir := filepath.Join(vaultRoot, subdir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -745,10 +821,11 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 			var labels []string
 			switch subdir {
 			case "findings":
-				storageBody = prependFindingProperties(storageBody, findingEnt, ei)
+				// No analyst log section in the generic path — pass empty string.
+				storageBody = prependFindingProperties(storageBody, findingEnt, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced, "")
 				labels = findingLabels(findingEnt)
 			case "occurrences":
-				storageBody = prependOccurrenceProperties(storageBody, occEnt, ei)
+				storageBody = prependOccurrenceProperties(storageBody, occEnt, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
 				labels = occurrenceLabels(occEnt)
 			}
 
@@ -931,7 +1008,32 @@ func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, titl
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", auth)
 		if err := doRequest(client, req); err != nil {
-			return "", "", err
+			if !strings.Contains(err.Error(), "http 409") {
+				return "", "", err
+			}
+			refreshedID, refreshedVersion, ferr := findPage(ctx, client, auth, base, spaceKey, title)
+			if ferr != nil {
+				return "", "", fmt.Errorf("refresh page %q after conflict: %w", title, ferr)
+			}
+			if refreshedID == "" {
+				return "", "", err
+			}
+			body["id"] = refreshedID
+			body["version"] = map[string]int{"number": refreshedVersion + 1}
+			data, merr := json.Marshal(body)
+			if merr != nil {
+				return "", "", fmt.Errorf("marshal update retry: %w", merr)
+			}
+			req, merr = http.NewRequestWithContext(ctx, http.MethodPut, base+"/rest/api/content/"+refreshedID, bytes.NewReader(data))
+			if merr != nil {
+				return "", "", fmt.Errorf("build update retry request: %w", merr)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", auth)
+			if merr := doRequest(client, req); merr != nil {
+				return "", "", merr
+			}
+			return refreshedID, "updated", nil
 		}
 		return existingID, "updated", nil
 	}
@@ -971,11 +1073,18 @@ func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, titl
 // On any create/update, the hash is recorded.
 func upsertPageCached(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string, hs *pageHashStore) (string, string, error) {
 	if hs != nil && hs.unchanged(title, storageBody) {
-		// Use cached page ID — zero API calls on the skip path.
+		// Use cached page ID — zero API calls on the skip path only when the page still exists.
 		if cachedID := hs.cachedPageID(title); cachedID != "" {
-			return cachedID, "skipped", nil
+			exists, err := pageExistsByID(ctx, client, auth, base, cachedID)
+			if err != nil {
+				return "", "", fmt.Errorf("validate cached page %q (%s): %w", title, cachedID, err)
+			}
+			if exists {
+				return cachedID, "skipped", nil
+			}
+			hs.delete(title)
 		}
-		// Page ID not cached (legacy hash store or first run after migration).
+		// Page ID not cached (legacy hash store or first run after migration) or cached ID is stale.
 		// Fall back to a single GET to resolve it.
 		existingID, _, err := findPage(ctx, client, auth, base, spaceKey, title)
 		if err != nil {
@@ -1068,6 +1177,34 @@ func findPage(ctx context.Context, client httpDoer, auth, base, spaceKey, title 
 	return r.ID, r.Version.Number, nil
 }
 
+func pageExistsByID(ctx context.Context, client httpDoer, auth, base, pageID string) (bool, error) {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return false, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/rest/api/content/"+url.PathEscape(pageID), nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", auth)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return false, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, httpErr(resp)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return true, nil
+}
+
 // doRequest executes req with retry on 429 (rate limit). Up to 3 attempts with exponential backoff.
 func doRequest(client httpDoer, req *http.Request) error {
 	resp, err := doWithRetry(client, req, 3)
@@ -1080,25 +1217,37 @@ func doRequest(client httpDoer, req *http.Request) error {
 
 // doWithRetry executes a request, retrying on 429 with exponential backoff.
 // Returns the successful response (caller must close body).
+// Body bytes are snapshotted before the loop so each retry gets a fresh reader —
+// http.Request bodies are consumed after the first Do() and cannot be replayed otherwise.
 func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
+	var bodyData []byte
+	if req.Body != nil && req.Body != http.NoBody {
+		var err error
+		bodyData, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("confluence: read request body: %w", err)
+		}
+		req.Body.Close()
+	}
+
 	backoff := 2 * time.Second
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if bodyData != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyData))
+			req.ContentLength = int64(len(bodyData))
+		}
+
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("http: %w", err)
 		}
 		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			// Read and discard body so connection can be reused
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
-			// Respect Retry-After header if present
+			// Respect Retry-After if present; keep existing backoff on parse failure.
 			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				if secs, err := parseRetryAfter(ra); err == nil {
-					if secs <= 0 {
-						backoff = 100 * time.Millisecond
-					} else {
-						backoff = time.Duration(secs) * time.Second
-					}
+				if secs, err := parseRetryAfter(ra); err == nil && secs > 0 {
+					backoff = time.Duration(secs) * time.Second
 				}
 			}
 			fmt.Printf("[confluence] rate limited, retrying in %s (attempt %d/%d)\n", backoff, attempt+1, maxAttempts)
@@ -1264,24 +1413,36 @@ func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 	for i := range ef.Findings {
 		f := &ef.Findings[i]
 		ei.finds[f.FindingID] = f
+		if f.Analyst != nil {
+			if status := entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)); status != "" {
+				ei.findingTriageStatus[f.FindingID] = status
+			}
+		}
 	}
 	// statusPriority defines dominance order for aggregate triage status.
 	// Lower index = higher priority (open wins over fixed, etc.).
 	statusPriority := map[string]int{"open": 0, "triaged": 1, "accepted": 2, "fp": 3, "fixed": 4}
+	statusRank := func(status string) int {
+		if rank, ok := statusPriority[status]; ok {
+			return rank
+		}
+		return len(statusPriority) + 1
+	}
 	for i := range ef.Occurrences {
 		o := &ef.Occurrences[i]
 		ei.occs[o.OccurrenceID] = o
-		// Accumulate dominant triage status per finding (open takes priority)
+		// Accumulate dominant triage status per finding only when the finding does
+		// not already carry its own workflow status.
 		if o.FindingID != "" {
-			oStatus := "open"
-			if o.Analyst != nil && o.Analyst.Status != "" {
-				oStatus = o.Analyst.Status
-			}
-			cur, exists := ei.findingTriageStatus[o.FindingID]
-			if !exists {
-				ei.findingTriageStatus[o.FindingID] = oStatus
-			} else {
-				if statusPriority[oStatus] < statusPriority[cur] {
+			if _, locked := ei.findingTriageStatus[o.FindingID]; !locked {
+				oStatus := "open"
+				if o.Analyst != nil && o.Analyst.Status != "" {
+					oStatus = entities.CanonicalAnalystStatus(o.Analyst.Status)
+				}
+				cur, exists := ei.findingTriageStatus[o.FindingID]
+				if !exists {
+					ei.findingTriageStatus[o.FindingID] = oStatus
+				} else if statusRank(oStatus) < statusRank(cur) {
 					ei.findingTriageStatus[o.FindingID] = oStatus
 				}
 			}
@@ -1555,10 +1716,19 @@ func stripOccurrenceBodyForConfluence(content string) string {
 	return strings.Join(out, "\n")
 }
 
-// sourceToolFromDef derives a human-readable source tool name from definition
-// taxonomy tags (e.g. "nuclei" → "Nuclei", "zap" → "OWASP ZAP").
+// sourceToolFromDef derives a human-readable source tool name from a definition.
+// Custom detections (project-specific rules not built into any scanner) always
+// return "Custom Detection" regardless of taxonomy tags, since attributing them
+// to a tool like "OWASP ZAP" is misleading — the scanner just ran the rule,
+// it didn't author it.
 func sourceToolFromDef(def *entities.Definition) string {
-	if def == nil || def.Taxonomy == nil {
+	if def == nil {
+		return ""
+	}
+	if entities.IsCustomDefinition(def) {
+		return "Custom Detection"
+	}
+	if def.Taxonomy == nil {
 		return ""
 	}
 	for _, tag := range def.Taxonomy.Tags {
@@ -1581,7 +1751,7 @@ func sourceToolFromDef(def *entities.Definition) string {
 // --- Finding/occurrence page title generation ---
 
 // findingPageTitle returns a human-readable Confluence page title for a finding:
-// "[Rule Name] — [URL path] — [short hash]"
+// "Issue: [Rule Name] - [URL path] - [short hash]"
 func findingPageTitle(f *entities.Finding, ei *entityIndex) string {
 	if f == nil {
 		return ""
@@ -1600,11 +1770,11 @@ func findingPageTitle(f *entities.Finding, ei *entityIndex) string {
 	if h := tailChars(f.FindingID, 4); h != "" {
 		parts = append(parts, h)
 	}
-	return strings.Join(parts, " \u2014 ")
+	return "Issue: " + strings.Join(parts, " - ")
 }
 
 // occurrencePageTitle returns a human-readable Confluence page title for an occurrence:
-// "[Rule Name] — [URL path] — [short hash]"
+// "Occurrence: [Rule Name] - [URL path] - [short hash]"
 func occurrencePageTitle(o *entities.Occurrence, ei *entityIndex) string {
 	if o == nil {
 		return ""
@@ -1623,7 +1793,7 @@ func occurrencePageTitle(o *entities.Occurrence, ei *entityIndex) string {
 	if h := tailChars(o.OccurrenceID, 4); h != "" {
 		parts = append(parts, h)
 	}
-	return strings.Join(parts, " \u2014 ")
+	return "Occurrence: " + strings.Join(parts, " - ")
 }
 
 // urlPathSegment extracts the URL path (excluding scheme/host) for use in page titles.
@@ -1651,6 +1821,31 @@ func firstNonEmptyStr(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// isNumericPluginID returns true when pluginID consists entirely of ASCII digits.
+// Used to determine whether a computed ZAP docs URL is meaningful.
+func isNumericPluginID(pluginID string) bool {
+	s := strings.TrimSpace(pluginID)
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func pageWebURL(base, spaceKey, pageID string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	spaceKey = strings.TrimSpace(spaceKey)
+	pageID = strings.TrimSpace(pageID)
+	if base == "" || spaceKey == "" || pageID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/spaces/%s/pages/%s", base, url.PathEscape(spaceKey), url.PathEscape(pageID))
 }
 
 // --- Posture Summary ---
@@ -1696,7 +1891,7 @@ func computePostureCounts(ef *entities.EntitiesFile) postureCounts {
 	for _, o := range ef.Occurrences {
 		status := "open"
 		if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
-			status = strings.ToLower(strings.TrimSpace(o.Analyst.Status))
+			status = entities.CanonicalAnalystStatus(strings.TrimSpace(o.Analyst.Status))
 		}
 		pc.ByStatus[status]++
 		if sl := strings.TrimSpace(o.ScanLabel); sl != "" {
@@ -1780,8 +1975,29 @@ func upsertPostureSummary(ctx context.Context, client httpDoer, auth, base, spac
 
 // --- Page Properties and Status Macros ---
 
+// owaspTop10Links renders a comma-separated list of OWASP Top 10 category
+// entries as hyperlinks to owasp.org. Entries that don't match the expected
+// "AXX:YYYY-..." format are rendered as plain text.
+// Example: "A01:2021-Broken Access Control" →
+//
+//	<a href="https://owasp.org/Top10/A01_2021-Broken_Access_Control/">A01:2021-Broken Access Control</a>
+func owaspTop10Links(categories []string) string {
+	parts := make([]string, 0, len(categories))
+	for _, c := range categories {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		// Derive URL slug: replace ":" and " " with "_".
+		slug := strings.NewReplacer(":", "_", " ", "_").Replace(c)
+		url := "https://owasp.org/Top10/" + slug + "/"
+		parts = append(parts, fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(url), escapeHTML(c)))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // prependDefProperties adds a Page Properties macro with taxonomy metadata to definition pages.
-// Canonical field order: Plugin ID, CWE, OWASP, Tags (Detection logic type), ATT&CK, NIST 800-53.
+// Canonical field order: Plugin ID, Origin, WASC, CWE, OWASP, CAPEC, Detection, ATT&CK, NIST 800-53.
 func prependDefProperties(storageBody string, def *entities.Definition) string {
 	if def == nil {
 		return storageBody
@@ -1791,26 +2007,48 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 	if def.PluginID != "" {
 		props = append(props, [2]string{"Plugin ID", escapeHTML(def.PluginID)})
 	}
-	// 2. CWE
+	// 2. Origin
+	props = append(props, [2]string{"Origin", escapeHTML(entities.DefinitionOriginValue(def.Origin, def.PluginID, def.Detection))})
+	// 3. WASC
+	if def.WASCID > 0 {
+		props = append(props, [2]string{"WASC", fmt.Sprintf("WASC-%d", def.WASCID)})
+	}
+	// 4. CWE
 	if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
 		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
 		props = append(props, [2]string{"CWE", link})
 	}
-	// 3. OWASP
+	// 5. OWASP — linked
 	if def.Taxonomy != nil && len(def.Taxonomy.OWASPTop10) > 0 {
-		props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
+		props = append(props, [2]string{"OWASP Top 10", owaspTop10Links(def.Taxonomy.OWASPTop10)})
 	}
-	// 3b. CAPEC
+	// 6. CAPEC
 	if def.Taxonomy != nil && len(def.Taxonomy.CAPECIDs) > 0 {
 		capecStrs := make([]string, len(def.Taxonomy.CAPECIDs))
 		for i, id := range def.Taxonomy.CAPECIDs {
-			capecStrs[i] = fmt.Sprintf("CAPEC-%d", id)
+			capecStrs[i] = fmt.Sprintf(`<a href="https://capec.mitre.org/data/definitions/%d.html">CAPEC-%d</a>`, id, id)
 		}
-		props = append(props, [2]string{"CAPEC", escapeHTML(strings.Join(capecStrs, ", "))})
+		props = append(props, [2]string{"CAPEC", strings.Join(capecStrs, ", ")})
 	}
-	// 4. Tags — represented by Detection logic type; ATT&CK and NIST follow
+	// 7. Detection logic type + ZAP docs/source links
 	if def.Detection != nil && def.Detection.LogicType != "" {
 		props = append(props, [2]string{"Detection", escapeHTML(def.Detection.LogicType)})
+	}
+	// ZAP documentation link — use Detection.DocsURL if enriched, otherwise compute
+	// from pluginId when it is a numeric ZAP alert ID.
+	zapDocsURL := ""
+	if def.Detection != nil && strings.TrimSpace(def.Detection.DocsURL) != "" {
+		zapDocsURL = strings.TrimSpace(def.Detection.DocsURL)
+	} else if isNumericPluginID(def.PluginID) {
+		zapDocsURL = "https://www.zaproxy.org/docs/alerts/" + strings.TrimSpace(def.PluginID) + "/"
+	}
+	if zapDocsURL != "" {
+		props = append(props, [2]string{"ZAP Docs", `<a href="` + escapeAttr(zapDocsURL) + `">` + escapeHTML(zapDocsURL) + `</a>`})
+	}
+	// GitHub source link (only when enrichment has resolved the exact file).
+	if def.Detection != nil && strings.TrimSpace(def.Detection.SourceURL) != "" {
+		src := strings.TrimSpace(def.Detection.SourceURL)
+		props = append(props, [2]string{"Source", `<a href="` + escapeAttr(src) + `">` + escapeHTML(src) + `</a>`})
 	}
 	if def.Taxonomy != nil {
 		if len(def.Taxonomy.ATTACK) > 0 {
@@ -1831,7 +2069,7 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 // Canonical field order: Severity, Status, CWE, OWASP, Domain, Last Seen, Occurrences.
 // Additional contextual fields (Confidence, Definition, Source Tool, URL, Method, First Seen)
 // follow in supplementary positions.
-func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex) string {
+func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string, analystLogSection string) string {
 	if f == nil {
 		return storageBody
 	}
@@ -1840,25 +2078,27 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// 1. Severity
 	props = append(props, [2]string{"Severity", riskStatusMacro(f.Risk)})
 
-	// 2. Status — aggregate triage status derived from occurrence analyst data
-	if status, ok := ei.findingTriageStatus[f.FindingID]; ok && status != "" {
-		props = append(props, [2]string{"Status", triageStatusMacro(status)})
-	}
-
+	// Status is intentionally omitted from Page Properties — Jira owns the workflow
+	// state and the Jira ticket status is shown in the Jira workflow section below.
 	def := ei.defByID(f.DefinitionID)
 
-	// 3. CWE
+	// 3. WASC
+	if def != nil && def.WASCID > 0 {
+		props = append(props, [2]string{"WASC", fmt.Sprintf("WASC-%d", def.WASCID)})
+	}
+
+	// 4. CWE
 	if def != nil && def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
 		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
 		props = append(props, [2]string{"CWE", link})
 	}
 
-	// 4. OWASP
+	// 5. OWASP — linked
 	if def != nil && def.Taxonomy != nil && len(def.Taxonomy.OWASPTop10) > 0 {
-		props = append(props, [2]string{"OWASP Top 10", escapeHTML(strings.Join(def.Taxonomy.OWASPTop10, ", "))})
+		props = append(props, [2]string{"OWASP Top 10", owaspTop10Links(def.Taxonomy.OWASPTop10)})
 	}
 
-	// 5. Domain — extracted from the finding URL host
+	// 6. Domain — extracted from the finding URL host
 	if f.URL != "" {
 		props = append(props, [2]string{"Domain", escapeHTML(hostFromURL(f.URL))})
 	}
@@ -1879,7 +2119,30 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 
 	// --- Supplementary fields ---
 	props = append(props, [2]string{"Confidence", escapeHTML(f.Confidence)})
-
+	if f.Analyst != nil {
+		if owner := strings.TrimSpace(f.Analyst.Owner); owner != "" {
+			props = append(props, [2]string{"Owner", escapeHTML(owner)})
+		}
+		if len(f.Analyst.TicketRefs) > 0 {
+			props = append(props, [2]string{"Analyst Cases", ticketRefsPropertyValue(f.Analyst.TicketRefs, jiraBaseURL)})
+			if raw := primaryJiraStatus(f.Analyst.TicketRefs, jiraStatusByKey); raw != "" {
+				props = append(props, [2]string{"Jira Status", jiraStatusMacro(raw)})
+			}
+		}
+		if len(f.Analyst.Tags) > 0 {
+			props = append(props, [2]string{"Tags", escapeHTML(strings.Join(f.Analyst.Tags, ", "))})
+		}
+		if f.Analyst.UpdatedAt != "" {
+			props = append(props, [2]string{"Updated", escapeHTML(f.Analyst.UpdatedAt)})
+		}
+		if f.Analyst.Notes != "" {
+			notesLabel := "Notes"
+			if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) == "accepted" {
+				notesLabel = "Accepted Reason"
+			}
+			props = append(props, [2]string{notesLabel, escapeHTML(f.Analyst.Notes)})
+		}
+	}
 	// Definition — linked page. Title must match the Confluence page title format:
 	// "<Alert> (Plugin <pluginID>)" — same as the H1 written by obsidian WriteVault.
 	if def != nil {
@@ -1915,7 +2178,490 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 		props = append(props, [2]string{"Scans", escapeHTML(strings.Join(scans, ", "))})
 	}
 
-	return pagePropertiesMacro(props) + storageBody
+	workflowSection := ""
+	if f.Analyst != nil {
+		workflowSection = jiraWorkflowSection(f.Analyst.TicketRefs, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
+	}
+
+	// Recurrence advisory banner — shown prominently when a previously suppressed
+	// finding reappeared so analysts are not surprised by the status/occurrence mismatch.
+	recurrenceSection := buildRecurrenceSection(f.Recurrence)
+
+	// Suppression block — structured record of the analyst's suppression decision.
+	suppressionSection := buildSuppressionSection(f.Suppression)
+
+	// Description and Solution — pulled from the definition so analysts see the
+	// vulnerability context and fix guidance without leaving the finding page.
+	defSection := buildDefContextSection(def)
+
+	// Page order: properties → recurrence warning → analyst log (do work here) →
+	// Jira workflow → suppression → description/solution → rollup/occurrences/traffic
+	return pagePropertiesMacro(props) + recurrenceSection + analystLogSection + workflowSection + suppressionSection + defSection + storageBody
+}
+
+// buildRecurrenceSection renders an info panel warning when Merge() detected that
+// a previously fixed/accepted finding has reappeared.
+func buildRecurrenceSection(r *entities.RecurrenceInfo) string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<ac:structured-macro ac:name="warning">`)
+	b.WriteString(`<ac:parameter ac:name="title">Recurrence detected</ac:parameter>`)
+	b.WriteString(`<ac:rich-text-body><p>`)
+	b.WriteString(`This finding was previously <strong>` + escapeHTML(strings.ToUpper(r.PriorStatus)) + `</strong>`)
+	b.WriteString(` but new occurrences were detected`)
+	if strings.TrimSpace(r.RecurredAt) != "" {
+		b.WriteString(` on ` + escapeHTML(r.RecurredAt))
+	}
+	if strings.TrimSpace(r.RecurredInScan) != "" {
+		b.WriteString(` (scan: <code>` + escapeHTML(r.RecurredInScan) + `</code>)`)
+	}
+	b.WriteString(`. Review and update the analyst status as needed.</p>`)
+	b.WriteString(`</ac:rich-text-body></ac:structured-macro>`)
+	return b.String()
+}
+
+// buildSuppressionSection renders the analyst suppression decision as a Confluence
+// info panel. Returns "" when the finding has no suppression record.
+func buildSuppressionSection(sup *entities.Suppression) string {
+	if sup == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<ac:structured-macro ac:name="info">`)
+	b.WriteString(`<ac:parameter ac:name="title">Suppression — ` + escapeHTML(strings.ToUpper(sup.Scope)) + `</ac:parameter>`)
+	b.WriteString(`<ac:rich-text-body><table><tbody>`)
+	writeKVRow := func(k, v string) {
+		b.WriteString(`<tr><th>` + escapeHTML(k) + `</th><td>` + escapeHTML(v) + `</td></tr>`)
+	}
+	writeKVRow("Scope", sup.Scope)
+	if strings.TrimSpace(sup.Reason) != "" {
+		writeKVRow("Reason", sup.Reason)
+	}
+	if strings.TrimSpace(sup.DecidedBy) != "" {
+		writeKVRow("Decided by", sup.DecidedBy)
+	}
+	if strings.TrimSpace(sup.DecidedAt) != "" {
+		writeKVRow("Decided at", sup.DecidedAt)
+	}
+	if strings.TrimSpace(sup.ExpiresAt) != "" {
+		writeKVRow("Expires at", sup.ExpiresAt)
+	} else {
+		writeKVRow("Expires", "permanent")
+	}
+	if strings.TrimSpace(sup.OccurrenceRef) != "" {
+		writeKVRow("Occurrence ref", sup.OccurrenceRef)
+	}
+	b.WriteString(`</tbody></table></ac:rich-text-body></ac:structured-macro>`)
+	return b.String()
+}
+
+// buildDefContextSection renders a compact Description + Solution block for a
+// finding page. Returns "" when the definition has no relevant content.
+func buildDefContextSection(def *entities.Definition) string {
+	if def == nil {
+		return ""
+	}
+	var b strings.Builder
+
+	// Description — from the scanner's alert description (ZAP "desc" field).
+	// Falls back to detection.Summary for custom/scripted rules.
+	desc := strings.TrimSpace(def.Description)
+	if desc == "" && def.Detection != nil {
+		desc = strings.TrimSpace(def.Detection.Summary)
+	}
+	if desc != "" {
+		b.WriteString(`<h2>Description</h2>`)
+		b.WriteString(`<p>` + escapeHTML(desc) + `</p>`)
+	}
+
+	// Solution — remediation summary + guidance bullets.
+	if def.Remediation != nil {
+		sum := strings.TrimSpace(def.Remediation.Summary)
+		if sum != "" || len(def.Remediation.Guidance) > 0 {
+			b.WriteString(`<h2>Solution</h2>`)
+			if sum != "" {
+				b.WriteString(`<p>` + escapeHTML(sum) + `</p>`)
+			}
+			if len(def.Remediation.Guidance) > 0 {
+				b.WriteString(`<ul>`)
+				for _, g := range def.Remediation.Guidance {
+					if g = strings.TrimSpace(g); g != "" {
+						b.WriteString(`<li>` + escapeHTML(g) + `</li>`)
+					}
+				}
+				b.WriteString(`</ul>`)
+			}
+		}
+
+		// False positive conditions — helps analysts quickly dismiss FPs.
+		if len(def.Remediation.FalsePositiveConditions) > 0 {
+			b.WriteString(`<h2>False Positive Conditions</h2><ul>`)
+			for _, c := range def.Remediation.FalsePositiveConditions {
+				if c = strings.TrimSpace(c); c != "" {
+					b.WriteString(`<li>` + escapeHTML(c) + `</li>`)
+				}
+			}
+			b.WriteString(`</ul>`)
+		}
+
+		// References — external links (OWASP, advisories, CWE docs, etc.)
+		if len(def.Remediation.References) > 0 {
+			b.WriteString(`<h2>References</h2><ul>`)
+			for _, r := range def.Remediation.References {
+				if r = strings.TrimSpace(r); r != "" {
+					// Render as a hyperlink when it looks like a URL, plain text otherwise.
+					if strings.HasPrefix(r, "http://") || strings.HasPrefix(r, "https://") {
+						b.WriteString(`<li><a href="` + escapeAttr(r) + `">` + escapeHTML(r) + `</a></li>`)
+					} else {
+						b.WriteString(`<li>` + escapeHTML(r) + `</li>`)
+					}
+				}
+			}
+			b.WriteString(`</ul>`)
+		}
+	}
+
+	return b.String()
+}
+
+func jiraWorkflowSource(synced string) string {
+	if strings.TrimSpace(synced) == "" {
+		return "Jira analyst case (synced at publish time)"
+	}
+	return "Jira analyst case (synced " + strings.TrimSpace(synced) + ")"
+}
+
+func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
+	if len(refs) == 0 || len(statusByKey) == 0 {
+		return ""
+	}
+	for _, ref := range refs {
+		key := strings.TrimSpace(ref)
+		if strings.Contains(key, "/") {
+			parts := strings.Split(strings.TrimRight(key, "/"), "/")
+			key = parts[len(parts)-1]
+		}
+		if raw := strings.TrimSpace(statusByKey[key]); raw != "" {
+			return raw
+		}
+	}
+	return ""
+}
+
+func jiraSmartLink(rawURL, label, appearance string) string {
+	appearance = strings.TrimSpace(appearance)
+	if appearance == "" {
+		appearance = "inline"
+	}
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = rawURL
+	}
+	return fmt.Sprintf(`<a href="%s" data-card-appearance="%s">%s</a>`, escapeAttr(rawURL), escapeAttr(appearance), escapeHTML(label))
+}
+
+func jiraWorkflowSection(refs []string, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {
+	refs = trimUniqueStrings(refs)
+	if len(refs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Jira Workflow</h2>`)
+	b.WriteString(`<p><em>Live analyst workflow is managed in Jira. The cards below resolve against the linked analyst case; the page properties table reflects the last publish sync.</em></p>`)
+	for _, ref := range refs {
+		browseURL, label := jiraIssueBrowseURL(ref, jiraBaseURL)
+		if browseURL == "" {
+			if u, err := url.Parse(ref); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+				browseURL = ref
+				label = ref
+			}
+		}
+		if browseURL == "" {
+			continue
+		}
+		b.WriteString(`<p>`)
+		b.WriteString(jiraSmartLink(browseURL, label, "block"))
+		b.WriteString(`</p>`)
+	}
+	if raw := primaryJiraStatus(refs, jiraStatusByKey); raw != "" {
+		b.WriteString(`<p>Last synced Jira status: `)
+		b.WriteString(jiraStatusMacro(raw))
+		b.WriteString(`</p>`)
+	}
+	if strings.TrimSpace(jiraStatusSynced) != "" {
+		b.WriteString(`<p><small>Last Jira sync: `)
+		b.WriteString(escapeHTML(strings.TrimSpace(jiraStatusSynced)))
+		b.WriteString(`</small></p>`)
+	}
+	return b.String()
+}
+
+type jiraCaseOverviewRow struct {
+	IssueKey     string
+	BrowseURL    string
+	JiraStatus   string
+	KBStatus     string
+	Severity     string
+	FindingTitle string
+}
+
+func appendJiraOverviewSection(pageTitle, storageBody string, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {
+	switch strings.TrimSpace(pageTitle) {
+	case "KB Index", "KB Dashboard", "Triage Board":
+	default:
+		return storageBody
+	}
+	section := jiraOverviewSection(ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
+	if section == "" {
+		return storageBody
+	}
+	return storageBody + section
+}
+
+func jiraOverviewSection(ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {
+	if ei == nil || len(ei.finds) == 0 {
+		return ""
+	}
+	rows := collectJiraOverviewRows(ei, jiraBaseURL, jiraStatusByKey)
+	if len(rows) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Linked Jira Cases</h2>`)
+	b.WriteString(`<p><em>Analyst workflow is managed in Jira. These links resolve to Jira smart cards; statuses reflect the last publish sync.</em></p>`)
+	b.WriteString(`<table><tbody>`)
+	b.WriteString(`<tr><th>Case</th><th>Jira Status</th><th>KB Status</th><th>Severity</th><th>Issue</th></tr>`)
+	for _, row := range rows {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(jiraSmartLink(row.BrowseURL, row.IssueKey, "inline"))
+		b.WriteString(`</td><td>`)
+		if row.JiraStatus != "" {
+			b.WriteString(jiraStatusMacro(row.JiraStatus))
+		} else {
+			b.WriteString(`-`)
+		}
+		b.WriteString(`</td><td>`)
+		if row.KBStatus != "" {
+			b.WriteString(triageStatusMacro(row.KBStatus))
+		} else {
+			b.WriteString(`-`)
+		}
+		b.WriteString(`</td><td>`)
+		if row.Severity != "" {
+			b.WriteString(riskStatusMacro(row.Severity))
+		} else {
+			b.WriteString(`-`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(findingPageLink(row.FindingTitle))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</tbody></table>`)
+	if strings.TrimSpace(jiraStatusSynced) != "" {
+		b.WriteString(`<p><small>Last Jira sync: `)
+		b.WriteString(escapeHTML(strings.TrimSpace(jiraStatusSynced)))
+		b.WriteString(`</small></p>`)
+	}
+	return b.String()
+}
+
+func collectJiraOverviewRows(ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string) []jiraCaseOverviewRow {
+	if ei == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	rows := make([]jiraCaseOverviewRow, 0)
+	for _, f := range ei.finds {
+		if f == nil || f.Analyst == nil {
+			continue
+		}
+		browseURL, issueKey := firstJiraBrowseURL(f.Analyst.TicketRefs, jiraBaseURL)
+		if browseURL == "" || issueKey == "" {
+			continue
+		}
+		if _, ok := seen[issueKey]; ok {
+			continue
+		}
+		seen[issueKey] = struct{}{}
+		kbStatus := ""
+		if strings.TrimSpace(f.Analyst.Status) != "" {
+			kbStatus = entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status))
+		} else if rolled, ok := ei.findingTriageStatus[f.FindingID]; ok {
+			kbStatus = rolled
+		}
+		rows = append(rows, jiraCaseOverviewRow{
+			IssueKey:     issueKey,
+			BrowseURL:    browseURL,
+			JiraStatus:   strings.TrimSpace(jiraStatusByKey[issueKey]),
+			KBStatus:     kbStatus,
+			Severity:     strings.TrimSpace(f.Risk),
+			FindingTitle: findingPageTitle(f, ei),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
+			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
+		}
+		if rows[i].JiraStatus != rows[j].JiraStatus {
+			return rows[i].JiraStatus < rows[j].JiraStatus
+		}
+		return rows[i].IssueKey < rows[j].IssueKey
+	})
+	return rows
+}
+
+func firstJiraBrowseURL(refs []string, jiraBaseURL string) (string, string) {
+	for _, ref := range trimUniqueStrings(refs) {
+		if browseURL, label := jiraIssueBrowseURL(ref, jiraBaseURL); browseURL != "" && label != "" {
+			return browseURL, label
+		}
+	}
+	return "", ""
+}
+
+func findingPageLink(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return `-`
+	}
+	return fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
+		escapeAttr(title), title)
+}
+
+func riskRank(risk string) int {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	case "low":
+		return 3
+	case "info":
+		return 4
+	default:
+		return 5
+	}
+}
+
+func jiraIssueBrowseURL(ref string, jiraBaseURL string) (string, string) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", ""
+	}
+	if u, err := url.Parse(ref); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		label := ref
+		parts := strings.Split(strings.TrimRight(ref, "/"), "/")
+		if len(parts) > 0 && isJiraIssueKey(parts[len(parts)-1]) {
+			label = parts[len(parts)-1]
+		}
+		return ref, label
+	}
+	if isJiraIssueKey(ref) && strings.TrimSpace(jiraBaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(jiraBaseURL), "/") + "/browse/" + ref, ref
+	}
+	return "", ""
+}
+
+func ticketRefsPropertyValue(refs []string, jiraBaseURL string) string {
+	var links []string
+	for _, ref := range trimUniqueStrings(refs) {
+		if browseURL, label := jiraIssueBrowseURL(ref, jiraBaseURL); browseURL != "" {
+			links = append(links, jiraSmartLink(browseURL, label, "inline"))
+			continue
+		}
+		links = append(links, escapeHTML(ref))
+	}
+	return strings.Join(links, " ")
+}
+
+func isJiraIssueKey(value string) bool {
+	value = strings.TrimSpace(value)
+	parts := strings.Split(value, "-")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, r := range parts[0] {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	for _, r := range parts[1] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func trimUniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isConfluenceNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "http 404")
+}
+
+func definitionConfluenceTitle(def *entities.Definition) string {
+	if def == nil {
+		return ""
+	}
+	baseTitle := firstNonEmptyStr(def.Alert, def.Name)
+	defTitle := baseTitle
+	if def.PluginID != "" && baseTitle != "" {
+		defTitle = fmt.Sprintf("%s (Plugin %s)", baseTitle, def.PluginID)
+	}
+	return defTitle
+}
+
+func refindDefinitionParentID(ctx context.Context, client httpDoer, auth, base, spaceKey string, def *entities.Definition) (string, bool) {
+	title := definitionConfluenceTitle(def)
+	if title == "" {
+		return "", false
+	}
+	pageID, _, err := findPage(ctx, client, auth, base, spaceKey, title)
+	if err != nil || strings.TrimSpace(pageID) == "" {
+		return "", false
+	}
+	return pageID, true
+}
+
+func refindFindingParentID(ctx context.Context, client httpDoer, auth, base, spaceKey string, ei *entityIndex, findingID string) (string, bool) {
+	if ei == nil {
+		return "", false
+	}
+	finding := ei.finds[findingID]
+	title := findingPageTitle(finding, ei)
+	if title == "" {
+		return "", false
+	}
+	pageID, _, err := findPage(ctx, client, auth, base, spaceKey, title)
+	if err != nil || strings.TrimSpace(pageID) == "" {
+		return "", false
+	}
+	return pageID, true
 }
 
 // hostFromURL extracts the hostname from a raw URL without importing net/url.
@@ -1931,7 +2677,27 @@ func hostFromURL(rawURL string) string {
 }
 
 // triageStatusMacro returns a Confluence status lozenge for analyst triage status.
+func jiraStatusMacro(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return ""
+	}
+	lower := strings.ToLower(status)
+	color := "Grey"
+	switch {
+	case strings.Contains(lower, "done") || strings.Contains(lower, "closed") || strings.Contains(lower, "resolved") || strings.Contains(lower, "fixed"):
+		color = "Green"
+	case strings.Contains(lower, "review") || strings.Contains(lower, "progress") || strings.Contains(lower, "triage"):
+		color = "Yellow"
+	case strings.Contains(lower, "block") || strings.Contains(lower, "reject"):
+		color = "Red"
+	case strings.Contains(lower, "open") || strings.Contains(lower, "todo") || strings.Contains(lower, "backlog"):
+		color = "Blue"
+	}
+	return fmt.Sprintf(`<ac:structured-macro ac:name="status"><ac:parameter ac:name="colour">%s</ac:parameter><ac:parameter ac:name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(status))
+}
 func triageStatusMacro(status string) string {
+	status = entities.CanonicalAnalystStatus(status)
 	if status == "" {
 		return ""
 	}
@@ -1956,7 +2722,7 @@ func triageStatusMacro(status string) string {
 // NOTE: The Confluence page-properties macro ("Error loading the extension!") is
 // intentionally NOT used — it fails to render in Confluence Cloud via REST API.
 // The pull command reads Status/Owner from this plain table directly.
-func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex) string {
+func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {
 	if o == nil {
 		return storageBody
 	}
@@ -1967,13 +2733,13 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	owner := ""
 	if o.Analyst != nil {
 		if o.Analyst.Status != "" {
-			status = o.Analyst.Status
+			status = entities.CanonicalAnalystStatus(o.Analyst.Status)
 		}
 		owner = o.Analyst.Owner
 	}
 
-	// Edit instruction — appears before the table
-	editInstruction := `<p><em>To triage: <strong>Edit this page</strong> → update Status/Owner in the table below → Save → run <code>zap-kb pull</code> to sync back. Valid status values: open | triaged | fp | accepted | fixed</em></p>`
+	// Workflow note — Jira owns analyst workflow; Confluence is the evidence surface.
+	editInstruction := `<p><em>Workflow is managed in Jira. Use this page as evidence and context; keep ticket links, notes, and tags aligned with the analyst case. Confluence pull-based workflow writeback is legacy-only.</em></p>`
 
 	// --- Single plain table: triage fields first, then informational ---
 	var infoProps [][2]string
@@ -2025,21 +2791,17 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	}
 
 	// Analyst supplementary fields (ticket refs, notes, tags, updated)
-	if o.Analyst != nil {
-		if len(o.Analyst.TicketRefs) > 0 {
-			var links []string
-			for _, ref := range o.Analyst.TicketRefs {
-				if strings.HasPrefix(ref, "http") {
-					links = append(links, fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(ref), escapeHTML(ref)))
-				} else {
-					links = append(links, escapeHTML(ref))
-				}
-			}
-			infoProps = append(infoProps, [2]string{"Tickets", strings.Join(links, ", ")})
+	var ticketRefs []string
+	if ei != nil {
+		if finding := ei.finds[o.FindingID]; finding != nil && finding.Analyst != nil {
+			ticketRefs = append(ticketRefs, finding.Analyst.TicketRefs...)
 		}
+	}
+	if o.Analyst != nil {
+		ticketRefs = append(ticketRefs, o.Analyst.TicketRefs...)
 		if o.Analyst.Notes != "" {
 			notesLabel := "Notes"
-			if strings.EqualFold(strings.TrimSpace(o.Analyst.Status), "accept-risk") {
+			if entities.CanonicalAnalystStatus(strings.TrimSpace(o.Analyst.Status)) == "accepted" {
 				notesLabel = "Accepted Reason"
 			}
 			infoProps = append(infoProps, [2]string{notesLabel, escapeHTML(o.Analyst.Notes)})
@@ -2050,6 +2812,13 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		if o.Analyst.UpdatedAt != "" {
 			infoProps = append(infoProps, [2]string{"Updated", escapeHTML(o.Analyst.UpdatedAt)})
 		}
+	}
+	if refs := trimUniqueStrings(ticketRefs); len(refs) > 0 {
+		infoProps = append(infoProps, [2]string{"Analyst Cases", ticketRefsPropertyValue(refs, jiraBaseURL)})
+		if raw := primaryJiraStatus(refs, jiraStatusByKey); raw != "" {
+			infoProps = append(infoProps, [2]string{"Jira Status", jiraStatusMacro(raw)})
+		}
+		infoProps = append(infoProps, [2]string{"Workflow Source", escapeHTML(jiraWorkflowSource(jiraStatusSynced))})
 	}
 
 	var infoTable strings.Builder
@@ -2063,7 +2832,8 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	}
 	infoTable.WriteString(`</tbody></table>`)
 
-	return editInstruction + infoTable.String() + storageBody
+	workflowSection := jiraWorkflowSection(ticketRefs, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
+	return editInstruction + infoTable.String() + workflowSection + storageBody
 }
 
 // --- Confluence Labels API ---
@@ -2153,7 +2923,7 @@ func defLabels(def *entities.Definition) []string {
 	if def == nil {
 		return nil
 	}
-	labels := []string{"definition", "plugin-" + def.PluginID}
+	labels := []string{"definition", "plugin-" + def.PluginID, "origin-" + entities.DefinitionOriginValue(def.Origin, def.PluginID, def.Detection)}
 	if def.Taxonomy != nil {
 		if def.Taxonomy.CWEID > 0 {
 			labels = append(labels, fmt.Sprintf("cwe-%d", def.Taxonomy.CWEID))
@@ -2171,6 +2941,11 @@ func findingLabels(f *entities.Finding) []string {
 		return nil
 	}
 	labels := []string{"finding", "risk-" + strings.ToLower(f.Risk), "plugin-" + f.PluginID}
+	if f.Analyst != nil {
+		if status := entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)); status != "" {
+			labels = append(labels, "status-"+status)
+		}
+	}
 	return labels
 }
 
@@ -2183,26 +2958,13 @@ func occurrenceLabels(o *entities.Occurrence) []string {
 		labels = append(labels, "scan-"+strings.ToLower(o.ScanLabel))
 	}
 	if o.Analyst != nil && o.Analyst.Status != "" {
-		labels = append(labels, "status-"+o.Analyst.Status)
+		labels = append(labels, "status-"+entities.CanonicalAnalystStatus(o.Analyst.Status))
 	}
 	return labels
 }
 
 // isConfluenceCustomRule returns true when a definition is a project-specific custom
 // rule rather than a built-in ZAP plugin. Mirrors the obsidian isCustomRule logic.
-func isConfluenceCustomRule(pluginID string, det *entities.Detection) bool {
-	if strings.HasPrefix(pluginID, "zap-") {
-		return true
-	}
-	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
-		return true
-	}
-	if det == nil {
-		for _, r := range pluginID {
-			if r < '0' || r > '9' {
-				return true
-			}
-		}
-	}
-	return false
+func isConfluenceCustomRule(def *entities.Definition) bool {
+	return entities.IsCustomDefinition(def)
 }

@@ -1,18 +1,24 @@
 # Analyst Guide (How to update findings/occurrences)
 
 Where to edit
-- Edit front matter (YAML at top) in occurrence files; findings inherit rollups automatically.
+- Edit finding pages for primary workflow state only when you are intentionally using a Confluence-driven workflow.
+- In the Jira-integrated path, treat Confluence as read-oriented evidence and Jira as workflow.
+- Occurrence pages remain useful for scan-specific notes and evidence.
 - Never change IDs (`id`, `occurrenceId`, `findingId`, `definitionId`) or `scan.label`/`observedAt`.
 
-Fields to fill (add them if they are not present yet)
-- `analyst.status`: open | triaged | fp | accepted | fixed (drives triage board and status chips).
+Fields to fill
+- `analyst.status`: `open | triaged | fp | accepted | fixed`.
 - `analyst.owner`: your name/handle for queueing.
-- `analyst.tags`: short labels for routing (e.g., “webapp”, “pci”, “p1”).
+- `analyst.tags`: routing and workflow tags.
 - `analyst.notes`: concise notes or investigation summary (markdown ok).
-- `analyst.ticketRefs`: one or more ticket IDs (JIRA, etc.).
+- `analyst.ticketRefs`: analyst case references or other linked tracking IDs.
 - `analyst.updatedAt`: set to an ISO/RFC3339 timestamp when you change status/notes (`2025-12-03T15:04:05Z`).
 
-If the fields are missing, add a block like this to the occurrence front matter:
+Recommended tags
+- `case-ticket`: export a low/info finding into the analyst Jira project. Medium/high findings are exported automatically.
+- `tune-scan`: mark a recurring false positive for detection-tuning follow-up.
+
+If the fields are missing, add a block like this to the finding or occurrence front matter:
 ```yaml
 analyst.status: open
 analyst.owner: ""
@@ -21,24 +27,21 @@ analyst.notes: ""
 analyst.ticketRefs: []
 analyst.updatedAt: ""
 ```
-Then set the values as needed.
-
-Optional context (only if you have verified it)
-- `domain` override: use only if you know the sanitized domain label is wrong.
-- Do not edit `url`, `risk*`, `observedAt`, or traffic blocks unless you are correcting a clear extraction error.
 
 How to use statuses
 - `open`: default/untriaged.
-- `triaged`: validated, awaiting remediation ticket.
-- `fp`: false positive; add a short note in `analyst.notes` and a ticket reference if required.
-- `accepted`: risk acknowledged; include justification in `analyst.notes` and a ticket reference.
+- `triaged`: validated and ready for analyst case management.
+- `fp`: false positive. Add a short note. If it recurs and needs scanner tuning, add `tune-scan`.
+- `accepted`: risk acknowledged; include justification in `analyst.notes`.
 - `fixed`: verified remediated; note evidence in `analyst.notes`.
 
 Quick workflow
-1) Set `analyst.status`, `analyst.owner`, and `analyst.updatedAt`.
-2) Add `analyst.ticketRefs` when you file/attach to a ticket.
-3) Add a brief `analyst.notes` (what you validated, evidence, next step).
-4) Leave IDs, timestamps (`observedAt`), and `scan.label` untouched.
+1. Update the finding-level `analyst.status`, `analyst.owner`, and `analyst.updatedAt`.
+2. Add `case-ticket` in `analyst.tags` if a low/info finding should still become an analyst Jira case.
+3. Add `tune-scan` in `analyst.tags` if a recurring false positive needs detection-tuning follow-up.
+4. Add `analyst.ticketRefs` when you file or link a case or follow-up item.
+5. Add a brief `analyst.notes` summary.
+6. Leave IDs, `observedAt`, and `scan.label` untouched.
 
 Safety notes
 - Links in “Next actions” may be neutered; use the traffic snippets and curl repro carefully in non-production test contexts.
