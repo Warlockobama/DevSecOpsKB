@@ -19,6 +19,10 @@ IDs (deterministic, short)
 - definitionId = "def-"+pluginId
 - findingId = "fin-"+sha1_8(pluginId|url|method)
 - occurrenceId = "occ-"+sha1_8(pluginId|url|method|param|riskcode|confidence|attack|evidence|scanLabel)
+- `attack` and `evidence` are normalized before hashing to strip scanner-injected
+  dynamic content (ISO timestamps, UUIDs, long hex runs, long digit runs). The
+  raw values remain on the Occurrence for display; only the key input is
+  sanitized so repeated scans of the same logical issue produce the same ID.
 
 Definition
 - definitionId
