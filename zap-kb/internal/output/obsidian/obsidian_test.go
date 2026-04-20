@@ -183,6 +183,107 @@ func TestWriteVault_DefaultDoesNotCarryForwardOccurrenceMeta(t *testing.T) {
 	}
 }
 
+// TestWriteVault_loadFindingMeta_preservesAnalystStatus verifies that hand-edits
+// to finding-page YAML survive a vault rebuild when CarryForwardFindingMeta is
+// enabled. Mirrors the occurrence-side test.
+func TestWriteVault_loadFindingMeta_preservesAnalystStatus(t *testing.T) {
+	root := t.TempDir()
+	ef := minimalEF("occ-finding-carry")
+
+	if err := WriteVault(root, ef, Options{CarryForwardFindingMeta: true}); err != nil {
+		t.Fatalf("first WriteVault: %v", err)
+	}
+
+	findDir := filepath.Join(root, "findings")
+	entries, err := os.ReadDir(findDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected finding files; err=%v entries=%d", err, len(entries))
+	}
+	var findFile string
+	for _, e := range entries {
+		if strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			findFile = filepath.Join(findDir, e.Name())
+			break
+		}
+	}
+	if findFile == "" {
+		t.Fatal("no .md file in findings dir")
+	}
+	raw, err := os.ReadFile(findFile)
+	if err != nil {
+		t.Fatalf("read finding: %v", err)
+	}
+	// Inject analyst frontmatter lines between `---` fences. The first write
+	// produced a minimal page (no analyst), so we prepend our keys to the
+	// frontmatter block.
+	content := string(raw)
+	injected := "---\n" +
+		"analyst.status: confirm\n" +
+		"analyst.owner: alice@example.com\n" +
+		"analyst.tags: hand-edit, important\n" +
+		"analyst.ticketRefs: SEC-42\n" +
+		"analyst.notes: kept across rebuild\n"
+	content = strings.Replace(content, "---\n", injected, 1)
+	if err := os.WriteFile(findFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("inject analyst frontmatter: %v", err)
+	}
+
+	// Second pass — no analyst data in the entities struct. Carry-forward must
+	// rehydrate from the edited markdown and canonicalize the legacy alias.
+	if err := WriteVault(root, ef, Options{CarryForwardFindingMeta: true}); err != nil {
+		t.Fatalf("second WriteVault: %v", err)
+	}
+	out, err := os.ReadFile(findFile)
+	if err != nil {
+		t.Fatalf("re-read finding: %v", err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		`analyst.owner`,
+		`alice@example.com`,
+		`SEC-42`,
+		`kept across rebuild`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("expected %q preserved across rebuild; full page:\n%s", want, s)
+		}
+	}
+	if !strings.Contains(s, `analyst.status: "triaged"`) && !strings.Contains(s, `analyst.status: triaged`) {
+		t.Errorf("expected status canonicalized to triaged; got:\n%s", s)
+	}
+}
+
+// TestWriteVault_DefaultDoesNotCarryForwardFindingMeta verifies that without
+// the opt-in flag, hand-edits to finding YAML are overwritten. Matches the
+// safety-by-default posture of CarryForwardOccurrenceMeta.
+func TestWriteVault_DefaultDoesNotCarryForwardFindingMeta(t *testing.T) {
+	root := t.TempDir()
+	ef := minimalEF("occ-finding-no-carry")
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("first WriteVault: %v", err)
+	}
+	findDir := filepath.Join(root, "findings")
+	entries, _ := os.ReadDir(findDir)
+	if len(entries) == 0 {
+		t.Fatal("expected a finding file")
+	}
+	findFile := filepath.Join(findDir, entries[0].Name())
+	raw, _ := os.ReadFile(findFile)
+	content := strings.Replace(string(raw), "---\n", "---\nanalyst.owner: alice@example.com\n", 1)
+	if err := os.WriteFile(findFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("inject owner: %v", err)
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("second WriteVault: %v", err)
+	}
+	out, _ := os.ReadFile(findFile)
+	if strings.Contains(string(out), "alice@example.com") {
+		t.Errorf("default mode should not carry forward finding owner; got:\n%s", string(out))
+	}
+}
+
 // --- Story 2.1: WriteVault happy path ---
 
 func minimalEF2(occIDs []string) entities.EntitiesFile {

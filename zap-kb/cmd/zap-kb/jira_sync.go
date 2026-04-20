@@ -141,6 +141,7 @@ func writeVaultSnapshot(root string, ent entities.EntitiesFile, scanLabel, siteL
 		JiraStatusSynced:           jiraStatusSynced,
 		TriageGuidanceFn:           zapmeta.TriageGuidance,
 		CarryForwardOccurrenceMeta: shouldCarryForwardOccurrenceMeta(ent.SourceTool),
+		CarryForwardFindingMeta:    shouldCarryForwardOccurrenceMeta(ent.SourceTool),
 	})
 }
 

@@ -41,6 +41,12 @@ type Options struct {
 	// from existing occurrence notes before the vault is rebuilt. Leave false for
 	// raw scanner publishes so old local triage state does not contaminate a clean run.
 	CarryForwardOccurrenceMeta bool
+	// CarryForwardFindingMeta rehydrates finding-level analyst state (status,
+	// owner, tags, notes, rationale, ticketRefs) from existing finding notes
+	// before the vault is rebuilt. Mirrors CarryForwardOccurrenceMeta but for the
+	// finding workflow object — hand-edits to finding YAML would otherwise be
+	// silently overwritten on regeneration.
+	CarryForwardFindingMeta bool
 }
 
 // WriteVault writes an Obsidian-ready folder tree from the Entities model.
@@ -62,6 +68,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	if opts.CarryForwardOccurrenceMeta {
 		existingOccMeta = loadOccurrenceMeta(occDir)
 	}
+	existingFindingMeta := map[string]*entities.Analyst{}
+	if opts.CarryForwardFindingMeta {
+		existingFindingMeta = loadFindingMeta(findDir)
+	}
 
 	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
 	// no longer in the entities file) don't accumulate and get exported to Confluence.
@@ -71,6 +81,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
+		}
+	}
+
+	// Rehydrate finding-level analyst state from prior markdown if requested.
+	// Current (input) analyst state wins; the carry-forward only fills gaps
+	// created when the entities file itself lacks analyst data.
+	if len(existingFindingMeta) > 0 {
+		for i := range ef.Findings {
+			prior, ok := existingFindingMeta[ef.Findings[i].FindingID]
+			if !ok || prior == nil {
+				continue
+			}
+			ef.Findings[i].Analyst = mergeFindingAnalyst(ef.Findings[i].Analyst, prior)
 		}
 	}
 
@@ -608,6 +631,31 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 		if dom := computeDomainLabel(f.URL, opts.SiteLabel); dom != "" {
 			kv["domain"] = dom
+		}
+		// Analyst state — emit to YAML so hand-edits round-trip via
+		// loadFindingMeta on the next WriteVault.
+		if a := f.Analyst; a != nil {
+			if v := strings.TrimSpace(a.Status); v != "" {
+				kv["analyst.status"] = entities.CanonicalAnalystStatus(v)
+			}
+			if v := strings.TrimSpace(a.Owner); v != "" {
+				kv["analyst.owner"] = v
+			}
+			if len(a.Tags) > 0 {
+				kv["analyst.tags"] = strings.Join(a.Tags, ", ")
+			}
+			if v := strings.TrimSpace(a.Notes); v != "" {
+				kv["analyst.notes"] = v
+			}
+			if v := strings.TrimSpace(a.Rationale); v != "" {
+				kv["analyst.rationale"] = v
+			}
+			if len(a.TicketRefs) > 0 {
+				kv["analyst.ticketRefs"] = strings.Join(a.TicketRefs, ", ")
+			}
+			if v := strings.TrimSpace(a.UpdatedAt); v != "" {
+				kv["analyst.updatedAt"] = v
+			}
 		}
 		addStatusToYAMLStrAny(kv, "status.", sc)
 		writeYAML(&b, kv)
@@ -2397,6 +2445,118 @@ func loadOccurrenceMeta(occDir string) map[string]occMeta {
 			meta.Analyst = &analyst
 		}
 		out[id] = meta
+	}
+	return out
+}
+
+// loadFindingMeta reads analyst state from existing finding markdown pages so
+// hand-edits to finding YAML (status, owner, tags, notes, rationale,
+// ticketRefs, updatedAt) survive a vault rebuild. Returns a map keyed by
+// findingId; entries are nil when the page has no analyst state to preserve.
+func loadFindingMeta(findDir string) map[string]*entities.Analyst {
+	out := map[string]*entities.Analyst{}
+	entries, err := os.ReadDir(findDir)
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(findDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		y := extractFrontmatter(string(b))
+		id := strings.TrimSpace(y["findingId"])
+		if id == "" {
+			id = strings.TrimSpace(y["id"])
+		}
+		if id == "" {
+			continue
+		}
+		analyst := &entities.Analyst{
+			Status:    entities.CanonicalAnalystStatus(strings.TrimSpace(y["analyst.status"])),
+			Owner:     strings.TrimSpace(y["analyst.owner"]),
+			Notes:     strings.TrimSpace(y["analyst.notes"]),
+			Rationale: strings.TrimSpace(y["analyst.rationale"]),
+			UpdatedAt: strings.TrimSpace(y["analyst.updatedAt"]),
+		}
+		if tags := strings.TrimSpace(y["analyst.tags"]); tags != "" {
+			analyst.Tags = splitCommaList(tags)
+		}
+		if tickets := strings.TrimSpace(y["analyst.ticketRefs"]); tickets != "" {
+			analyst.TicketRefs = splitCommaList(tickets)
+		}
+		if analyst.Status == "" && analyst.Owner == "" && analyst.Notes == "" &&
+			analyst.Rationale == "" && analyst.UpdatedAt == "" &&
+			len(analyst.Tags) == 0 && len(analyst.TicketRefs) == 0 {
+			continue
+		}
+		out[id] = analyst
+	}
+	return out
+}
+
+// mergeFindingAnalyst fills gaps in cur from prior. The input entities file
+// (cur) is authoritative — only missing scalars and unioned tag/ticket
+// collections are taken from prior so a clean re-publish reflects upstream
+// truth while hand-edits that have no upstream counterpart survive.
+func mergeFindingAnalyst(cur, prior *entities.Analyst) *entities.Analyst {
+	if prior == nil {
+		return cur
+	}
+	if cur == nil {
+		cp := *prior
+		return &cp
+	}
+	if cur.Status == "" && prior.Status != "" {
+		cur.Status = prior.Status
+	}
+	if cur.Owner == "" && prior.Owner != "" {
+		cur.Owner = prior.Owner
+	}
+	if cur.Notes == "" && prior.Notes != "" {
+		cur.Notes = prior.Notes
+	}
+	if cur.Rationale == "" && prior.Rationale != "" {
+		cur.Rationale = prior.Rationale
+	}
+	if cur.UpdatedAt == "" && prior.UpdatedAt != "" {
+		cur.UpdatedAt = prior.UpdatedAt
+	}
+	cur.Tags = unionPreserve(cur.Tags, prior.Tags)
+	cur.TicketRefs = unionPreserve(cur.TicketRefs, prior.TicketRefs)
+	return cur
+}
+
+func unionPreserve(a, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range b {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
 	}
 	return out
 }
