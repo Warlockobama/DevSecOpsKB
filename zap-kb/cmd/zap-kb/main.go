@@ -120,7 +120,7 @@ func main() {
 	flag.StringVar(&runOut, "run-out", "", "Write a pipeline-friendly run artifact JSON (entities+meta[+alerts])")
 	flag.StringVar(&runIn, "run-in", "", "Read a run artifact JSON (or bare entities JSON) and use it as -entities-in; also picks up scan/site labels if present")
 	flag.StringVar(&zipOut, "zip-out", "", "Zip outputs to this path (includes run-out, entities out, and obsidian dir if generated)")
-	flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body")
+	flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body,notes")
 	flag.BoolVar(&wizard, "wizard", true, "Launch an interactive setup wizard when no flags are provided (disable with -wizard=false)")
 	// Prune options (vault-only maintenance): when -prune-scan is set, performs pruning and exits
 	flag.StringVar(&pruneScanLabel, "prune-scan", "", "Prune occurrence notes from the Obsidian vault with this scan label; no fetch or export performed")

@@ -278,6 +278,8 @@ func TestParseRedactOptionList(t *testing.T) {
 		{"headers,body,auth", RedactOptions{Headers: true, Body: true, Auth: true}},
 		{"", RedactOptions{}},
 		{"COOKIES,AUTH", RedactOptions{Cookies: true, Auth: true}},
+		{"notes", RedactOptions{Notes: true}},
+		{"note", RedactOptions{Notes: true}},
 	}
 	for _, tc := range cases {
 		got := ParseRedactOptionList(tc.input)
@@ -285,4 +287,59 @@ func TestParseRedactOptionList(t *testing.T) {
 			t.Errorf("ParseRedactOptionList(%q) = %+v, want %+v", tc.input, got, tc.want)
 		}
 	}
+}
+
+func TestRedactEntities_NotesModeScrubsAnalystAndReproduceSteps(t *testing.T) {
+	ef := &EntitiesFile{
+		Findings: []Finding{{
+			FindingID: "fin-1",
+			Analyst: &Analyst{
+				Notes:     "creds: admin/hunter2",
+				Rationale: "confirmed via curl -u admin:hunter2",
+				Status:    "triaged",
+				Owner:     "alice",
+			},
+		}},
+		Occurrences: []Occurrence{{
+			OccurrenceID: "occ-1",
+			Analyst: &Analyst{
+				Notes:     "token=eyJ...",
+				Rationale: "decision rationale",
+			},
+			Reproduce: &Reproduce{
+				Curl:  "curl https://example.com",
+				Steps: []string{"1. login with admin/hunter2", "2. POST /api"},
+			},
+		}},
+	}
+
+	RedactEntities(ef, RedactOptions{Notes: true})
+
+	af := ef.Findings[0].Analyst
+	if af.Notes != "" || af.Rationale != "" {
+		t.Errorf("finding analyst free text not cleared: Notes=%q Rationale=%q", af.Notes, af.Rationale)
+	}
+	if af.Status != "triaged" || af.Owner != "alice" {
+		t.Errorf("finding analyst structural fields should be preserved: %+v", af)
+	}
+
+	ao := ef.Occurrences[0].Analyst
+	if ao.Notes != "" || ao.Rationale != "" {
+		t.Errorf("occurrence analyst free text not cleared: Notes=%q Rationale=%q", ao.Notes, ao.Rationale)
+	}
+	rep := ef.Occurrences[0].Reproduce
+	if len(rep.Steps) != 0 {
+		t.Errorf("reproduce steps not cleared: %v", rep.Steps)
+	}
+	if rep.Curl != "curl https://example.com" {
+		t.Errorf("reproduce curl should be untouched by notes mode: %q", rep.Curl)
+	}
+}
+
+func TestRedactEntities_NotesMode_NilAnalystAndReproduce(t *testing.T) {
+	ef := &EntitiesFile{
+		Findings:    []Finding{{FindingID: "fin-1"}},
+		Occurrences: []Occurrence{{OccurrenceID: "occ-1"}},
+	}
+	RedactEntities(ef, RedactOptions{Notes: true}) // must not panic
 }

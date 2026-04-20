@@ -64,7 +64,7 @@ Examples:
 - IDs: finding front matter `id` uses `finding/<findingId>`; occurrence `id` uses `occurrence/<occurrenceId>`.
 - Timestamps: `generatedAt` marks build time; occurrences carry `observedAt` (defaults to generatedAt); findings derive `firstSeen`/`lastSeen` from occurrences.
 - Status/triage: finding-level `analyst.*` fields are the primary workflow overlay; occurrence data remains scan evidence and roll up to INDEX/DASHBOARD/triage-board.
-- Safety: “Next actions” endpoints are neutered (schemes stripped). Use `-redact domain,query,cookies,auth,headers,body` to scrub sensitive data.
+- Safety: “Next actions” endpoints are neutered (schemes stripped). Use `-redact domain,query,cookies,auth,headers,body,notes` to scrub sensitive data. The `notes` mode clears analyst-authored free text (`analyst.notes`, `analyst.rationale`) and `reproduce.steps[]`, so pasted credentials or PII don't leak into shared exports.
 - Helper pages: vault emits `INDEX.md`, `DASHBOARD.md`, plus `triage-board.md` and `by-domain.md`.
 - Run artifacts: `-run-out` writes `run.json` (entities + meta + alerts); multiple runs can be merged (`-entities-in`) to build a multi-scan vault.
 - Jira/Confluence workflow: medium/high findings auto-export to analyst Jira; low/info findings require the `case-ticket` tag; recurring false positives are surfaced as tuning candidates and can be marked with `tune-scan` for follow-up. Confluence pull does not overwrite workflow unless `pull -confluence-pull-workflow` is explicitly used.

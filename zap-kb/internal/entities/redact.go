@@ -15,6 +15,9 @@ import (
 //	auth     - redact Authorization header value
 //	headers  - redact sensitive headers (X-Api-Key, Api-Key, X-Auth-Token)
 //	body     - drop BodySnippet values (keep byte counts)
+//	notes    - zero analyst-authored free text (Analyst.Notes, Analyst.Rationale)
+//	           and scanner-supplied reproduction steps (Reproduce.Steps[]) that
+//	           can inadvertently carry pasted credentials or PII.
 type RedactOptions struct {
 	Domain  bool
 	Query   bool
@@ -22,6 +25,7 @@ type RedactOptions struct {
 	Auth    bool
 	Headers bool
 	Body    bool
+	Notes   bool
 }
 
 func ParseRedactOptionList(list string) RedactOptions {
@@ -40,6 +44,8 @@ func ParseRedactOptionList(list string) RedactOptions {
 			ro.Headers = true
 		case "body":
 			ro.Body = true
+		case "notes", "note":
+			ro.Notes = true
 		}
 	}
 	return ro
@@ -50,6 +56,10 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 		return
 	}
 	for i := range e.Findings {
+		if ro.Notes && e.Findings[i].Analyst != nil {
+			e.Findings[i].Analyst.Notes = ""
+			e.Findings[i].Analyst.Rationale = ""
+		}
 		if ro.Domain || ro.Query {
 			e.Findings[i].URL = redactURL(e.Findings[i].URL, ro)
 			// Rebuild Name from the redacted URL so it no longer contains the original host.
@@ -74,6 +84,15 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 	rawHeaderRedact := ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query
 
 	for i := range e.Occurrences {
+		if ro.Notes {
+			if e.Occurrences[i].Analyst != nil {
+				e.Occurrences[i].Analyst.Notes = ""
+				e.Occurrences[i].Analyst.Rationale = ""
+			}
+			if e.Occurrences[i].Reproduce != nil {
+				e.Occurrences[i].Reproduce.Steps = nil
+			}
+		}
 		if ro.Domain || ro.Query {
 			e.Occurrences[i].URL = redactURL(e.Occurrences[i].URL, ro)
 			// Rebuild Name from the redacted URL so it no longer contains the original host.
