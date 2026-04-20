@@ -269,6 +269,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	}{
 		{"DASHBOARD.md", "KB Dashboard"},
 		{"triage-board.md", "Triage Board"},
+		{"tuning-candidates.md", "Tuning Candidates"},
 		{"issues.md", "Issues"},
 		{"occurrences.md", "Occurrences"},
 		{"rules.md", "Rules"},
@@ -1138,7 +1139,7 @@ func countAction(s *VaultSummary, action string) {
 
 func dryRunVault(vaultRoot string) (VaultSummary, error) {
 	var count int
-	for _, f := range []string{"INDEX.md", "DASHBOARD.md", "triage-board.md", "by-domain.md", "latest-scan.md"} {
+	for _, f := range []string{"INDEX.md", "DASHBOARD.md", "triage-board.md", "tuning-candidates.md", "by-domain.md", "latest-scan.md"} {
 		if _, err := os.Stat(filepath.Join(vaultRoot, f)); err == nil {
 			count++
 		}

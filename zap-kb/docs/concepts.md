@@ -31,7 +31,7 @@
 - **Vault pages**:
   - INDEX (issue + occurrence tables, triage board, by-domain links).
   - DASHBOARD (vault-wide snapshot).
-  - Auto-generated helpers: `triage-board.md`, `by-domain.md`.
+  - Auto-generated helpers: `triage-board.md`, `by-domain.md`, `tuning-candidates.md` (dedicated rollup of recurring-FP and `tune-scan`-tagged findings).
 - **Safety**:
   - “Next actions” endpoints are neutered (schemes stripped) to avoid live links.
   - Redaction flag `-redact domain,query,cookies,auth,headers,body` can scrub sensitive data in outputs.

@@ -216,6 +216,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		PluginID        string
 		TuningCandidate bool
 		TuningScans     int
+		TuneScanTagged  bool
+		Owner           string
+		Tickets         []string
+		Tags            []string
 	}
 	var issueSummaries []issueSummary
 
@@ -914,6 +918,15 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			PluginID:        strings.TrimSpace(f.PluginID),
 			TuningCandidate: tuningCandidate,
 			TuningScans:     tuningScans,
+			TuneScanTagged:  containsStringFold(tags, "tune-scan"),
+			Owner: func() string {
+				if len(owners) > 0 {
+					return owners[0]
+				}
+				return ""
+			}(),
+			Tickets: append([]string(nil), tickets...),
+			Tags:    append([]string(nil), tags...),
 		})
 
 		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
@@ -1734,27 +1747,89 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 		}
 
+		// Aggregate tuning candidates: recurring-FP heuristic + `tune-scan` tag.
+		// Shared ordering between the triage-board preview and the dedicated
+		// rollup page so analysts see a consistent view.
 		var tuningCandidates []issueSummary
 		for _, is := range issueSummaries {
-			if is.TuningCandidate {
+			if is.TuningCandidate || is.TuneScanTagged {
 				tuningCandidates = append(tuningCandidates, is)
 			}
 		}
+		sort.Slice(tuningCandidates, func(i, j int) bool {
+			if tuningCandidates[i].TuningScans != tuningCandidates[j].TuningScans {
+				return tuningCandidates[i].TuningScans > tuningCandidates[j].TuningScans
+			}
+			if tuningCandidates[i].TuneScanTagged != tuningCandidates[j].TuneScanTagged {
+				return tuningCandidates[i].TuneScanTagged
+			}
+			return tuningCandidates[i].Alias < tuningCandidates[j].Alias
+		})
 		if len(tuningCandidates) > 0 {
-			sort.Slice(tuningCandidates, func(i, j int) bool {
-				if tuningCandidates[i].TuningScans != tuningCandidates[j].TuningScans {
-					return tuningCandidates[i].TuningScans > tuningCandidates[j].TuningScans
-				}
-				return tuningCandidates[i].Alias < tuningCandidates[j].Alias
-			})
 			var tb strings.Builder
 			tb.WriteString("## Tuning candidates\n\n")
-			for _, is := range tuningCandidates {
+			tb.WriteString("See [[tuning-candidates|Tuning Candidates]] for the full rollup.\n\n")
+			preview := tuningCandidates
+			if len(preview) > 5 {
+				preview = preview[:5]
+			}
+			for _, is := range preview {
 				ruleTitle := fallbackString(is.RuleTitle, "Rule")
-				fmt.Fprintf(&tb, "- [[%s|%s]] - false positive across %d scans\n", is.Link, ruleTitle, is.TuningScans)
+				tag := ""
+				if is.TuneScanTagged {
+					tag = " `tune-scan`"
+				}
+				if is.TuningCandidate && is.TuningScans > 0 {
+					fmt.Fprintf(&tb, "- [[%s|%s]] - false positive across %d scans%s\n", is.Link, ruleTitle, is.TuningScans, tag)
+				} else {
+					fmt.Fprintf(&tb, "- [[%s|%s]] - tagged for scan tuning%s\n", is.Link, ruleTitle, tag)
+				}
+			}
+			if len(tuningCandidates) > len(preview) {
+				fmt.Fprintf(&tb, "_... %d more_\n", len(tuningCandidates)-len(preview))
 			}
 			tb.WriteString("\n")
 			tbContent += tb.String()
+		}
+		// Dedicated rollup page (always emitted so the link never 404s).
+		{
+			var tc strings.Builder
+			tc.WriteString("# Tuning Candidates\n\n")
+			tc.WriteString("Findings flagged for scan-tuning follow-up. A finding appears here when it is a recurring false positive across scans, or when an analyst adds the `tune-scan` tag under `analyst.tags`.\n\n")
+			if len(tuningCandidates) == 0 {
+				tc.WriteString("_No tuning candidates at this time._\n\n")
+				tc.WriteString("Tag a finding with `tune-scan` (YAML `analyst.tags`) when a recurring false positive needs detection-tuning work, or let the recurring-FP heuristic promote it automatically.\n")
+			} else {
+				fmt.Fprintf(&tc, "Total: **%d**\n\n", len(tuningCandidates))
+				tc.WriteString("| Issue | Rule | Endpoint | Scans seen | `tune-scan` | Owner | Tickets |\n")
+				tc.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+				for _, is := range tuningCandidates {
+					ruleTitle := fallbackString(is.RuleTitle, "Rule")
+					endpoint := strings.TrimSpace(is.Method + " " + is.URL)
+					if endpoint == "" {
+						endpoint = "—"
+					}
+					scans := "—"
+					if is.TuningScans > 0 {
+						scans = fmt.Sprintf("%d", is.TuningScans)
+					}
+					tuneTag := "no"
+					if is.TuneScanTagged {
+						tuneTag = "yes"
+					}
+					owner := fallbackString(is.Owner, "—")
+					tickets := "—"
+					if len(is.Tickets) > 0 {
+						tickets = strings.Join(is.Tickets, ", ")
+					}
+					fmt.Fprintf(&tc, "| [[%s|%s]] | %s | %s | %s | %s | %s | %s |\n",
+						is.Link, fallbackString(is.Alias, is.PluginID), ruleTitle, endpoint, scans, tuneTag, owner, tickets)
+				}
+				tc.WriteString("\nWorkflow: investigate the rule (threshold, strength, or scope), open a detection-tuning task in your normal queue, and clear the `tune-scan` tag once the scanner config is updated.\n")
+			}
+			if err := os.WriteFile(filepath.Join(root, "tuning-candidates.md"), []byte(tc.String()), 0o644); err != nil {
+				return err
+			}
 		}
 
 		if err := os.WriteFile(filepath.Join(root, "triage-board.md"), []byte("# Triage board\n\n"+tbContent), 0o644); err != nil {

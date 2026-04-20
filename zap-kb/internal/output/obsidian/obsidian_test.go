@@ -1190,6 +1190,78 @@ func TestWriteVault_RecurringFalsePositiveSurfacesTuningCandidate(t *testing.T) 
 	if !strings.Contains(board, "## Tuning candidates") || !strings.Contains(board, "false positive across 2 scans") {
 		t.Fatalf("triage board missing tuning candidates section:\n%s", board)
 	}
+	if !strings.Contains(board, "[[tuning-candidates|Tuning Candidates]]") {
+		t.Fatalf("triage board missing link to tuning-candidates page:\n%s", board)
+	}
+
+	tcData, err := os.ReadFile(filepath.Join(root, "tuning-candidates.md"))
+	if err != nil {
+		t.Fatalf("ReadFile tuning-candidates.md: %v", err)
+	}
+	tc := string(tcData)
+	for _, want := range []string{"# Tuning Candidates", "Total: **1**", finding.FindingID, "GET https://example.com/tuning"} {
+		if !strings.Contains(tc, want) {
+			t.Fatalf("tuning-candidates.md missing %q:\n%s", want, tc)
+		}
+	}
+}
+
+func TestWriteVault_TuneScanTagAppearsOnRollupPageWithoutRecurrence(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-tune-tag", PluginID: "20001", Alert: "Tag Only Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-tune-tag",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/tagonly",
+		Method:       "POST",
+		Risk:         "Medium",
+		Analyst:      &entities.Analyst{Status: "open", Tags: []string{"tune-scan"}},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-tune-tag-1",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		ScanLabel:    "scan-1",
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-07T12:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "tuning-candidates.md"))
+	if err != nil {
+		t.Fatalf("ReadFile tuning-candidates.md: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, finding.FindingID) {
+		t.Fatalf("tune-scan tagged finding missing from rollup:\n%s", body)
+	}
+	if !strings.Contains(body, "| yes |") {
+		t.Fatalf("expected `tune-scan` column = yes in rollup:\n%s", body)
+	}
+}
+
+func TestWriteVault_TuningCandidatesPageEmittedWhenEmpty(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteVault(root, minimalEF("occ-empty"), Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "tuning-candidates.md"))
+	if err != nil {
+		t.Fatalf("ReadFile tuning-candidates.md: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "_No tuning candidates at this time._") {
+		t.Fatalf("empty tuning-candidates page missing placeholder:\n%s", body)
+	}
 }
 
 func TestWriteVault_IndexQuickNavigationPublishesCompanionPages(t *testing.T) {
