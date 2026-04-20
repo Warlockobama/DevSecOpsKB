@@ -36,8 +36,31 @@ type confluencePublishOptions struct {
 	SiteLabel        string
 	ZapBaseURL       string
 	JiraBaseURL      string
-	JiraStatusByKey  map[string]string
-	JiraStatusSynced string
+	JiraStatusByKey   map[string]string
+	JiraAssigneeByKey map[string]string
+	JiraStatusSynced  string
+}
+
+// mergeDefinitionEpicRefs persists Epic issue keys onto each Definition so
+// subsequent runs reuse the same Epic rather than creating duplicates. Returns
+// the count of definitions whose EpicRef was updated.
+func mergeDefinitionEpicRefs(ent *entities.EntitiesFile, epicKeys map[string]string) int {
+	if ent == nil || len(epicKeys) == 0 {
+		return 0
+	}
+	updated := 0
+	for i := range ent.Definitions {
+		key := strings.TrimSpace(epicKeys[ent.Definitions[i].DefinitionID])
+		if key == "" {
+			continue
+		}
+		if strings.TrimSpace(ent.Definitions[i].EpicRef) == key {
+			continue
+		}
+		ent.Definitions[i].EpicRef = key
+		updated++
+	}
+	return updated
 }
 
 func mergeFindingTicketKeys(ent *entities.EntitiesFile, ticketKeys map[string]string) int {
@@ -107,13 +130,14 @@ func shouldCarryForwardOccurrenceMeta(sourceTool string) bool {
 	}
 }
 
-func writeVaultSnapshot(root string, ent entities.EntitiesFile, scanLabel, siteLabel, zapBase, jiraBase string, jiraStatusByKey map[string]string, jiraStatusSynced string) error {
+func writeVaultSnapshot(root string, ent entities.EntitiesFile, scanLabel, siteLabel, zapBase, jiraBase string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string) error {
 	return obsidian.WriteVault(root, ent, obsidian.Options{
 		ScanLabel:                  scanLabel,
 		SiteLabel:                  siteLabel,
 		ZapBaseURL:                 zapBase,
 		JiraBaseURL:                jiraBase,
 		JiraStatusByKey:            jiraStatusByKey,
+		JiraAssigneeByKey:          jiraAssigneeByKey,
 		JiraStatusSynced:           jiraStatusSynced,
 		TriageGuidanceFn:           zapmeta.TriageGuidance,
 		CarryForwardOccurrenceMeta: shouldCarryForwardOccurrenceMeta(ent.SourceTool),
@@ -128,7 +152,7 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		return confluence.VaultSummary{}, fmt.Errorf("vault path is required for Confluence export")
 	}
 	if strings.TrimSpace(format) != "obsidian" {
-		if err := writeVaultSnapshot(vault, ent, opts.ScanLabel, opts.SiteLabel, opts.ZapBaseURL, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced); err != nil {
+		if err := writeVaultSnapshot(vault, ent, opts.ScanLabel, opts.SiteLabel, opts.ZapBaseURL, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced); err != nil {
 			return confluence.VaultSummary{}, fmt.Errorf("write obsidian for confluence: %w", err)
 		}
 	}
@@ -143,8 +167,9 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 			DryRun:           opts.DryRun,
 			Concurrency:      opts.Concurrency,
 			JiraBaseURL:      opts.JiraBaseURL,
-			JiraStatusByKey:  opts.JiraStatusByKey,
-			JiraStatusSynced: opts.JiraStatusSynced,
+			JiraStatusByKey:   opts.JiraStatusByKey,
+			JiraAssigneeByKey: opts.JiraAssigneeByKey,
+			JiraStatusSynced:  opts.JiraStatusSynced,
 			Entities:         &ent,
 		})
 		if err != nil {

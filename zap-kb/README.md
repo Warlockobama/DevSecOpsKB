@@ -68,6 +68,11 @@ Examples:
 - Helper pages: vault emits `INDEX.md`, `DASHBOARD.md`, plus `triage-board.md` and `by-domain.md`.
 - Run artifacts: `-run-out` writes `run.json` (entities + meta + alerts); multiple runs can be merged (`-entities-in`) to build a multi-scan vault.
 - Jira/Confluence workflow: medium/high findings auto-export to analyst Jira; low/info findings require the `case-ticket` tag; recurring false positives are surfaced as tuning candidates and can be marked with `tune-scan` for follow-up. Confluence pull does not overwrite workflow unless `pull -confluence-pull-workflow` is explicitly used.
+- Detection Epic (optional, `-jira-detection-epic`): creates/reuses one Jira Epic per Definition (idempotent, label-dedup'd) and links each finding ticket via `parent`. Epic summary follows `[ZAP] <alert> (Plugin <id>)`; description carries the detection description, CWE link, ZAP docs link, and remediation. The Epic key is stored on the Definition as `epicRef`. Override the issue type with `-jira-epic-issue-type` (e.g. `Initiative`) for projects that don't expose Epic.
+- Evidence in Jira descriptions: finding tickets render an Evidence section with attack/evidence/param/method from the representative occurrence.
+- Live Jira Status/Owner on Confluence: after Jira export, zap-kb pulls each ticket's current status and assignee and writes them into the Confluence finding/occurrence pages so the KB view reflects the live workflow state.
+- Recurrence banner: when a previously `fixed` or `accepted` finding reappears in a new scan, Merge flags it with `recurrence` and Confluence renders a prominent advisory panel.
+- Per-occurrence analyst note: each Confluence occurrence page carries a marker-delimited "Analyst Note" block that is preserved across re-publishes.
 - Definition separation: definitions carry `origin` (`tool` or `custom`) so project-owned detections stay distinct from native tool rules.
 
 ## Scripts

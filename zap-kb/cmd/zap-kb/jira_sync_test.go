@@ -47,6 +47,35 @@ func TestMergeFindingTicketKeys_DedupesAndCountsAdds(t *testing.T) {
 	}
 }
 
+func TestMergeDefinitionEpicRefs_SetsAndSkipsExisting(t *testing.T) {
+	ent := testEntitiesFile()
+	ent.Definitions = []entities.Definition{
+		{DefinitionID: "def-1", PluginID: "10038"},
+		{DefinitionID: "def-2", PluginID: "10020", EpicRef: "SEC-100"},
+	}
+	n := mergeDefinitionEpicRefs(&ent, map[string]string{
+		"def-1": "SEC-50",
+		"def-2": "SEC-100", // already set — should be a no-op
+	})
+	if n != 1 {
+		t.Fatalf("expected 1 update, got %d", n)
+	}
+	if ent.Definitions[0].EpicRef != "SEC-50" {
+		t.Errorf("expected def-1.EpicRef=SEC-50, got %q", ent.Definitions[0].EpicRef)
+	}
+	if ent.Definitions[1].EpicRef != "SEC-100" {
+		t.Errorf("def-2.EpicRef should remain SEC-100, got %q", ent.Definitions[1].EpicRef)
+	}
+	// Re-merge with a changed key updates it.
+	n = mergeDefinitionEpicRefs(&ent, map[string]string{"def-1": "SEC-51"})
+	if n != 1 {
+		t.Fatalf("expected 1 update on re-merge, got %d", n)
+	}
+	if ent.Definitions[0].EpicRef != "SEC-51" {
+		t.Errorf("expected updated EpicRef=SEC-51, got %q", ent.Definitions[0].EpicRef)
+	}
+}
+
 func TestPersistJiraEntities_BothWritesEntitiesOutput(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "alerts.json")
 	ent := testEntitiesFile()

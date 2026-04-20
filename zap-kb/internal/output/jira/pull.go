@@ -31,10 +31,11 @@ type PullResult struct {
 
 // PullStatusResult bundles the updated EntitiesFile with the operation summary.
 type PullStatusResult struct {
-	Updated     entities.EntitiesFile
-	Result      PullResult
-	RawStatuses map[string]string // Jira issue key -> raw Jira status name
-	SyncedAt    string            // RFC3339 time when Jira status data was fetched
+	Updated      entities.EntitiesFile
+	Result       PullResult
+	RawStatuses  map[string]string // Jira issue key -> raw Jira status name
+	RawAssignees map[string]string // Jira issue key -> assignee display name ("" when unassigned)
+	SyncedAt     string            // RFC3339 time when Jira status data was fetched
 }
 
 // PullStatus fetches the current Jira ticket status for every finding and
@@ -92,22 +93,24 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 	}
 
 	// Deduplicate ticket keys to avoid redundant API calls.
-	type cachedStatus struct {
-		mapped string
-		raw    string
+	type cachedFields struct {
+		mapped   string
+		raw      string
+		assignee string
 	}
-	statusCache := make(map[string]cachedStatus)
+	statusCache := make(map[string]cachedFields)
 	var cacheMu sync.Mutex
 
 	const concurrency = 3
 	sem := make(chan struct{}, concurrency)
 
 	type refResult struct {
-		ref    ticketRef
-		status string // mapped status; "" = not found or unmapped
-		raw    string // raw Jira status name
-		found  bool
-		err    error
+		ref      ticketRef
+		status   string // mapped status; "" = not found or unmapped
+		raw      string // raw Jira status name
+		assignee string // Jira assignee display name; "" when unassigned
+		found    bool
+		err      error
 	}
 	results := make([]refResult, len(refs))
 
@@ -120,7 +123,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			cacheMu.Lock()
 			if cached, ok := statusCache[ref.key]; ok {
 				cacheMu.Unlock()
-				results[i] = refResult{ref: ref, status: cached.mapped, raw: cached.raw, found: true}
+				results[i] = refResult{ref: ref, status: cached.mapped, raw: cached.raw, assignee: cached.assignee, found: true}
 				return
 			}
 			cacheMu.Unlock()
@@ -128,33 +131,41 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			mapped, raw, found, err := fetchJiraStatus(ctx, client, auth, base, ref.key)
+			mapped, raw, assignee, found, err := fetchJiraFields(ctx, client, auth, base, ref.key)
 			if err != nil {
 				results[i] = refResult{ref: ref, err: err}
 				return
 			}
 			cacheMu.Lock()
-			statusCache[ref.key] = cachedStatus{mapped: mapped, raw: raw}
+			statusCache[ref.key] = cachedFields{mapped: mapped, raw: raw, assignee: assignee}
 			cacheMu.Unlock()
-			results[i] = refResult{ref: ref, status: mapped, raw: raw, found: found}
+			results[i] = refResult{ref: ref, status: mapped, raw: raw, assignee: assignee, found: found}
 		}(i, ref)
 	}
 	wg.Wait()
 
 	var res PullResult
 	rawStatuses := make(map[string]string)
+	rawAssignees := make(map[string]string)
 	for _, r := range results {
 		if r.err != nil {
 			fmt.Printf("[jira pull] warning: %s: %v\n", r.ref.key, r.err)
 			res.Errors++
 			continue
 		}
-		if !r.found || r.status == "" {
+		if !r.found {
 			res.NotFound++
 			continue
 		}
 		if strings.TrimSpace(r.raw) != "" {
 			rawStatuses[r.ref.key] = r.raw
+		}
+		// Capture assignee even when the status is unmapped so live Owner
+		// display still works. Empty string means the Jira issue is unassigned.
+		rawAssignees[r.ref.key] = strings.TrimSpace(r.assignee)
+		if r.status == "" {
+			res.NotFound++
+			continue
 		}
 
 		switch r.ref.kind {
@@ -182,39 +193,41 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			}
 		}
 	}
-	return PullStatusResult{Updated: ef, Result: res, RawStatuses: rawStatuses, SyncedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+	return PullStatusResult{Updated: ef, Result: res, RawStatuses: rawStatuses, RawAssignees: rawAssignees, SyncedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 }
 
-// fetchJiraStatus retrieves the Jira issue status for the given key and maps
-// it to one of the canonical status values. Returns ("", false, nil) when the
-// issue is not found. Returns ("", true, nil) when found but status unmapped.
-func fetchJiraStatus(ctx context.Context, client httpDoer, auth, base, key string) (string, string, bool, error) {
-	url := base + "/rest/api/3/issue/" + key + "?fields=status"
+// fetchJiraFields retrieves the Jira issue status and assignee for the given
+// key. Returns (mappedStatus, rawStatus, assigneeDisplayName, found, err).
+// Returns found=false when the issue is not found. mappedStatus may be "" when
+// the Jira status does not map to a canonical value; assignee may be "" when
+// the issue is unassigned.
+func fetchJiraFields(ctx context.Context, client httpDoer, auth, base, key string) (string, string, string, bool, error) {
+	url := base + "/rest/api/3/issue/" + key + "?fields=status,assignee"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
 		io.Copy(io.Discard, resp.Body)
-		return "", "", false, nil
+		return "", "", "", false, nil
 	}
 	if resp.StatusCode != 200 {
-		return "", "", false, jiraHTTPErr(resp)
+		return "", "", "", false, jiraHTTPErr(resp)
 	}
 
 	const maxBody = 64 * 1024
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return "", "", false, fmt.Errorf("read response: %w", err)
+		return "", "", "", false, fmt.Errorf("read response: %w", err)
 	}
 
 	var result struct {
@@ -222,15 +235,26 @@ func fetchJiraStatus(ctx context.Context, client httpDoer, auth, base, key strin
 			Status struct {
 				Name string `json:"name"`
 			} `json:"status"`
+			Assignee *struct {
+				DisplayName  string `json:"displayName"`
+				EmailAddress string `json:"emailAddress"`
+			} `json:"assignee"`
 		} `json:"fields"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", "", false, fmt.Errorf("decode issue: %w", err)
+		return "", "", "", false, fmt.Errorf("decode issue: %w", err)
 	}
 
 	rawStatus := strings.TrimSpace(result.Fields.Status.Name)
 	mapped := mapJiraStatus(rawStatus)
-	return mapped, rawStatus, true, nil
+	assignee := ""
+	if result.Fields.Assignee != nil {
+		assignee = strings.TrimSpace(result.Fields.Assignee.DisplayName)
+		if assignee == "" {
+			assignee = strings.TrimSpace(result.Fields.Assignee.EmailAddress)
+		}
+	}
+	return mapped, rawStatus, assignee, true, nil
 }
 
 // mapJiraStatus converts a Jira status name to one of the canonical values:

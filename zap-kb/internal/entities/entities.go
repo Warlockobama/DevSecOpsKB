@@ -130,6 +130,10 @@ type Definition struct {
 	Taxonomy     *Taxonomy    `json:"taxonomy,omitempty"`
 	Remediation  *Remediation `json:"remediation,omitempty"`
 	Detection    *Detection   `json:"detection,omitempty"`
+	// EpicRef is the Jira Epic issue key (e.g. "SEC-12") that groups all
+	// findings for this detection. Populated after a successful detection-epic
+	// export; reused on subsequent runs so we don't create duplicate Epics.
+	EpicRef string `json:"epicRef,omitempty"`
 }
 type Finding struct {
 	FindingID    string          `json:"findingId"`

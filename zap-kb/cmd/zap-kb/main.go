@@ -85,6 +85,9 @@ func main() {
 		jiraOptInTag       string
 		jiraDryRun         bool
 		jiraConcurrency    int
+		jiraDetectionEpic  bool
+		jiraEpicIssueType  string
+		jiraEpicComponent  string
 		allowAgentPublish  bool
 		allowCustomPublish bool
 	)
@@ -150,6 +153,9 @@ func main() {
 	flag.StringVar(&jiraOptInTag, "jira-opt-in-tag", "case-ticket", "Analyst tag that forces Jira export for lower-severity findings.")
 	flag.BoolVar(&jiraDryRun, "jira-dry-run", false, "Dry-run Jira export (log instead of POST).")
 	flag.IntVar(&jiraConcurrency, "jira-concurrency", 3, "Max parallel Jira API requests (default: 3, max: 5).")
+	flag.BoolVar(&jiraDetectionEpic, "jira-detection-epic", false, "Create/reuse a parent Epic per detection (definition); findings link via parent.")
+	flag.StringVar(&jiraEpicIssueType, "jira-epic-issue-type", "Epic", "Issue type for detection Epics (default: Epic; override for projects that use Initiative).")
+	flag.StringVar(&jiraEpicComponent, "jira-epic-component", "", "Optional Jira component name applied to detection Epics.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	// Sub-command dispatch: if the first argument is "merge", run the merge
@@ -552,7 +558,7 @@ func main() {
 			log.Fatalf("write json entities: %v", err)
 		}
 	case "obsidian":
-		if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, nil, ""); err != nil {
+		if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, nil, nil, ""); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
 	default:
@@ -607,10 +613,13 @@ func main() {
 			IssueType:   jiraIssueType,
 			Component:   jiraComponent,
 			ExtraLabels: extraLabels,
-			MinRisk:     jiraMinRisk,
-			OptInTag:    jiraOptInTag,
-			DryRun:      jiraDryRun,
-			Concurrency: jiraConcurrency,
+			MinRisk:       jiraMinRisk,
+			OptInTag:      jiraOptInTag,
+			DryRun:        jiraDryRun,
+			Concurrency:   jiraConcurrency,
+			DetectionEpic: jiraDetectionEpic,
+			EpicIssueType: jiraEpicIssueType,
+			EpicComponent: jiraEpicComponent,
 		})
 		if err != nil {
 			log.Fatalf("jira export: %v", err)
@@ -619,9 +628,15 @@ func main() {
 
 		addedTicketKeys := 0
 		jiraStatusByKey := map[string]string(nil)
+		jiraAssigneeByKey := map[string]string(nil)
 		jiraStatusSynced := ""
 		if !jiraDryRun && len(sum.TicketKeys) > 0 {
 			addedTicketKeys = mergeFindingTicketKeys(&ent, sum.TicketKeys)
+		}
+		if !jiraDryRun && len(sum.EpicKeys) > 0 {
+			if n := mergeDefinitionEpicRefs(&ent, sum.EpicKeys); n > 0 {
+				fmt.Printf("Jira: recorded %d detection epic reference(s)\n", n)
+			}
 		}
 		if !jiraDryRun && hasFindingTicketRefs(ent) {
 			pullCtx, pullCancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -636,6 +651,7 @@ func main() {
 			} else {
 				ent = pullRes.Updated
 				jiraStatusByKey = pullRes.RawStatuses
+				jiraAssigneeByKey = pullRes.RawAssignees
 				jiraStatusSynced = pullRes.SyncedAt
 				fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d errors=%d\n",
 					pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
@@ -660,7 +676,7 @@ func main() {
 			}
 		}
 		if format == "obsidian" && !jiraDryRun && hasFindingTicketRefs(ent) {
-			if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, jiraStatusByKey, jiraStatusSynced); err != nil {
+			if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced); err != nil {
 				log.Fatalf("rewrite obsidian after jira: %v", err)
 			}
 		}
@@ -680,8 +696,9 @@ func main() {
 				SiteLabel:        siteLabel,
 				ZapBaseURL:       zapBase,
 				JiraBaseURL:      jiraURL,
-				JiraStatusByKey:  jiraStatusByKey,
-				JiraStatusSynced: jiraStatusSynced,
+				JiraStatusByKey:   jiraStatusByKey,
+				JiraAssigneeByKey: jiraAssigneeByKey,
+				JiraStatusSynced:  jiraStatusSynced,
 			})
 			if err != nil {
 				log.Fatalf("%v", err)

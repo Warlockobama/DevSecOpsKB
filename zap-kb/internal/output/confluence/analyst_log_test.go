@@ -456,3 +456,34 @@ func TestAnalystLog_StateChangeTriggersNewEntry(t *testing.T) {
 		t.Error("only the newest entry should use info macro")
 	}
 }
+
+// --- occurrence note preserve ---
+
+func TestExtractOccurrenceNote_Absent(t *testing.T) {
+	if got := extractOccurrenceNote("<p>body with no markers</p>"); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestExtractOccurrenceNote_RoundTrip(t *testing.T) {
+	section := buildOccurrenceNoteSection("<p>my analyst note</p>")
+	if !strings.Contains(section, "<h2>Analyst Note</h2>") {
+		t.Errorf("expected heading in built section, got: %s", section)
+	}
+	if !strings.Contains(section, occNoteStart) || !strings.Contains(section, occNoteEnd) {
+		t.Errorf("expected markers in built section, got: %s", section)
+	}
+	// Embed the section in a larger body and re-extract.
+	body := "<p>prefix</p>" + section + "<p>suffix</p>"
+	got := strings.TrimSpace(extractOccurrenceNote(body))
+	if got != "<p>my analyst note</p>" {
+		t.Errorf("round-trip mismatch: got %q", got)
+	}
+}
+
+func TestBuildOccurrenceNoteSection_SeedsPlaceholderWhenEmpty(t *testing.T) {
+	section := buildOccurrenceNoteSection("")
+	if !strings.Contains(section, "Add analyst notes") {
+		t.Errorf("expected placeholder seed, got: %s", section)
+	}
+}

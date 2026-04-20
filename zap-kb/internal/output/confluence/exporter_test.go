@@ -33,10 +33,10 @@ func TestExport_CreateNewPage(t *testing.T) {
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}
-			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
-			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+		case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -189,10 +189,10 @@ func TestExportVault_FullTree(t *testing.T) {
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}
-			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
-			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+		case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -258,10 +258,10 @@ func TestExportVault_HierarchicalExportOmitsTopLevelFindingAndOccurrenceStubs(t 
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}
-			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
-			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+		case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -1013,7 +1013,7 @@ func TestOccurrenceProperties_CWEAndDefinition(t *testing.T) {
 		Confidence:   "Low",
 		URL:          "https://example.com/api",
 	}
-	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, nil, "", "")
 
 	if !strings.Contains(out, "CWE-693") {
 		t.Error("CWE link should appear on occurrence page")
@@ -1051,7 +1051,7 @@ func TestFindingProperties_FirstLastSeen(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-abc"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear in finding properties")
@@ -1078,7 +1078,7 @@ func TestFindingProperties_SingleOccurrence_LastSeenSameRun(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-solo"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear")
@@ -1475,7 +1475,7 @@ func TestFindingPropertiesFieldOrder(t *testing.T) {
 		Method:       "GET",
 		Occurrences:  2,
 	}
-	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
 	// Finding ID should not appear
 	if strings.Contains(out, "Finding ID") {
 		t.Error("Finding ID row should be removed")
@@ -1963,7 +1963,7 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-order"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
 
 	// Verify canonical field order: Severity before CWE before OWASP before Last Seen before Occurrences
 	positions := map[string]int{
@@ -2059,7 +2059,7 @@ func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 		}},
 	}
 	ei := buildEntityIndex(ef)
-	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, "2026-04-08T21:00:00Z", "")
+	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "2026-04-08T21:00:00Z", "")
 	// Status row is intentionally absent — Jira owns workflow state.
 	// Workflow Source row is intentionally absent — removed as noise.
 	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Status</th><td><ac:structured-macro ac:name=\"status\"", "In Review</ac:parameter>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
@@ -2276,7 +2276,7 @@ func TestPrependOccurrenceProperties_ScanIdentity(t *testing.T) {
 		ObservedAt:   "2026-04-01T12:00:00Z",
 	}
 
-	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, nil, "", "")
 
 	if !strings.Contains(out, "scan-2026-04-01") {
 		t.Errorf("occurrence properties should contain the scan label, got: %.500s", out)
@@ -2312,7 +2312,7 @@ func TestPrependOccurrenceProperties_AnalystFields(t *testing.T) {
 		},
 	}
 
-	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, nil, "", "")
 
 	if !strings.Contains(strings.ToUpper(out), "TRIAGED") {
 		t.Errorf("occurrence properties should contain 'triaged', got: %.500s", out)
@@ -2347,7 +2347,7 @@ func TestPrependOccurrenceProperties_IncludesFindingTickets(t *testing.T) {
 		Risk:         "Medium",
 	}
 
-	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, "")
+	out := prependOccurrenceProperties("BODY", o, &ei, "", nil, nil, "", "")
 	if !strings.Contains(out, "SEC-42") {
 		t.Errorf("occurrence properties should include inherited finding ticket refs, got: %.500s", out)
 	}
@@ -2391,7 +2391,7 @@ func TestPrependFindingProperties_FirstLastSeen(t *testing.T) {
 	ei := buildEntityIndex(ef)
 	f := ei.finds["fin-aabb1122"]
 
-	out := prependFindingProperties("BODY", f, &ei, "", nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
 
 	// First Seen must appear (the earlier date).
 	if !strings.Contains(out, "2026-01-01T00:00:00Z") {
@@ -2641,7 +2641,7 @@ func TestUpsertPage_RetriesConflictOnce(t *testing.T) {
 func TestPrependOccurrenceProperties_JiraWorkflowGuidance(t *testing.T) {
 	ef := &entities.EntitiesFile{Definitions: []entities.Definition{{DefinitionID: "def-1", PluginID: "10001", Alert: "Test Alert"}}}
 	ei := buildEntityIndex(ef)
-	out := prependOccurrenceProperties("BODY", &entities.Occurrence{OccurrenceID: "occ-1", DefinitionID: "def-1", FindingID: "fin-1", URL: "https://example.com", Analyst: &entities.Analyst{Status: "confirm"}}, &ei, "", nil, "")
+	out := prependOccurrenceProperties("BODY", &entities.Occurrence{OccurrenceID: "occ-1", DefinitionID: "def-1", FindingID: "fin-1", URL: "https://example.com", Analyst: &entities.Analyst{Status: "confirm"}}, &ei, "", nil, nil, "", "")
 	if !strings.Contains(out, "Workflow is managed in Jira") {
 		t.Fatalf("expected Jira workflow guidance, got: %.400s", out)
 	}
@@ -2673,10 +2673,10 @@ func TestExportVault_PublishesQuickNavigationCompanionPages(t *testing.T) {
 			} else {
 				w.WriteHeader(http.StatusOK)
 			}
-			case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
-			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+		case strings.Contains(r.URL.Path, "/rest/api/content/") && r.Method == http.MethodGet && !strings.Contains(r.URL.Path, "/property"):
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": ""}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)

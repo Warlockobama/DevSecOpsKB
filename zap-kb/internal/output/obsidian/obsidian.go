@@ -29,6 +29,8 @@ type Options struct {
 	JiraBaseURL string
 	// JiraStatusByKey carries raw Jira workflow statuses fetched at publish time.
 	JiraStatusByKey map[string]string
+	// JiraAssigneeByKey carries Jira assignee display names fetched at publish time.
+	JiraAssigneeByKey map[string]string
 	// JiraStatusSynced records when JiraStatusByKey was fetched.
 	JiraStatusSynced string
 	// TriageGuidanceFn, if non-nil, is called with a pluginID and returns

@@ -47,8 +47,9 @@ type VaultOptions struct {
 	Timeout          time.Duration          // per-request timeout; default 30s
 	RequestDelay     time.Duration          // minimum delay between API requests; default 250ms
 	JiraBaseURL      string                 // optional; turns Jira issue keys into browse links in properties/workflow views
-	JiraStatusByKey  map[string]string      // optional; raw Jira status names keyed by issue key
-	JiraStatusSynced string                 // optional; RFC3339 time when JiraStatusByKey was fetched
+	JiraStatusByKey   map[string]string     // optional; raw Jira status names keyed by issue key
+	JiraAssigneeByKey map[string]string     // optional; Jira assignee display names keyed by issue key ("" = unassigned)
+	JiraStatusSynced  string                // optional; RFC3339 time when JiraStatusByKey was fetched
 	Entities         *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
 }
 
@@ -416,12 +417,12 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// occurrences live under their finding pages, so top-level stub pages would just be empty noise.
 	if opts.Entities != nil {
 		findingPageIDs, _ := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, defPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
+			vaultRoot, concurrency, &ei, titleMap, defPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
-			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
+			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 	} else {
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
-		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced, &summary, hs)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
+		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 	}
 
 	// Persist updated hashes for next run.
@@ -480,7 +481,7 @@ func buildExportSummaryBody(exportedAt time.Time, defs, findings, occurrences in
 func upsertFindingsHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
-	defPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string,
+	defPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string,
 	summary *VaultSummary, hs *pageHashStore,
 ) (map[string]string, map[string]logSummary) {
 	dir := filepath.Join(vaultRoot, "findings")
@@ -579,7 +580,7 @@ func upsertFindingsHierarchical(
 			analystLogSection := buildAnalystLogSection(newEntry, existingLog)
 			// Analyst log is injected into prependFindingProperties so it sits
 			// directly after the properties table — the first thing an analyst sees.
-			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced, analystLogSection)
+			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, analystLogSection)
 
 			// Build log summary for the definition-page rollup
 			ls := buildLogSummaryForFinding(f, jiraBaseURL, jiraStatusByKey, publishedAt, existingLog)
@@ -637,7 +638,7 @@ func upsertFindingsHierarchical(
 func upsertOccurrencesHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
-	findingPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string,
+	findingPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string,
 	summary *VaultSummary, hs *pageHashStore,
 ) {
 	dir := filepath.Join(vaultRoot, "occurrences")
@@ -697,7 +698,20 @@ func upsertOccurrencesHierarchical(
 			}
 
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			storageBody = prependOccurrenceProperties(storageBody, o, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
+
+			existingNote := ""
+			existingOccPageID := hs.cachedPageID(title)
+			if existingOccPageID == "" {
+				existingOccPageID, _, _ = findPage(ctx, client, auth, base, spaceKey, title)
+			}
+			if existingOccPageID != "" {
+				if body, ferr := fetchPageStorageBody(ctx, client, auth, base, existingOccPageID); ferr == nil {
+					existingNote = extractOccurrenceNote(body)
+				}
+			}
+			noteSection := buildOccurrenceNoteSection(existingNote)
+
+			storageBody = prependOccurrenceProperties(storageBody, o, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, noteSection)
 			labels := occurrenceLabels(o)
 
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
@@ -731,7 +745,7 @@ func upsertOccurrencesHierarchical(
 
 // upsertDir upserts all .md files in a vault subdirectory as child pages
 // under a named parent page (itself a child of parentID).
-func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string, summary *VaultSummary, hs *pageHashStore) {
+func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot, subdir, parentTitle, grandParentID string, concurrency int, ei *entityIndex, titleMap map[string]string, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, summary *VaultSummary, hs *pageHashStore) {
 	dir := filepath.Join(vaultRoot, subdir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -822,10 +836,17 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 			switch subdir {
 			case "findings":
 				// No analyst log section in the generic path — pass empty string.
-				storageBody = prependFindingProperties(storageBody, findingEnt, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced, "")
+				storageBody = prependFindingProperties(storageBody, findingEnt, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, "")
 				labels = findingLabels(findingEnt)
 			case "occurrences":
-				storageBody = prependOccurrenceProperties(storageBody, occEnt, ei, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
+				existingNote := ""
+				if existingPageID := hs.cachedPageID(title); existingPageID != "" {
+					if body, ferr := fetchPageStorageBody(ctx, client, auth, base, existingPageID); ferr == nil {
+						existingNote = extractOccurrenceNote(body)
+					}
+				}
+				noteSection := buildOccurrenceNoteSection(existingNote)
+				storageBody = prependOccurrenceProperties(storageBody, occEnt, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, noteSection)
 				labels = occurrenceLabels(occEnt)
 			}
 
@@ -2069,7 +2090,7 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 // Canonical field order: Severity, Status, CWE, OWASP, Domain, Last Seen, Occurrences.
 // Additional contextual fields (Confidence, Definition, Source Tool, URL, Method, First Seen)
 // follow in supplementary positions.
-func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string, analystLogSection string) string {
+func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, analystLogSection string) string {
 	if f == nil {
 		return storageBody
 	}
@@ -2120,7 +2141,13 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// --- Supplementary fields ---
 	props = append(props, [2]string{"Confidence", escapeHTML(f.Confidence)})
 	if f.Analyst != nil {
-		if owner := strings.TrimSpace(f.Analyst.Owner); owner != "" {
+		// Prefer the live Jira assignee when a ticket is linked. Falls back to
+		// the analyst.owner field on the Finding when no Jira assignee is known.
+		owner := strings.TrimSpace(f.Analyst.Owner)
+		if assignee := primaryJiraAssignee(f.Analyst.TicketRefs, jiraAssigneeByKey); assignee != "" {
+			owner = assignee
+		}
+		if owner != "" {
 			props = append(props, [2]string{"Owner", escapeHTML(owner)})
 		}
 		if len(f.Analyst.TicketRefs) > 0 {
@@ -2345,6 +2372,26 @@ func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
 		}
 		if raw := strings.TrimSpace(statusByKey[key]); raw != "" {
 			return raw
+		}
+	}
+	return ""
+}
+
+// primaryJiraAssignee returns the Jira assignee display name for the first
+// linked ticket that has a known assignee. Returns "" when no ticket is
+// mapped or when the ticket is unassigned.
+func primaryJiraAssignee(refs []string, assigneeByKey map[string]string) string {
+	if len(refs) == 0 || len(assigneeByKey) == 0 {
+		return ""
+	}
+	for _, ref := range refs {
+		key := strings.TrimSpace(ref)
+		if strings.Contains(key, "/") {
+			parts := strings.Split(strings.TrimRight(key, "/"), "/")
+			key = parts[len(parts)-1]
+		}
+		if name := strings.TrimSpace(assigneeByKey[key]); name != "" {
+			return name
 		}
 	}
 	return ""
@@ -2722,7 +2769,7 @@ func triageStatusMacro(status string) string {
 // NOTE: The Confluence page-properties macro ("Error loading the extension!") is
 // intentionally NOT used — it fails to render in Confluence Cloud via REST API.
 // The pull command reads Status/Owner from this plain table directly.
-func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {
+func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced, occNoteSection string) string {
 	if o == nil {
 		return storageBody
 	}
@@ -2738,13 +2785,35 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		owner = o.Analyst.Owner
 	}
 
+	// Prefer the live Jira status/assignee when the occurrence is linked to a
+	// Jira case. The KB caches these at publish time, but Jira is the source of
+	// truth; rendering the live values keeps the occurrence page in sync with
+	// analyst workflow without requiring re-export on every transition.
+	var ticketRefs []string
+	if ei != nil {
+		if finding := ei.finds[o.FindingID]; finding != nil && finding.Analyst != nil {
+			ticketRefs = append(ticketRefs, finding.Analyst.TicketRefs...)
+		}
+	}
+	if o.Analyst != nil {
+		ticketRefs = append(ticketRefs, o.Analyst.TicketRefs...)
+	}
+	statusCell := escapeHTML(status)
+	ownerCell := escapeHTML(owner)
+	if rawJiraStatus := primaryJiraStatus(ticketRefs, jiraStatusByKey); rawJiraStatus != "" {
+		statusCell = jiraStatusMacro(rawJiraStatus)
+	}
+	if assignee := primaryJiraAssignee(ticketRefs, jiraAssigneeByKey); assignee != "" {
+		ownerCell = escapeHTML(assignee)
+	}
+
 	// Workflow note — Jira owns analyst workflow; Confluence is the evidence surface.
 	editInstruction := `<p><em>Workflow is managed in Jira. Use this page as evidence and context; keep ticket links, notes, and tags aligned with the analyst case. Confluence pull-based workflow writeback is legacy-only.</em></p>`
 
 	// --- Single plain table: triage fields first, then informational ---
 	var infoProps [][2]string
-	infoProps = append(infoProps, [2]string{"Status", escapeHTML(status)})
-	infoProps = append(infoProps, [2]string{"Owner", escapeHTML(owner)})
+	infoProps = append(infoProps, [2]string{"Status", statusCell})
+	infoProps = append(infoProps, [2]string{"Owner", ownerCell})
 	infoProps = append(infoProps, [2]string{"Risk", escapeHTML(o.Risk)})
 	infoProps = append(infoProps, [2]string{"Confidence", escapeHTML(o.Confidence)})
 
@@ -2790,15 +2859,9 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		infoProps = append(infoProps, [2]string{"Observed", escapeHTML(o.ObservedAt)})
 	}
 
-	// Analyst supplementary fields (ticket refs, notes, tags, updated)
-	var ticketRefs []string
-	if ei != nil {
-		if finding := ei.finds[o.FindingID]; finding != nil && finding.Analyst != nil {
-			ticketRefs = append(ticketRefs, finding.Analyst.TicketRefs...)
-		}
-	}
+	// Analyst supplementary fields (notes, tags, updated). ticketRefs was
+	// already collected above for Status/Owner macro rendering.
 	if o.Analyst != nil {
-		ticketRefs = append(ticketRefs, o.Analyst.TicketRefs...)
 		if o.Analyst.Notes != "" {
 			notesLabel := "Notes"
 			if entities.CanonicalAnalystStatus(strings.TrimSpace(o.Analyst.Status)) == "accepted" {
@@ -2833,7 +2896,7 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	infoTable.WriteString(`</tbody></table>`)
 
 	workflowSection := jiraWorkflowSection(ticketRefs, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
-	return editInstruction + infoTable.String() + workflowSection + storageBody
+	return editInstruction + infoTable.String() + workflowSection + occNoteSection + storageBody
 }
 
 // --- Confluence Labels API ---

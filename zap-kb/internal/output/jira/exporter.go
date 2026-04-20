@@ -30,6 +30,16 @@ type Options struct {
 	Timeout      time.Duration // default 30s
 	RequestDelay time.Duration // minimum delay between API requests; default 250ms
 	OptInTag     string        // analyst tag that forces Jira export below MinRisk (default "case-ticket")
+
+	// DetectionEpic, when true, creates (or reuses) a parent Epic per Definition
+	// and links each finding issue to it via the `parent` field. Epics are
+	// dedup'd via the label zap-definition-<definitionID>.
+	DetectionEpic bool
+	// EpicIssueType overrides the Epic issue type name for projects that use
+	// "Initiative" or a custom type. Default "Epic".
+	EpicIssueType string
+	// EpicComponent is an optional component name applied to detection Epics.
+	EpicComponent string
 }
 
 // httpDoer abstracts HTTP request execution for throttling and testing.
@@ -75,6 +85,9 @@ type Summary struct {
 	Skipped    int // already existed
 	Errors     int
 	TicketKeys map[string]string // findingID → Jira issue key (KAN-42)
+	// EpicKeys maps definitionID → Epic issue key when DetectionEpic is on.
+	// Empty when the feature is disabled or Epic creation failed gracefully.
+	EpicKeys map[string]string
 }
 
 // Export creates Jira issues for each Finding at or above opts.MinRisk, or when an analyst opt-in tag is present.
@@ -127,6 +140,18 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		defByID[d.DefinitionID] = d
 	}
 
+	// Pick the most recent occurrence per finding — that becomes the evidence
+	// sample rendered into the issue description. Ties fall back to OccurrenceID
+	// so the choice is deterministic across runs.
+	latestOccByFind := make(map[string]*entities.Occurrence, len(ef.Findings))
+	for i := range ef.Occurrences {
+		o := &ef.Occurrences[i]
+		cur, ok := latestOccByFind[o.FindingID]
+		if !ok || occurrenceIsNewer(o, cur) {
+			latestOccByFind[o.FindingID] = o
+		}
+	}
+
 	// Filter findings by minimum risk or explicit analyst opt-in.
 	var candidates []entities.Finding
 	for _, f := range ef.Findings {
@@ -145,7 +170,49 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			fmt.Printf("[jira] dry-run: would create issue for finding %s (risk=%s url=%s) label=%s\n",
 				f.FindingID, f.Risk, f.URL, label)
 		}
+		if opts.DetectionEpic {
+			seen := make(map[string]struct{})
+			for _, f := range candidates {
+				if _, ok := seen[f.DefinitionID]; ok {
+					continue
+				}
+				seen[f.DefinitionID] = struct{}{}
+				def := defByID[f.DefinitionID]
+				fmt.Printf("[jira] dry-run: would ensure epic for definition %s (%s) label=%s\n",
+					f.DefinitionID, epicSummary(def), definitionLabel(f.DefinitionID))
+			}
+		}
 		return Summary{Created: len(candidates)}, nil
+	}
+
+	// Detection Epics (opt-in). Resolve one Epic key per distinct definition
+	// among the candidates so findings can be linked via `parent` below.
+	// Failures are logged but never block finding creation — fall back to flat.
+	epicKeys := make(map[string]string)
+	if opts.DetectionEpic {
+		seen := make(map[string]struct{})
+		for _, f := range candidates {
+			if _, ok := seen[f.DefinitionID]; ok {
+				continue
+			}
+			seen[f.DefinitionID] = struct{}{}
+			// Reuse cached Epic key from prior runs (persisted on Definition.EpicRef)
+			// before round-tripping Jira.
+			if def := defByID[f.DefinitionID]; def != nil && strings.TrimSpace(def.EpicRef) != "" {
+				epicKeys[f.DefinitionID] = strings.TrimSpace(def.EpicRef)
+				continue
+			}
+			key, err := ensureEpicForDefinition(ctx, httpClient, auth, base, defByID[f.DefinitionID], opts)
+			if err != nil {
+				fmt.Printf("[jira] warning: epic ensure failed for %s: %v (falling back to flat)\n", f.DefinitionID, err)
+				continue
+			}
+			if key == "" {
+				fmt.Printf("[jira] warning: project does not accept detection epic for %s — creating flat findings instead\n", f.DefinitionID)
+				continue
+			}
+			epicKeys[f.DefinitionID] = key
+		}
 	}
 
 	// Phase 1 (batch parallel): dedup check — find which findings already have issues
@@ -207,7 +274,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				key, err := createIssue(ctx, httpClient, auth, base, issueType, f, defByID[f.DefinitionID], opts)
+				key, err := createIssue(ctx, httpClient, auth, base, issueType, f, defByID[f.DefinitionID], latestOccByFind[f.FindingID], epicKeys[f.DefinitionID], opts)
 				createResults[i] = createResult{findingID: f.FindingID, issueKey: key, err: err}
 			}(i, f)
 		}
@@ -225,7 +292,38 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			}
 		}
 	}
-	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys}, nil
+	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys, EpicKeys: epicKeys}, nil
+}
+
+// occurrenceIsNewer reports whether a should replace b as the "latest"
+// occurrence for a finding. Compares ObservedAt as RFC3339 when both parse,
+// otherwise falls back to string ordering; ties break on OccurrenceID so the
+// choice is deterministic across runs.
+func occurrenceIsNewer(a, b *entities.Occurrence) bool {
+	if b == nil {
+		return true
+	}
+	if a == nil {
+		return false
+	}
+	ta, errA := time.Parse(time.RFC3339, strings.TrimSpace(a.ObservedAt))
+	tb, errB := time.Parse(time.RFC3339, strings.TrimSpace(b.ObservedAt))
+	aOK, bOK := errA == nil, errB == nil
+	switch {
+	case aOK && bOK:
+		if !ta.Equal(tb) {
+			return ta.After(tb)
+		}
+	case aOK && !bOK:
+		return true
+	case !aOK && bOK:
+		return false
+	default:
+		if a.ObservedAt != b.ObservedAt {
+			return a.ObservedAt > b.ObservedAt
+		}
+	}
+	return a.OccurrenceID > b.OccurrenceID
 }
 
 func findingHasOptInTag(f entities.Finding, tag string) bool {
@@ -297,7 +395,7 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 
 // createIssue POSTs a new Jira issue for the given Finding.
 // Returns the new issue key (e.g. "KAN-42") and any error.
-func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, opts Options) (string, error) {
+func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, occ *entities.Occurrence, epicKey string, opts Options) (string, error) {
 	labels := []string{findingLabel(f.FindingID)}
 	if def != nil && def.Taxonomy != nil {
 		for _, l := range def.Taxonomy.OWASPTop10 {
@@ -317,10 +415,16 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 		"issuetype":   map[string]string{"name": issueType},
 		"priority":    map[string]string{"name": riskToPriority(f.Risk)},
 		"labels":      labels,
-		"description": buildDescription(f, def),
+		"description": buildDescription(f, def, occ),
 	}
 	if strings.TrimSpace(opts.Component) != "" {
 		fields["components"] = []map[string]string{{"name": opts.Component}}
+	}
+	if ek := strings.TrimSpace(epicKey); ek != "" {
+		// Next-gen / team-managed Jira Cloud projects link Epics via `parent`.
+		// Classic projects use customfield_10014; that variant can be added later
+		// if users hit compatibility issues.
+		fields["parent"] = map[string]string{"key": ek}
 	}
 
 	body := map[string]any{"fields": fields}

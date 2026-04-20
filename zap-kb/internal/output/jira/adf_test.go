@@ -17,7 +17,7 @@ func TestBuildDescription_BasicFinding(t *testing.T) {
 		Confidence:  "medium",
 		Occurrences: 3,
 	}
-	doc := buildDescription(f, nil)
+	doc := buildDescription(f, nil, nil)
 	if doc.Version != 1 {
 		t.Errorf("expected version 1, got %d", doc.Version)
 	}
@@ -57,7 +57,7 @@ func TestBuildDescription_WithDefinition(t *testing.T) {
 			DocsURL: "https://www.zaproxy.org/docs/alerts/10016/",
 		},
 	}
-	doc := buildDescription(f, def)
+	doc := buildDescription(f, def, nil)
 	data, _ := json.Marshal(doc)
 	s := string(data)
 
@@ -70,6 +70,62 @@ func TestBuildDescription_WithDefinition(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("expected %q in ADF JSON", want)
 		}
+	}
+}
+
+func TestBuildDescription_WithEvidence(t *testing.T) {
+	f := entities.Finding{
+		FindingID: "fin-evidence",
+		URL:       "https://example.com/api",
+		Method:    "GET",
+		Risk:      "medium",
+	}
+	occ := &entities.Occurrence{
+		OccurrenceID: "occ-1",
+		URL:          "https://example.com/api",
+		Method:       "GET",
+		Attack:       "X-Forwarded-For: 127.0.0.1",
+		Evidence:     "Content-Security-Policy: default-src 'self'",
+		Request: &entities.HTTPRequest{
+			Headers: []entities.Header{
+				{Name: "Host", Value: "example.com"},
+				{Name: "User-Agent", Value: "zap/2.14"},
+			},
+		},
+		Response: &entities.HTTPResponse{
+			StatusCode: 200,
+			Headers: []entities.Header{
+				{Name: "Content-Type", Value: "text/html"},
+			},
+			BodySnippet: "<html>...</html>",
+		},
+	}
+	doc := buildDescription(f, nil, occ)
+	data, _ := json.Marshal(doc)
+	s := string(data)
+
+	for _, want := range []string{
+		`"type":"heading"`,
+		"Evidence",
+		`"type":"codeBlock"`,
+		"X-Forwarded-For",
+		"Content-Security-Policy",
+		"HTTP/1.1 200",
+		"Content-Type",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("expected %q in ADF JSON\n%s", want, s)
+		}
+	}
+}
+
+func TestBuildDescription_OccurrenceWithoutEvidenceFieldsOmitsSection(t *testing.T) {
+	f := entities.Finding{FindingID: "fin-x", URL: "https://x", Method: "GET", Risk: "low"}
+	occ := &entities.Occurrence{OccurrenceID: "occ-empty"}
+	doc := buildDescription(f, nil, occ)
+	data, _ := json.Marshal(doc)
+	if strings.Contains(string(data), "Evidence") {
+		t.Errorf("expected no Evidence section for empty occurrence, got: %s", data)
 	}
 }
 

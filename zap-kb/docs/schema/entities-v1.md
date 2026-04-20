@@ -28,6 +28,7 @@ Definition
 - taxonomy: { cweid, cweUri, capecIds[], attack[], owaspTop10[], nist80053[], tags[] }
 - remediation: { summary, references[], guidance[], exampleFixes[], falsePositiveConditions[] }
 - detection (optional): { logicType, pluginRef, ruleSource, docsUrl, sourceUrl, matchReason, summary, signals[], defaults{threshold,strength} }
+- epicRef (optional): Jira Epic key grouping all findings for this detection; set by Jira export when `-jira-detection-epic` is enabled.
 
 Definition rules
 - `origin=tool` means the definition comes from the source scanner/tool.
@@ -40,7 +41,9 @@ Finding
 - risk, riskcode, confidence (rollup)
 - occurrenceCount
 - firstSeen, lastSeen
-- analyst { status, owner, tags[], notes, ticketRefs[], updatedAt } (optional)
+- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt } (optional)
+- suppression { scope, reason, decidedBy, decidedAt, expiresAt, occurrenceRef } (optional)
+- recurrence { priorStatus, recurredAt, recurredInScan } (optional; set by Merge when a previously fixed/accepted finding reappears)
 
 Finding analyst conventions
 - The finding is the primary analyst workflow object.
@@ -55,7 +58,7 @@ Occurrence
 - url, method, param, attack, evidence, other, risk, riskcode, confidence, sourceid
 - request { headers[], rawHeader, rawHeaderBytes, bodyHash, bodyBytes, bodySnippet } (optional)
 - response { statusCode, headers[], rawHeader, rawHeaderBytes, bodyHash, bodyBytes, bodySnippet } (optional)
-- analyst { status, owner, tags[], notes, ticketRefs[], updatedAt } (optional)
+- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt } (optional)
 - reproduce { curl, steps[] } (optional)
 
 Occurrence rules

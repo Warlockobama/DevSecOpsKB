@@ -16,7 +16,43 @@ const (
 	analystLogStart = "<!-- kb-analyst-log-start -->"
 	analystLogEnd   = "<!-- kb-analyst-log-end -->"
 	stateSigClass   = "kb-state-sig"
+
+	occNoteStart = "<!-- kb-occ-note-start -->"
+	occNoteEnd   = "<!-- kb-occ-note-end -->"
 )
+
+// extractOccurrenceNote returns the analyst-editable block preserved between
+// the occurrence note markers on an existing Confluence occurrence page.
+// Returns "" if the markers are absent (e.g. page was published before this
+// feature shipped, or analyst hasn't edited yet).
+func extractOccurrenceNote(body string) string {
+	start := strings.Index(body, occNoteStart)
+	if start < 0 {
+		return ""
+	}
+	content := body[start+len(occNoteStart):]
+	end := strings.Index(content, occNoteEnd)
+	if end < 0 {
+		return ""
+	}
+	return content[:end]
+}
+
+// buildOccurrenceNoteSection wraps the preserved analyst note in markers with
+// a heading. On first publish (existingNote == "") a placeholder prompt is
+// seeded so analysts know the block is editable.
+func buildOccurrenceNoteSection(existingNote string) string {
+	body := strings.TrimSpace(existingNote)
+	if body == "" {
+		body = `<p><em>Add analyst notes, repro steps, or context here. This block is preserved across re-publishes.</em></p>`
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Analyst Note</h2>`)
+	b.WriteString(occNoteStart)
+	b.WriteString(body)
+	b.WriteString(occNoteEnd)
+	return b.String()
+}
 
 // logSummary carries the most-recent analyst log snapshot per finding,
 // used to build the Analyst History rollup table on definition pages.
