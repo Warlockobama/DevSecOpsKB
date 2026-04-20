@@ -579,9 +579,13 @@ func upsertFindingsHierarchical(
 				newEntry = buildLogEntry(f, ei, jiraBaseURL, jiraStatusByKey, publishedAt, true)
 			}
 			analystLogSection := buildAnalystLogSection(newEntry, existingLog)
+			// Per-publish changelog: show what the pipeline changed since the
+			// previous publish. Empty on first publish (no baseline) or when
+			// nothing meaningful shifted.
+			changelogSection := buildChangelogSection(parseStateSig(existingSig), parseStateSig(currentSig), publishedAt)
 			// Analyst log is injected into prependFindingProperties so it sits
 			// directly after the properties table — the first thing an analyst sees.
-			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, analystLogSection)
+			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, analystLogSection, changelogSection)
 
 			// Build log summary for the definition-page rollup
 			ls := buildLogSummaryForFinding(f, jiraBaseURL, jiraStatusByKey, publishedAt, existingLog)
@@ -836,8 +840,8 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 			var labels []string
 			switch subdir {
 			case "findings":
-				// No analyst log section in the generic path — pass empty string.
-				storageBody = prependFindingProperties(storageBody, findingEnt, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, "")
+				// No analyst log / changelog section in the generic path — pass empty strings.
+				storageBody = prependFindingProperties(storageBody, findingEnt, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, "", "")
 				labels = findingLabels(findingEnt)
 			case "occurrences":
 				existingNote := ""
@@ -2091,7 +2095,7 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 // Canonical field order: Severity, Status, CWE, OWASP, Domain, Last Seen, Occurrences.
 // Additional contextual fields (Confidence, Definition, Source Tool, URL, Method, First Seen)
 // follow in supplementary positions.
-func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, analystLogSection string) string {
+func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, analystLogSection string, changelogSection string) string {
 	if f == nil {
 		return storageBody
 	}
@@ -2222,9 +2226,10 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// vulnerability context and fix guidance without leaving the finding page.
 	defSection := buildDefContextSection(def)
 
-	// Page order: properties → recurrence warning → analyst log (do work here) →
-	// Jira workflow → suppression → description/solution → rollup/occurrences/traffic
-	return pagePropertiesMacro(props) + recurrenceSection + analystLogSection + workflowSection + suppressionSection + defSection + storageBody
+	// Page order: properties → recurrence warning → changelog → analyst log
+	// (do work here) → Jira workflow → suppression → description/solution →
+	// rollup/occurrences/traffic
+	return pagePropertiesMacro(props) + recurrenceSection + changelogSection + analystLogSection + workflowSection + suppressionSection + defSection + storageBody
 }
 
 // buildRecurrenceSection renders an info panel warning when Merge() detected that

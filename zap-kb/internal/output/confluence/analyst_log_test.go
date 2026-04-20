@@ -29,7 +29,7 @@ func TestFindingStateSig_Basic(t *testing.T) {
 		LastSeen:    "2026-04-03T18:44:31Z",
 	}
 	sig := findingStateSig(f, "To Do")
-	want := "occ=3|risk=Medium|lastSeen=2026-04-03T18:44:31Z|jira=To Do"
+	want := "occ=3|risk=Medium|lastSeen=2026-04-03T18:44:31Z|jira=To Do|status=|owner="
 	if sig != want {
 		t.Errorf("got %q, want %q", sig, want)
 	}
@@ -45,8 +45,8 @@ func TestFindingStateSig_EmptyJira(t *testing.T) {
 	if !strings.HasPrefix(sig, "occ=1|risk=High|lastSeen=") {
 		t.Errorf("unexpected sig: %q", sig)
 	}
-	if !strings.HasSuffix(sig, "|jira=") {
-		t.Errorf("expected trailing jira= in sig: %q", sig)
+	if !strings.Contains(sig, "|jira=|") {
+		t.Errorf("expected empty jira segment in sig: %q", sig)
 	}
 }
 
@@ -485,5 +485,100 @@ func TestBuildOccurrenceNoteSection_SeedsPlaceholderWhenEmpty(t *testing.T) {
 	section := buildOccurrenceNoteSection("")
 	if !strings.Contains(section, "Add analyst notes") {
 		t.Errorf("expected placeholder seed, got: %s", section)
+	}
+}
+
+// --- parseStateSig ---
+
+func TestParseStateSig_RoundTripsFindingStateSig(t *testing.T) {
+	f := &entities.Finding{
+		Occurrences: 5,
+		Risk:        "Medium",
+		LastSeen:    "2026-04-07T00:00:00Z",
+		Analyst:     &entities.Analyst{Status: "triaged", Owner: "alice"},
+	}
+	sig := findingStateSig(f, "In Review")
+	got := parseStateSig(sig)
+	want := map[string]string{
+		"occ":      "5",
+		"risk":     "Medium",
+		"lastSeen": "2026-04-07T00:00:00Z",
+		"jira":     "In Review",
+		"status":   "triaged",
+		"owner":    "alice",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("parseStateSig[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestParseStateSig_EmptyReturnsEmptyMap(t *testing.T) {
+	got := parseStateSig("")
+	if got == nil || len(got) != 0 {
+		t.Errorf("parseStateSig(\"\") = %v, want non-nil empty map", got)
+	}
+}
+
+func TestParseStateSig_TolerantOfLegacySig(t *testing.T) {
+	// Legacy sigs lack status/owner — parse should succeed with those
+	// fields missing, and buildChangelogSection should treat them as "—".
+	got := parseStateSig("occ=3|risk=Low|lastSeen=2026-04-01T00:00:00Z|jira=")
+	if got["occ"] != "3" || got["risk"] != "Low" || got["status"] != "" || got["owner"] != "" {
+		t.Errorf("unexpected parse: %+v", got)
+	}
+}
+
+// --- buildChangelogSection ---
+
+func TestBuildChangelogSection_EmptyWhenPrevMissing(t *testing.T) {
+	curr := parseStateSig("occ=1|risk=High|status=open|owner=|jira=|lastSeen=")
+	if got := buildChangelogSection(nil, curr, "2026-04-20T00:00:00Z"); got != "" {
+		t.Errorf("first publish should produce no changelog, got: %s", got)
+	}
+}
+
+func TestBuildChangelogSection_EmptyWhenUnchanged(t *testing.T) {
+	sig := parseStateSig("occ=1|risk=High|status=open|owner=|jira=|lastSeen=")
+	if got := buildChangelogSection(sig, sig, "2026-04-20T00:00:00Z"); got != "" {
+		t.Errorf("unchanged state should produce no changelog, got: %s", got)
+	}
+}
+
+func TestBuildChangelogSection_StatusAndOwnerDiff(t *testing.T) {
+	prev := parseStateSig("occ=3|risk=Medium|status=open|owner=|jira=To Do|lastSeen=2026-04-01T00:00:00Z")
+	curr := parseStateSig("occ=3|risk=Medium|status=triaged|owner=alice|jira=In Review|lastSeen=2026-04-01T00:00:00Z")
+	got := buildChangelogSection(prev, curr, "2026-04-20T00:00:00Z")
+	for _, want := range []string{
+		"Changes since last publish",
+		"<td>Status</td><td>open</td><td>triaged</td>",
+		"<td>Owner</td><td>\u2014</td><td>alice</td>",
+		"<td>Jira status</td><td>To Do</td><td>In Review</td>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("changelog missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Occurrences") {
+		t.Errorf("unchanged occurrence count should not appear in changelog:\n%s", got)
+	}
+}
+
+func TestBuildChangelogSection_NewOccurrenceDelta(t *testing.T) {
+	prev := parseStateSig("occ=3|risk=Medium|status=open|owner=|jira=|lastSeen=")
+	curr := parseStateSig("occ=5|risk=Medium|status=open|owner=|jira=|lastSeen=")
+	got := buildChangelogSection(prev, curr, "")
+	if !strings.Contains(got, "+2 new occurrences (now 5)") {
+		t.Errorf("expected signed occurrence delta row, got:\n%s", got)
+	}
+}
+
+func TestBuildChangelogSection_OccurrenceRegression(t *testing.T) {
+	prev := parseStateSig("occ=7|risk=Medium|status=open|owner=|jira=|lastSeen=")
+	curr := parseStateSig("occ=4|risk=Medium|status=open|owner=|jira=|lastSeen=")
+	got := buildChangelogSection(prev, curr, "")
+	if !strings.Contains(got, "-3 fewer occurrences (now 4)") {
+		t.Errorf("expected negative delta row, got:\n%s", got)
 	}
 }

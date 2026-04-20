@@ -66,9 +66,14 @@ type logSummary struct {
 }
 
 // findingStateSig returns a compact state fingerprint for a finding.
-// Format: "occ=N|risk=X|lastSeen=Y|jira=Z"
-// This string is embedded in the page as a hidden span. On the next publish,
-// the current sig is compared to the stored one; a mismatch triggers a new log entry.
+// Format: "occ=N|risk=X|lastSeen=Y|jira=Z|status=S|owner=O"
+// This string is stored as a Confluence page property. On the next publish,
+// the current sig is compared to the stored one; a mismatch triggers a new
+// analyst-log entry and (via parseStateSig + buildChangelogSection) the
+// "Changes since last publish" block on the finding page.
+//
+// Keys are stable and pipe-delimited so old sigs (missing the newer status/
+// owner fields) parse as empty values rather than breaking.
 func findingStateSig(f *entities.Finding, jiraStatus string) string {
 	if f == nil {
 		return ""
@@ -78,12 +83,121 @@ func findingStateSig(f *entities.Finding, jiraStatus string) string {
 		lastSeen = f.LastSeen
 	}
 	jiraStatus = strings.TrimSpace(jiraStatus)
-	return fmt.Sprintf("occ=%d|risk=%s|lastSeen=%s|jira=%s",
+	status := ""
+	owner := ""
+	if f.Analyst != nil {
+		status = strings.TrimSpace(entities.CanonicalAnalystStatus(f.Analyst.Status))
+		owner = strings.TrimSpace(f.Analyst.Owner)
+	}
+	return fmt.Sprintf("occ=%d|risk=%s|lastSeen=%s|jira=%s|status=%s|owner=%s",
 		f.Occurrences,
 		strings.TrimSpace(f.Risk),
 		lastSeen,
 		jiraStatus,
+		status,
+		owner,
 	)
+}
+
+// parseStateSig splits a pipe-delimited findingStateSig into key/value pairs.
+// Unknown or malformed entries are skipped. Returns a non-nil map even for
+// empty input so callers can safely lookup keys without nil checks.
+func parseStateSig(sig string) map[string]string {
+	out := map[string]string{}
+	sig = strings.TrimSpace(sig)
+	if sig == "" {
+		return out
+	}
+	for _, part := range strings.Split(sig, "|") {
+		eq := strings.IndexByte(part, '=')
+		if eq < 0 {
+			continue
+		}
+		out[strings.TrimSpace(part[:eq])] = strings.TrimSpace(part[eq+1:])
+	}
+	return out
+}
+
+// buildChangelogSection renders a "Changes since last publish" collapsible
+// block summarising diffs between the previous and current state-sig maps.
+// Returns "" when there are no changes or when the previous sig is empty
+// (first publish — no baseline to diff against).
+func buildChangelogSection(prev, curr map[string]string, publishedAt string) string {
+	if len(prev) == 0 {
+		return ""
+	}
+	type row struct{ label, old, new string }
+	labels := []struct{ key, label string }{
+		{"status", "Status"},
+		{"owner", "Owner"},
+		{"risk", "Risk"},
+		{"jira", "Jira status"},
+		{"lastSeen", "Last seen"},
+	}
+	placeholder := func(s string) string {
+		if strings.TrimSpace(s) == "" {
+			return "—"
+		}
+		return s
+	}
+	var rows []row
+	for _, l := range labels {
+		o, n := prev[l.key], curr[l.key]
+		if o != n {
+			rows = append(rows, row{l.label, placeholder(o), placeholder(n)})
+		}
+	}
+	// Occurrences gets a signed-delta row (e.g. "+2 new occurrences") when
+	// numeric, falling back to the generic old → new form otherwise.
+	occRow := ""
+	if prev["occ"] != curr["occ"] {
+		var prevN, currN int
+		_, errP := fmt.Sscanf(prev["occ"], "%d", &prevN)
+		_, errC := fmt.Sscanf(curr["occ"], "%d", &currN)
+		if errP == nil && errC == nil {
+			delta := currN - prevN
+			if delta > 0 {
+				occRow = fmt.Sprintf("+%d new occurrences (now %d)", delta, currN)
+			} else if delta < 0 {
+				occRow = fmt.Sprintf("%d fewer occurrences (now %d)", delta, currN)
+			} else {
+				occRow = fmt.Sprintf("Occurrences re-counted (still %d)", currN)
+			}
+		} else {
+			rows = append(rows, row{"Occurrences", placeholder(prev["occ"]), placeholder(curr["occ"])})
+		}
+	}
+	if len(rows) == 0 && occRow == "" {
+		return ""
+	}
+
+	publishedShort := strings.TrimSpace(publishedAt)
+	if t, err := time.Parse(time.RFC3339, publishedAt); err == nil {
+		publishedShort = t.Format("2006-01-02")
+	}
+
+	var b strings.Builder
+	b.WriteString(`<ac:structured-macro ac:name="expand">`)
+	title := "Changes since last publish"
+	if publishedShort != "" {
+		title = "Changes since last publish — " + publishedShort
+	}
+	b.WriteString(`<ac:parameter ac:name="title">` + escapeHTML(title) + `</ac:parameter>`)
+	b.WriteString(`<ac:rich-text-body>`)
+	if occRow != "" {
+		b.WriteString(`<p>` + escapeHTML(occRow) + `</p>`)
+	}
+	if len(rows) > 0 {
+		b.WriteString(`<table><tbody>`)
+		b.WriteString(`<tr><th>Field</th><th>Previous</th><th>Current</th></tr>`)
+		for _, r := range rows {
+			b.WriteString(`<tr><td>` + escapeHTML(r.label) + `</td><td>` + escapeHTML(r.old) + `</td><td>` + escapeHTML(r.new) + `</td></tr>`)
+		}
+		b.WriteString(`</tbody></table>`)
+	}
+	b.WriteString(`</ac:rich-text-body>`)
+	b.WriteString(`</ac:structured-macro>`)
+	return b.String()
 }
 
 // extractAnalystLog returns the content between the analyst log markers.

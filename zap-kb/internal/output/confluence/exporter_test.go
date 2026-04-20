@@ -1051,7 +1051,7 @@ func TestFindingProperties_FirstLastSeen(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-abc"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear in finding properties")
@@ -1078,7 +1078,7 @@ func TestFindingProperties_SingleOccurrence_LastSeenSameRun(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-solo"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
 	if !strings.Contains(out, "First Seen") {
 		t.Error("First Seen should appear")
@@ -1475,7 +1475,7 @@ func TestFindingPropertiesFieldOrder(t *testing.T) {
 		Method:       "GET",
 		Occurrences:  2,
 	}
-	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 	// Finding ID should not appear
 	if strings.Contains(out, "Finding ID") {
 		t.Error("Finding ID row should be removed")
@@ -1963,7 +1963,7 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 		},
 	})
 	f := ei.finds["fin-order"]
-	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
 	// Verify canonical field order: Severity before CWE before OWASP before Last Seen before Occurrences
 	positions := map[string]int{
@@ -2059,7 +2059,7 @@ func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 		}},
 	}
 	ei := buildEntityIndex(ef)
-	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "2026-04-08T21:00:00Z", "")
+	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "2026-04-08T21:00:00Z", "", "")
 	// Status row is intentionally absent — Jira owns workflow state.
 	// Workflow Source row is intentionally absent — removed as noise.
 	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Status</th><td><ac:structured-macro ac:name=\"status\"", "In Review</ac:parameter>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
@@ -2391,7 +2391,7 @@ func TestPrependFindingProperties_FirstLastSeen(t *testing.T) {
 	ei := buildEntityIndex(ef)
 	f := ei.finds["fin-aabb1122"]
 
-	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "")
+	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
 	// First Seen must appear (the earlier date).
 	if !strings.Contains(out, "2026-01-01T00:00:00Z") {

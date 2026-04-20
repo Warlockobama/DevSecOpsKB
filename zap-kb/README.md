@@ -73,6 +73,7 @@ Examples:
 - Live Jira Status/Owner on Confluence: after Jira export, zap-kb pulls each ticket's current status and assignee and writes them into the Confluence finding/occurrence pages so the KB view reflects the live workflow state.
 - Recurrence banner: when a previously `fixed` or `accepted` finding reappears in a new scan, Merge flags it with `recurrence` and Confluence renders a prominent advisory panel.
 - Per-occurrence analyst note: each Confluence occurrence page carries a marker-delimited "Analyst Note" block that is preserved across re-publishes.
+- Per-publish changelog: Confluence finding pages render a collapsible "Changes since last publish" block when the state-sig has shifted (status, owner, risk, Jira status, last seen, or occurrence count). First publishes and no-op publishes omit the block.
 - Definition separation: definitions carry `origin` (`tool` or `custom`) so project-owned detections stay distinct from native tool rules.
 
 ## Scripts
