@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -109,8 +110,15 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 		if i, ok := defByID[id]; ok {
 			bd := &out.Definitions[i]
-			if strings.TrimSpace(bd.Origin) == "" {
+			baseOrigin := strings.TrimSpace(bd.Origin)
+			addOrigin := strings.TrimSpace(nd.Origin)
+			if baseOrigin == "" {
 				bd.Origin = DefinitionOriginValue(nd.Origin, firstNonEmptyString(bd.PluginID, nd.PluginID), nd.Detection)
+			} else if addOrigin != "" && !strings.EqualFold(baseOrigin, addOrigin) {
+				// Tool vs custom definitions must remain distinct. Keeping base
+				// for stability, but surface the collision so the analyst can
+				// split the definitionId or reclassify the incoming record.
+				log.Printf("warning: merge: definitionId %q origin collision — base=%q add=%q; keeping base. Split the definitionId if these represent different detections.", id, baseOrigin, addOrigin)
 			}
 			// Fill detection at field level so a partial base can receive missing fields from add.
 			if nd.Detection != nil {

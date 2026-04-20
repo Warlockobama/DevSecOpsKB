@@ -1,6 +1,11 @@
 package entities
 
-import "testing"
+import (
+	"bytes"
+	"log"
+	"strings"
+	"testing"
+)
 
 func TestDefinitionOriginValue(t *testing.T) {
 	tests := []struct {
@@ -62,5 +67,46 @@ func TestNormalizeDefinitionOrigins_DefaultsScannerSourcesToTool(t *testing.T) {
 	}
 	if got := ef.Definitions[1].Origin; got != DefinitionOriginCustom {
 		t.Fatalf("explicit custom origin = %q, want %q", got, DefinitionOriginCustom)
+	}
+}
+
+func TestMerge_OriginCollisionLogsWarning(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	base := EntitiesFile{
+		Definitions: []Definition{{DefinitionID: "def-10001", PluginID: "10001", Origin: DefinitionOriginTool}},
+	}
+	add := EntitiesFile{
+		Definitions: []Definition{{DefinitionID: "def-10001", PluginID: "10001", Origin: DefinitionOriginCustom}},
+	}
+	merged := Merge(base, add)
+
+	if got := merged.Definitions[0].Origin; got != DefinitionOriginTool {
+		t.Fatalf("collision should keep base origin; got %q", got)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "origin collision") || !strings.Contains(got, "def-10001") {
+		t.Fatalf("expected collision warning for def-10001, got: %q", got)
+	}
+	if !strings.Contains(got, DefinitionOriginTool) || !strings.Contains(got, DefinitionOriginCustom) {
+		t.Fatalf("warning should name both origins, got: %q", got)
+	}
+}
+
+func TestMerge_SameOriginNoWarning(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	base := EntitiesFile{Definitions: []Definition{{DefinitionID: "def-1", PluginID: "10001", Origin: DefinitionOriginTool}}}
+	add := EntitiesFile{Definitions: []Definition{{DefinitionID: "def-1", PluginID: "10001", Origin: DefinitionOriginTool}}}
+	_ = Merge(base, add)
+
+	if strings.Contains(buf.String(), "origin collision") {
+		t.Fatalf("matching origins should not warn, got: %q", buf.String())
 	}
 }
