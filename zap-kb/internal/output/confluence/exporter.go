@@ -311,6 +311,20 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
+	// Phase 2c (#42): Upsert "Scans" index page so analysts can audit which run
+	// produced which findings. Aggregates per-label counts (findings, occurrences,
+	// distinct URLs) and first/last seen. Skipped silently when EntitiesFile is
+	// unavailable so legacy callers degrade cleanly.
+	if opts.Entities != nil {
+		_, scansAction, scansErr := upsertScansIndex(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs, opts.DryRun)
+		if scansErr != nil {
+			fmt.Printf("[confluence] error upserting scans index: %v\n", scansErr)
+			summary.Errors++
+		} else {
+			countAction(&summary, scansAction)
+		}
+	}
+
 	// Phase 3: Upsert "Security Rule Definitions" parent page (built-in ZAP rules)
 	// and "Custom Detections" sibling page (project-specific custom rules).
 	defsBody := `<p>Auto-generated security rule definitions from the DevSecOps KB.</p>` + childrenMacro()
@@ -439,6 +453,133 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	upsertExportSummary(ctx, httpClient, auth, base, opts, rootID, hs, &summary)
 
 	return summary, nil
+}
+
+// scanRow holds aggregated metrics for a single scan label, used by the
+// Scans index page. Built by aggregating Occurrence.ScanLabel.
+type scanRow struct {
+	Label       string
+	First       string
+	Last        string
+	Occurrences int
+	Findings    int // distinct findingIDs touched by this scan
+	Definitions int // distinct definitionIDs touched (via Finding lookup)
+	URLs        int // distinct URLs (via Finding lookup)
+}
+
+// buildScanRows aggregates EntitiesFile occurrences into one row per distinct
+// ScanLabel. Unlabeled occurrences are bucketed under "(unlabeled)" so the gap
+// is visible to analysts rather than silently hidden.
+func buildScanRows(ef *entities.EntitiesFile) []scanRow {
+	if ef == nil {
+		return nil
+	}
+	findByID := make(map[string]*entities.Finding, len(ef.Findings))
+	for i := range ef.Findings {
+		f := &ef.Findings[i]
+		findByID[f.FindingID] = f
+	}
+	type bucket struct {
+		first       string
+		last        string
+		occurrences int
+		findings    map[string]struct{}
+		definitions map[string]struct{}
+		urls        map[string]struct{}
+	}
+	buckets := map[string]*bucket{}
+	for _, o := range ef.Occurrences {
+		label := strings.TrimSpace(o.ScanLabel)
+		if label == "" {
+			label = "(unlabeled)"
+		}
+		b, ok := buckets[label]
+		if !ok {
+			b = &bucket{findings: map[string]struct{}{}, definitions: map[string]struct{}{}, urls: map[string]struct{}{}}
+			buckets[label] = b
+		}
+		b.occurrences++
+		if o.FindingID != "" {
+			b.findings[o.FindingID] = struct{}{}
+			if f := findByID[o.FindingID]; f != nil {
+				if f.DefinitionID != "" {
+					b.definitions[f.DefinitionID] = struct{}{}
+				}
+				if f.URL != "" {
+					b.urls[f.URL] = struct{}{}
+				}
+			}
+		}
+		obs := strings.TrimSpace(o.ObservedAt)
+		if obs != "" {
+			if b.first == "" || obs < b.first {
+				b.first = obs
+			}
+			if obs > b.last {
+				b.last = obs
+			}
+		}
+	}
+	rows := make([]scanRow, 0, len(buckets))
+	for label, b := range buckets {
+		rows = append(rows, scanRow{
+			Label:       label,
+			First:       b.first,
+			Last:        b.last,
+			Occurrences: b.occurrences,
+			Findings:    len(b.findings),
+			Definitions: len(b.definitions),
+			URLs:        len(b.urls),
+		})
+	}
+	// Sort by Last desc (most recent first); fall back to label asc.
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Last != rows[j].Last {
+			return rows[i].Last > rows[j].Last
+		}
+		return rows[i].Label < rows[j].Label
+	})
+	return rows
+}
+
+// buildScansIndexBody renders the storage XML for the "Scans" index page.
+func buildScansIndexBody(rows []scanRow) string {
+	var b strings.Builder
+	b.WriteString("<h1>Scans</h1>")
+	b.WriteString("<p>One row per <code>scanLabel</code> seen across all occurrences. ")
+	b.WriteString("Use this page to audit which run produced which findings, plan re-scans, and verify accept-with-expiry baselines.</p>")
+	if len(rows) == 0 {
+		b.WriteString("<p><em>No scans recorded yet.</em></p>")
+		return b.String()
+	}
+	b.WriteString(`<table><tbody>`)
+	b.WriteString(`<tr><th>Scan label</th><th>First seen</th><th>Last seen</th><th>Findings</th><th>Definitions</th><th>URLs</th><th>Occurrences</th></tr>`)
+	for _, r := range rows {
+		b.WriteString("<tr>")
+		b.WriteString("<td>" + escapeHTML(r.Label) + "</td>")
+		b.WriteString("<td>" + escapeHTML(r.First) + "</td>")
+		b.WriteString("<td>" + escapeHTML(r.Last) + "</td>")
+		b.WriteString(fmt.Sprintf("<td>%d</td>", r.Findings))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", r.Definitions))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", r.URLs))
+		b.WriteString(fmt.Sprintf("<td>%d</td>", r.Occurrences))
+		b.WriteString("</tr>")
+	}
+	b.WriteString(`</tbody></table>`)
+	return b.String()
+}
+
+// upsertScansIndex writes (or dry-logs) the "Scans" index page as a child of rootID.
+// Returns ("", "skipped", nil) when there are zero occurrences so we don't churn
+// the page on empty exports.
+func upsertScansIndex(ctx context.Context, client httpDoer, auth, base, spaceKey, rootID string, ef *entities.EntitiesFile, hs *pageHashStore, dryRun bool) (string, string, error) {
+	rows := buildScanRows(ef)
+	body := buildScansIndexBody(rows)
+	if dryRun {
+		fmt.Printf("[confluence] dry-run: Scans index — %d distinct scan label(s)\n", len(rows))
+		return "", "skipped", nil
+	}
+	return upsertPageCached(ctx, client, auth, base, spaceKey, "Scans", body, rootID, hs)
 }
 
 // upsertExportSummary writes (or dry-logs) the "KB Export Summary" page as a child of rootID.

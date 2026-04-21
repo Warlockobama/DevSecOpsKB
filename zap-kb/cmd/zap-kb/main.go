@@ -409,11 +409,22 @@ func main() {
 				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
 			}
 		}
-		// Warn when occurrences will be built without a scan label: they'll merge
-		// with previous runs of the same alerts, making scan-level attribution impossible.
-		if strings.TrimSpace(scanLabel) == "" && (len(alerts) > 0 || strings.TrimSpace(runIn) != "" || len(entIn.Occurrences) > 0) {
-			fmt.Fprintln(os.Stderr, "[warn] no -scan-label set; occurrences from this run will merge with previous runs of the same alerts")
-			fmt.Fprintf(os.Stderr, "[warn] Tip: pass -scan-label=<env>-<YYYYMMDD> to track this run separately (e.g. prod-%s)\n", time.Now().UTC().Format("20060102"))
+		// #42: every scan must have a label so analysts can trace findings back to a
+		// specific run (audit, re-scan, accept-with-expiry). When the user did not
+		// pass -scan-label and we are about to ingest fresh alerts, retro-label the
+		// run with a derived "<source>-<UTC-timestamp>" tag and warn loudly. This is
+		// the "retro-label at import" path of the AC; reproducible runs should still
+		// pass an explicit -scan-label.
+		if strings.TrimSpace(scanLabel) == "" && len(alerts) > 0 {
+			derived := fmt.Sprintf("%s-%s", strings.TrimSpace(strings.ToLower(source)), time.Now().UTC().Format("20060102-150405"))
+			derived = strings.TrimPrefix(derived, "-")
+			scanLabel = derived
+			fmt.Fprintf(os.Stderr, "[warn] no -scan-label set; auto-derived %q for this run\n", derived)
+			fmt.Fprintf(os.Stderr, "[warn] Tip: pass -scan-label=<env>-<YYYYMMDD> for reproducible runs (e.g. prod-%s)\n", time.Now().UTC().Format("20060102"))
+		} else if strings.TrimSpace(scanLabel) == "" && (strings.TrimSpace(runIn) != "" || len(entIn.Occurrences) > 0) {
+			// No fresh alerts to label, but we're operating on existing entities.
+			// Emit the original advisory only — we cannot retro-label historical data.
+			fmt.Fprintln(os.Stderr, "[warn] no -scan-label set; occurrences from previous runs may not have a scan label")
 		}
 		if len(alerts) > 0 {
 			built := entities.BuildEntitiesWithOptions(alerts, entities.BuildOptions{
