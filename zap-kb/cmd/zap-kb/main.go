@@ -619,7 +619,15 @@ func main() {
 			Concurrency:   jiraConcurrency,
 			DetectionEpic: jiraDetectionEpic,
 			EpicIssueType: jiraEpicIssueType,
-			EpicComponent: jiraEpicComponent,
+			// Default Epics to the same component as findings unless an explicit
+			// override is provided. One -jira-component flag handles both the
+			// common case of "everything goes to one component."
+			EpicComponent: func() string {
+				if strings.TrimSpace(jiraEpicComponent) != "" {
+					return jiraEpicComponent
+				}
+				return jiraComponent
+			}(),
 		})
 		if err != nil {
 			log.Fatalf("jira export: %v", err)

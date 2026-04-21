@@ -194,6 +194,12 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	// Failures are logged but never block finding creation — fall back to flat.
 	epicKeys := make(map[string]string)
 	if opts.DetectionEpic {
+		// Pre-bucket findings + occurrences by definitionId so the Epic body
+		// can show a scan-time evidence rollup (counts, scans, top URLs).
+		findingsByDef := make(map[string][]entities.Finding)
+		for _, f := range ef.Findings {
+			findingsByDef[f.DefinitionID] = append(findingsByDef[f.DefinitionID], f)
+		}
 		seen := make(map[string]struct{})
 		for _, f := range candidates {
 			if _, ok := seen[f.DefinitionID]; ok {
@@ -206,7 +212,8 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				epicKeys[f.DefinitionID] = strings.TrimSpace(def.EpicRef)
 				continue
 			}
-			key, err := ensureEpicForDefinition(ctx, httpClient, auth, base, defByID[f.DefinitionID], opts)
+			ev := buildEpicEvidence(findingsByDef[f.DefinitionID], ef.Occurrences)
+			key, err := ensureEpicForDefinition(ctx, httpClient, auth, base, defByID[f.DefinitionID], ev, opts)
 			if err != nil {
 				fmt.Printf("[jira] warning: epic ensure failed for %s: %v (falling back to flat)\n", f.DefinitionID, err)
 				continue

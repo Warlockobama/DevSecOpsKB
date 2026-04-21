@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
@@ -44,10 +45,94 @@ func epicSummary(def *entities.Definition) string {
 	return summary
 }
 
+// epicEvidence summarises the findings + occurrences for a single detection
+// so the Epic body can show a scan-time rollup without round-tripping Jira.
+// Empty values are rendered conditionally so the section degrades cleanly when
+// no entities are passed in (older callers, dry-run, etc.).
+type epicEvidence struct {
+	FindingCount    int
+	OccurrenceCount int
+	ScanLabels      []string // distinct, sorted
+	FirstSeen       string   // RFC3339, earliest across occurrences
+	LastSeen        string   // RFC3339, latest across occurrences
+	TopURLs         []string // up to 10 "METHOD url" entries by occurrence count
+}
+
+// buildEpicEvidence aggregates findings + occurrences for a definition into
+// the rollup struct used by buildEpicDescription. Pass nil/empty slices for
+// dry-run or when entity data is unavailable.
+func buildEpicEvidence(findings []entities.Finding, occurrences []entities.Occurrence) epicEvidence {
+	ev := epicEvidence{}
+	if len(findings) == 0 {
+		return ev
+	}
+	findingIDs := make(map[string]struct{}, len(findings))
+	for _, f := range findings {
+		findingIDs[f.FindingID] = struct{}{}
+	}
+	ev.FindingCount = len(findings)
+
+	scanSet := make(map[string]struct{})
+	urlCounts := make(map[string]int)
+	for _, o := range occurrences {
+		if _, ok := findingIDs[o.FindingID]; !ok {
+			continue
+		}
+		ev.OccurrenceCount++
+		if s := strings.TrimSpace(o.ScanLabel); s != "" {
+			scanSet[s] = struct{}{}
+		}
+		obs := strings.TrimSpace(o.ObservedAt)
+		if obs != "" {
+			if ev.FirstSeen == "" || obs < ev.FirstSeen {
+				ev.FirstSeen = obs
+			}
+			if obs > ev.LastSeen {
+				ev.LastSeen = obs
+			}
+		}
+		method := strings.TrimSpace(o.Method)
+		url := strings.TrimSpace(o.URL)
+		if url != "" {
+			key := strings.TrimSpace(method + " " + url)
+			urlCounts[key]++
+		}
+	}
+	for s := range scanSet {
+		ev.ScanLabels = append(ev.ScanLabels, s)
+	}
+	sort.Strings(ev.ScanLabels)
+
+	type uc struct {
+		label string
+		count int
+	}
+	var ucs []uc
+	for k, v := range urlCounts {
+		ucs = append(ucs, uc{k, v})
+	}
+	sort.Slice(ucs, func(i, j int) bool {
+		if ucs[i].count != ucs[j].count {
+			return ucs[i].count > ucs[j].count
+		}
+		return ucs[i].label < ucs[j].label
+	})
+	limit := 10
+	if limit > len(ucs) {
+		limit = len(ucs)
+	}
+	for _, u := range ucs[:limit] {
+		ev.TopURLs = append(ev.TopURLs, fmt.Sprintf("%s (×%d)", u.label, u.count))
+	}
+	return ev
+}
+
 // buildEpicDescription renders the detection-level ADF description for the Epic.
-// Includes definition summary, CWE link, ZAP docs link, and remediation guidance
-// so the Epic stands alone as the detection's system-of-record in Jira.
-func buildEpicDescription(def *entities.Definition) adfDoc {
+// Includes definition summary, CWE link, ZAP docs link, remediation guidance,
+// and a scan-time evidence rollup (finding/occurrence counts, scan labels,
+// first/last seen, top affected URLs) so the Epic stands alone as the
+// detection's system-of-record in Jira.
+func buildEpicDescription(def *entities.Definition, ev epicEvidence) adfDoc {
 	if def == nil {
 		return adfDoc{Version: 1, Type: "doc", Content: []any{}}
 	}
@@ -72,6 +157,37 @@ func buildEpicDescription(def *entities.Definition) adfDoc {
 		))
 	}
 
+	// Evidence rollup — only render when at least one finding/occurrence is
+	// known. Each row is conditional so partial data degrades gracefully.
+	if ev.FindingCount > 0 || ev.OccurrenceCount > 0 {
+		nodes = append(nodes, heading(2, "Evidence rollup"))
+		var rows []string
+		if ev.FindingCount > 0 {
+			rows = append(rows, fmt.Sprintf("Findings: %d", ev.FindingCount))
+		}
+		if ev.OccurrenceCount > 0 {
+			rows = append(rows, fmt.Sprintf("Occurrences: %d", ev.OccurrenceCount))
+		}
+		if len(ev.ScanLabels) > 0 {
+			rows = append(rows, "Scans: "+strings.Join(ev.ScanLabels, ", "))
+		}
+		if ev.FirstSeen != "" {
+			rows = append(rows, "First seen: "+ev.FirstSeen)
+		}
+		if ev.LastSeen != "" {
+			rows = append(rows, "Last seen: "+ev.LastSeen)
+		}
+		for _, r := range rows {
+			nodes = append(nodes, para(textNode(r)))
+		}
+		if len(ev.TopURLs) > 0 {
+			nodes = append(nodes, heading(3, "Top affected endpoints"))
+			for _, u := range ev.TopURLs {
+				nodes = append(nodes, para(textNode("• "+u)))
+			}
+		}
+	}
+
 	if def.Remediation != nil && strings.TrimSpace(def.Remediation.Summary) != "" {
 		nodes = append(nodes, heading(2, "Remediation"))
 		nodes = append(nodes, para(textNode(strings.TrimSpace(def.Remediation.Summary))))
@@ -91,7 +207,7 @@ func buildEpicDescription(def *entities.Definition) adfDoc {
 // Returns ("", nil) when Epic creation fails in a recoverable way (project
 // doesn't allow the Epic issue type, missing permission, etc.). The caller
 // should fall back to flat finding creation and warn the user.
-func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base string, def *entities.Definition, opts Options) (string, error) {
+func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base string, def *entities.Definition, ev epicEvidence, opts Options) (string, error) {
 	if def == nil {
 		return "", nil
 	}
@@ -114,7 +230,7 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 		"summary":     epicSummary(def),
 		"issuetype":   map[string]string{"name": issueType},
 		"labels":      []string{label, "zap-detection-epic"},
-		"description": buildEpicDescription(def),
+		"description": buildEpicDescription(def, ev),
 	}
 	if c := strings.TrimSpace(opts.EpicComponent); c != "" {
 		fields["components"] = []map[string]string{{"name": c}}

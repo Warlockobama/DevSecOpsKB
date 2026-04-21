@@ -2078,7 +2078,7 @@ func TestDefProperties_FieldOrder(t *testing.T) {
 			OWASPTop10: []string{"A05:2021"},
 		},
 	}
-	out := prependDefProperties("BODY", def)
+	out := prependDefProperties("BODY", def, "")
 
 	positions := map[string]int{
 		"Plugin ID":    strings.Index(out, "<th>Plugin ID</th>"),
@@ -2422,7 +2422,7 @@ func TestPrependDefProperties_TaxonomyWritten(t *testing.T) {
 		},
 	}
 
-	out := prependDefProperties("BODY", def)
+	out := prependDefProperties("BODY", def, "")
 
 	if !strings.Contains(out, "89") {
 		t.Errorf("def properties should contain CWE ID '89', got: %.500s", out)
@@ -2445,7 +2445,7 @@ func TestPrependDefProperties_NilTaxonomyNoPanic(t *testing.T) {
 	}
 
 	// Must not panic.
-	out := prependDefProperties("BODY", def)
+	out := prependDefProperties("BODY", def, "")
 
 	// The original body must be present.
 	if !strings.Contains(out, "BODY") {
@@ -2586,7 +2586,7 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 
 func TestPrependDefProperties_IncludesOrigin(t *testing.T) {
 	def := &entities.Definition{DefinitionID: "def-custom", PluginID: "zap-custom-rule", Origin: entities.DefinitionOriginCustom}
-	out := prependDefProperties("BODY", def)
+	out := prependDefProperties("BODY", def, "")
 	if !strings.Contains(out, "<th>Origin</th>") {
 		t.Fatalf("expected Origin property in definition properties: %.300s", out)
 	}

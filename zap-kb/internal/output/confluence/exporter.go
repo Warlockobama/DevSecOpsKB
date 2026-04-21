@@ -378,7 +378,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			// Enrich with entity metadata
 			def := ei.defByFilename(fname)
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			storageBody = prependDefProperties(storageBody, def)
+			storageBody = prependDefProperties(storageBody, def, opts.JiraBaseURL)
 
 			// Route custom definitions to the "Custom Detections" folder.
 			parentID := defsID
@@ -2024,7 +2024,7 @@ func owaspTop10Links(categories []string) string {
 
 // prependDefProperties adds a Page Properties macro with taxonomy metadata to definition pages.
 // Canonical field order: Plugin ID, Origin, WASC, CWE, OWASP, CAPEC, Detection, ATT&CK, NIST 800-53.
-func prependDefProperties(storageBody string, def *entities.Definition) string {
+func prependDefProperties(storageBody string, def *entities.Definition, jiraBaseURL string) string {
 	if def == nil {
 		return storageBody
 	}
@@ -2083,6 +2083,16 @@ func prependDefProperties(storageBody string, def *entities.Definition) string {
 		if len(def.Taxonomy.NIST80053) > 0 {
 			props = append(props, [2]string{"NIST 800-53", escapeHTML(strings.Join(def.Taxonomy.NIST80053, ", "))})
 		}
+	}
+	// Detection Epic — link to the Jira Epic created for this definition so the
+	// Confluence side surfaces the detection's system-of-record. Only emitted
+	// when -jira-detection-epic populated EpicRef on the entities file.
+	if epicKey := strings.TrimSpace(def.EpicRef); epicKey != "" {
+		val := escapeHTML(epicKey)
+		if browseURL, _ := jiraIssueBrowseURL(epicKey, jiraBaseURL); browseURL != "" {
+			val = `<a href="` + escapeAttr(browseURL) + `">` + escapeHTML(epicKey) + `</a>`
+		}
+		props = append(props, [2]string{"Detection Epic", val})
 	}
 	macro := pagePropertiesMacro(props)
 	if macro == "" {
