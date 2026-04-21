@@ -131,9 +131,12 @@ type Suppression struct {
 	OccurrenceRef string `json:"occurrenceRef,omitempty"` // required when scope=occurrence
 }
 
-// RecurrenceInfo is set by Merge() when a finding that was previously fixed or
-// accepted reappears with new occurrences. It is advisory — it does NOT auto-
-// change analyst.Status; that remains the analyst's decision.
+// RecurrenceInfo is set by Merge() when a finding previously marked fixed, fp,
+// or accepted receives new occurrences. It is advisory metadata — a parallel
+// auto-reopen path (epic #71 slice 1b) additionally flips analyst.Status from
+// fp/fixed back to "open" and writes an AnalystHistoryEntry. "accepted"
+// findings get the Recurrence record but status is preserved (analyst intent,
+// time-bounded by acceptedUntil per slice 2).
 type RecurrenceInfo struct {
 	PriorStatus   string `json:"priorStatus"`             // analyst.Status value before the recurrence was detected
 	RecurredAt    string `json:"recurredAt"`              // RFC3339 timestamp of detection
