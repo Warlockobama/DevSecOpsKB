@@ -45,7 +45,7 @@ Finding
 - risk, riskcode, confidence (rollup)
 - occurrenceCount
 - firstSeen, lastSeen
-- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt } (optional)
+- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt, priorStatus, acceptedUntil, history[] } (optional)
 - suppression { scope, reason, decidedBy, decidedAt, expiresAt, occurrenceRef } (optional)
 - recurrence { priorStatus, recurredAt, recurredInScan } (optional; set by Merge when a previously fixed/accepted finding reappears)
 
@@ -55,6 +55,14 @@ Finding analyst conventions
 - `analyst.tags[]` may include `case-ticket` to opt low/info findings into Jira export.
 - `analyst.tags[]` may include `tune-scan` to mark a recurring false positive for scan-tuning follow-up.
 
+Analyst lifecycle fields (epic #71; additive, pipeline-owned)
+- `analyst.priorStatus` — the `analyst.status` value immediately before the most recent transition. Populated by the pipeline (e.g. reopen-on-recurrence); not set by hand.
+- `analyst.acceptedUntil` — RFC3339. Analyst *intent* for when an `accepted` disposition should lapse. When `status` transitions to `accepted`, the pipeline copies `acceptedUntil` into `suppression.expiresAt` (one-way flow: intent → enforced date). If they disagree after the copy, `suppression.expiresAt` is authoritative for enforcement.
+- `analyst.history[]` — append-only audit trail. Each entry: `{ entryId, seq, scanLabel, status, priorStatus, owner, notes, updatedAt }`. `entryId` is `sha1(scanLabel|status|owner|notesHash)` so re-merging the same file is idempotent. `seq` is monotonic within a single scan to preserve order when `updatedAt` collides at second granularity.
+- Inbound sync (Confluence pull, Jira pull) MUST NOT populate `priorStatus`, `acceptedUntil`, or `history`. These are the pipeline's internal audit trail; external systems do not have authority over them. Enforced by `pull_allowlist_test.go`.
+- Obsidian YAML frontmatter MUST NOT surface these fields. Adding them would churn every vault markdown file on every scan (see `lifecycle_frontmatter_test.go`). History is rendered in Confluence page bodies instead (slice 2 of epic #71).
+- `recurrence.priorStatus` mirrors `analyst.priorStatus` at the moment a recurrence is detected; `analyst.priorStatus` is the source of truth going forward.
+
 Occurrence
 - occurrenceId, definitionId, findingId
 - scanLabel, observedAt
@@ -62,7 +70,7 @@ Occurrence
 - url, method, param, attack, evidence, other, risk, riskcode, confidence, sourceid
 - request { headers[], rawHeader, rawHeaderBytes, bodyHash, bodyBytes, bodySnippet } (optional)
 - response { statusCode, headers[], rawHeader, rawHeaderBytes, bodyHash, bodyBytes, bodySnippet } (optional)
-- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt } (optional)
+- analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt, priorStatus, acceptedUntil, history[] } (optional; lifecycle fields follow the same rules as on findings)
 - reproduce { curl, steps[] } (optional)
 
 Occurrence rules
