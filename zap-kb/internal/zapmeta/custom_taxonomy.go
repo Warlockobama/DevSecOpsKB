@@ -57,25 +57,32 @@ type FalsePositiveGuidance struct {
 	Conditions []string
 }
 
-// falsePositiveMap maps well-known plugin IDs to their FP guidance.
+// falsePositiveMap maps well-known plugin IDs to their FP guidance. Each entry
+// must list 2+ benign scenarios so analysts can rapidly distinguish noise from
+// true positives on the highest-volume rule families (#41).
 var falsePositiveMap = map[string]FalsePositiveGuidance{
 	"10098": { // Cross-Domain Misconfiguration (CDM)
 		Conditions: []string{
-			"Access-Control-Allow-Origin: * on public CDN endpoints or unauthenticated static assets is expected behavior.",
-			"Third-party widgets (analytics, fonts, payment iframes) legitimately require cross-domain access.",
-			"Flag only when authenticated endpoints return permissive CORS headers.",
+			"Access-Control-Allow-Origin: * on public CDN endpoints or unauthenticated static assets (fonts, images, JS bundles) is expected behavior — these resources are designed to be publicly cacheable.",
+			"Third-party widgets and SDKs (analytics, fonts.googleapis.com, payment iframes, Intercom/Zendesk) legitimately require permissive CORS headers on the resources they expose.",
+			"Pre-flight OPTIONS responses on documented public APIs (e.g. /v1/public/*) are expected to advertise wildcard origins; confirm the matching GET/POST is also unauthenticated.",
+			"True positive only when an authenticated endpoint (cookie- or token-protected) returns Access-Control-Allow-Origin: * — that combination breaks the same-origin policy and enables cross-site data theft.",
 		},
 	},
 	"10038": { // Content Security Policy (CSP) Header Not Set
 		Conditions: []string{
-			"Legacy pages served from a CMS that does not support CSP injection may flag here; verify at the CDN or reverse proxy layer.",
-			"CSP delivered via meta tag rather than HTTP header will not be detected by this rule.",
+			"Legacy pages served from a CMS that does not support CSP injection often flag here; verify whether the header is added at the CDN or reverse proxy edge before opening a ticket.",
+			"CSP delivered via <meta http-equiv=\"Content-Security-Policy\"> in the HTML head is not visible to ZAP's response-header check — view the page source to confirm.",
+			"Static error pages, API-only responses (application/json without an HTML body), and downloadable file responses do not require CSP since no script context exists.",
+			"True positive when a logged-in HTML application page returns no CSP header in either the response or upstream proxy — XSS protections degrade to legacy X-XSS-Protection only.",
 		},
 	},
 	"10017": { // Cross-Domain JavaScript Source File Inclusion (CDJSF)
 		Conditions: []string{
-			"Third-party analytics and tag manager scripts (Google Analytics, GTM, Segment) are expected findings on most web apps.",
-			"Scripts loaded from owned CDN subdomains are not cross-domain risks.",
+			"Third-party analytics, tag managers, and consent platforms (Google Analytics, GTM, Segment, OneTrust, Hotjar) are expected on most marketing and product pages.",
+			"Scripts loaded from owned CDN subdomains (e.g. cdn.example.com from app.example.com) are first-party from a trust perspective and not real cross-domain risks.",
+			"Embedded payment, video, or chat SDKs (Stripe.js, YouTube embed, Intercom widget) require cross-domain script tags by design.",
+			"True positive when a script tag pulls executable JavaScript from an unexpected domain (typosquat, expired CDN, non-vendor host) — verify the integrity attribute and the vendor relationship before suppressing.",
 		},
 	},
 }

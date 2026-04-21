@@ -2956,6 +2956,36 @@ func triageStatusMacro(status string) string {
 		color, escapeAttr(strings.ToUpper(status)))
 }
 
+// occurrenceAuthContext returns "Authenticated" when the captured request headers
+// contain a session-bearing token (Cookie, Authorization: Bearer/Basic, X-Auth-*,
+// X-Csrf-Token), "Unauthenticated" when headers were captured without any of
+// those, and "" when no request headers were captured at all (so we don't
+// mislead analysts with a guess we can't substantiate).
+func occurrenceAuthContext(o *entities.Occurrence) string {
+	if o == nil || o.Request == nil || len(o.Request.Headers) == 0 {
+		return ""
+	}
+	for _, h := range o.Request.Headers {
+		name := strings.ToLower(strings.TrimSpace(h.Name))
+		val := strings.ToLower(strings.TrimSpace(h.Value))
+		switch name {
+		case "cookie":
+			if val != "" {
+				return "Authenticated"
+			}
+		case "authorization":
+			if strings.HasPrefix(val, "bearer ") || strings.HasPrefix(val, "basic ") || strings.HasPrefix(val, "token ") {
+				return "Authenticated"
+			}
+		case "x-csrf-token", "x-xsrf-token", "x-auth-token", "x-api-key":
+			if val != "" {
+				return "Authenticated"
+			}
+		}
+	}
+	return "Unauthenticated"
+}
+
 // prependOccurrenceProperties adds structured metadata to occurrence pages.
 // Triage fields (Status, Owner) come first in the table so they are immediately
 // visible and easy to edit. Informational fields follow.
@@ -3044,6 +3074,12 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	infoProps = append(infoProps, [2]string{"URL", escapeHTML(o.URL)})
 	if o.Param != "" {
 		infoProps = append(infoProps, [2]string{"Parameter", escapeHTML(o.Param)})
+	}
+	// Auth Context (#41) — derived from request headers so analysts can rapidly
+	// triage rules where the FP/TP determination depends on whether the request
+	// was authenticated (e.g. CDM, CSP). Empty when no request headers were captured.
+	if ac := occurrenceAuthContext(o); ac != "" {
+		infoProps = append(infoProps, [2]string{"Auth Context", escapeHTML(ac)})
 	}
 	if o.ScanLabel != "" {
 		infoProps = append(infoProps, [2]string{"Scan", escapeHTML(o.ScanLabel)})
