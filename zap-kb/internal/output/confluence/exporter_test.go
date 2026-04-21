@@ -1937,13 +1937,14 @@ func TestBuildExportSummaryBody(t *testing.T) {
 	}
 }
 
-// --- Story 5.4: Page Properties field order ---
+// --- #19: Page Properties field order (supersedes Story 5.4) ---
 
 func TestFindingProperties_FieldOrder(t *testing.T) {
 	ei := buildEntityIndex(&entities.EntitiesFile{
 		Definitions: []entities.Definition{{
 			DefinitionID: "def-10038",
 			Alert:        "CSP Header Not Set",
+			PluginID:     "10038",
 			Taxonomy: &entities.Taxonomy{
 				CWEID:      693,
 				CWEURI:     "https://cwe.mitre.org/data/definitions/693.html",
@@ -1954,7 +1955,9 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 			FindingID:    "fin-order",
 			DefinitionID: "def-10038",
 			Risk:         "High",
+			Confidence:   "Medium",
 			URL:          "https://example.com/login",
+			Method:       "POST",
 			Occurrences:  2,
 		}},
 		Occurrences: []entities.Occurrence{
@@ -1965,28 +1968,26 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 	f := ei.finds["fin-order"]
 	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
-	// Verify canonical field order: Severity before CWE before OWASP before Last Seen before Occurrences
-	positions := map[string]int{
-		"Severity":     strings.Index(out, "<th>Severity</th>"),
-		"CWE":          strings.Index(out, "<th>CWE</th>"),
-		"OWASP Top 10": strings.Index(out, "<th>OWASP Top 10</th>"),
-		"Last Seen":    strings.Index(out, "<th>Last Seen</th>"),
-		"Occurrences":  strings.Index(out, "<th>Occurrences</th>"),
-	}
-
-	for field, pos := range positions {
-		if pos < 0 {
-			t.Errorf("field %q not found in output: %.400s", field, out)
+	// #19 canonical primary order: Severity, Confidence, Definition, CWE, OWASP Top 10, URL, Method, Occurrences.
+	// Last Seen / Domain / WASC are supplementary and follow.
+	order := []string{"Severity", "Confidence", "Definition", "CWE", "OWASP Top 10", "URL", "Method", "Occurrences", "Last Seen"}
+	positions := make(map[string]int, len(order))
+	for _, field := range order {
+		positions[field] = strings.Index(out, "<th>"+field+"</th>")
+		if positions[field] < 0 {
+			t.Errorf("field %q not found in output", field)
 		}
 	}
-
-	order := []string{"Severity", "CWE", "OWASP Top 10", "Last Seen", "Occurrences"}
 	for i := 1; i < len(order); i++ {
 		prev, curr := order[i-1], order[i]
 		if positions[prev] >= positions[curr] {
 			t.Errorf("field order violated: %q (pos %d) must appear before %q (pos %d)",
 				prev, positions[prev], curr, positions[curr])
 		}
+	}
+	// Finding ID must not appear (#19 AC).
+	if strings.Contains(out, "<th>Finding ID</th>") {
+		t.Error("Finding ID row should not appear in finding page properties")
 	}
 }
 
@@ -2068,6 +2069,29 @@ func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 		}
 	}
 }
+func TestDefProperties_OpenFindingsAndHumanDetection(t *testing.T) {
+	def := &entities.Definition{
+		DefinitionID: "def-10038",
+		PluginID:     "10038",
+		Detection:    &entities.Detection{LogicType: "passive"},
+	}
+	out := prependDefProperties("BODY", def, "", 7)
+	if !strings.Contains(out, "<th>Open Findings</th>") {
+		t.Error("expected Open Findings row when findingCount > 0")
+	}
+	if !strings.Contains(out, "<td>7</td>") {
+		t.Error("expected Open Findings count value 7")
+	}
+	if !strings.Contains(out, "Passive scan") {
+		t.Error("expected humanized Detection value 'Passive scan' for logicType=passive")
+	}
+	// Zero count must suppress the row.
+	out0 := prependDefProperties("BODY", def, "", 0)
+	if strings.Contains(out0, "<th>Open Findings</th>") {
+		t.Error("Open Findings row should be omitted when findingCount == 0")
+	}
+}
+
 func TestDefProperties_FieldOrder(t *testing.T) {
 	def := &entities.Definition{
 		DefinitionID: "def-10038",
@@ -2078,7 +2102,7 @@ func TestDefProperties_FieldOrder(t *testing.T) {
 			OWASPTop10: []string{"A05:2021"},
 		},
 	}
-	out := prependDefProperties("BODY", def, "")
+	out := prependDefProperties("BODY", def, "", 0)
 
 	positions := map[string]int{
 		"Plugin ID":    strings.Index(out, "<th>Plugin ID</th>"),
@@ -2422,7 +2446,7 @@ func TestPrependDefProperties_TaxonomyWritten(t *testing.T) {
 		},
 	}
 
-	out := prependDefProperties("BODY", def, "")
+	out := prependDefProperties("BODY", def, "", 0)
 
 	if !strings.Contains(out, "89") {
 		t.Errorf("def properties should contain CWE ID '89', got: %.500s", out)
@@ -2445,7 +2469,7 @@ func TestPrependDefProperties_NilTaxonomyNoPanic(t *testing.T) {
 	}
 
 	// Must not panic.
-	out := prependDefProperties("BODY", def, "")
+	out := prependDefProperties("BODY", def, "", 0)
 
 	// The original body must be present.
 	if !strings.Contains(out, "BODY") {
@@ -2586,7 +2610,7 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 
 func TestPrependDefProperties_IncludesOrigin(t *testing.T) {
 	def := &entities.Definition{DefinitionID: "def-custom", PluginID: "zap-custom-rule", Origin: entities.DefinitionOriginCustom}
-	out := prependDefProperties("BODY", def, "")
+	out := prependDefProperties("BODY", def, "", 0)
 	if !strings.Contains(out, "<th>Origin</th>") {
 		t.Fatalf("expected Origin property in definition properties: %.300s", out)
 	}

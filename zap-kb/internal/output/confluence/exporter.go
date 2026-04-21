@@ -378,7 +378,11 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			// Enrich with entity metadata
 			def := ei.defByFilename(fname)
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			storageBody = prependDefProperties(storageBody, def, opts.JiraBaseURL)
+			defFindingCount := 0
+			if def != nil {
+				defFindingCount = ei.defFindingCount[def.DefinitionID]
+			}
+			storageBody = prependDefProperties(storageBody, def, opts.JiraBaseURL, defFindingCount)
 
 			// Route custom definitions to the "Custom Detections" folder.
 			parentID := defsID
@@ -1417,6 +1421,7 @@ type entityIndex struct {
 	findingObs          map[string]obsRange             // findingID → {first, last} ObservedAt
 	findingTriageStatus map[string]string               // findingID → dominant triage status
 	findingScans        map[string][]string             // findingID → distinct scan labels (ordered by first seen)
+	defFindingCount     map[string]int                  // definitionID → count of findings (for definition page properties)
 }
 
 func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
@@ -1427,6 +1432,7 @@ func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 		findingObs:          make(map[string]obsRange),
 		findingTriageStatus: make(map[string]string),
 		findingScans:        make(map[string][]string),
+		defFindingCount:     make(map[string]int),
 	}
 	if ef == nil {
 		return ei
@@ -1439,6 +1445,9 @@ func buildEntityIndex(ef *entities.EntitiesFile) entityIndex {
 	for i := range ef.Findings {
 		f := &ef.Findings[i]
 		ei.finds[f.FindingID] = f
+		if strings.TrimSpace(f.DefinitionID) != "" {
+			ei.defFindingCount[f.DefinitionID]++
+		}
 		if f.Analyst != nil {
 			if status := entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)); status != "" {
 				ei.findingTriageStatus[f.FindingID] = status
@@ -2022,9 +2031,29 @@ func owaspTop10Links(categories []string) string {
 	return strings.Join(parts, ", ")
 }
 
+// humanizeDetectionLogic turns a ZAP logic-type token (e.g. "passive", "active")
+// into an analyst-readable phrase. Unknown values are passed through unchanged
+// so custom rules don't lose their label.
+func humanizeDetectionLogic(logicType string) string {
+	switch strings.ToLower(strings.TrimSpace(logicType)) {
+	case "passive":
+		return "Passive scan"
+	case "active":
+		return "Active scan"
+	case "spider", "spider-ajax":
+		return "Spider crawl"
+	case "manual":
+		return "Manual"
+	default:
+		return logicType
+	}
+}
+
 // prependDefProperties adds a Page Properties macro with taxonomy metadata to definition pages.
-// Canonical field order: Plugin ID, Origin, WASC, CWE, OWASP, CAPEC, Detection, ATT&CK, NIST 800-53.
-func prependDefProperties(storageBody string, def *entities.Definition, jiraBaseURL string) string {
+// Canonical field order: Plugin ID, Open Findings, Origin, WASC, CWE, OWASP, CAPEC, Detection, ATT&CK, NIST 800-53.
+// findingCount is the number of findings whose DefinitionID matches def — sourced from
+// entityIndex.defFindingCount. Zero suppresses the row so legacy/dry-run callers degrade cleanly.
+func prependDefProperties(storageBody string, def *entities.Definition, jiraBaseURL string, findingCount int) string {
 	if def == nil {
 		return storageBody
 	}
@@ -2032,6 +2061,11 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 	// 1. Plugin ID
 	if def.PluginID != "" {
 		props = append(props, [2]string{"Plugin ID", escapeHTML(def.PluginID)})
+	}
+	// 1b. Open Findings — surfaced near the top so analysts can prioritise definitions
+	// with the highest live finding count without scanning child pages.
+	if findingCount > 0 {
+		props = append(props, [2]string{"Open Findings", fmt.Sprintf("%d", findingCount)})
 	}
 	// 2. Origin
 	props = append(props, [2]string{"Origin", escapeHTML(entities.DefinitionOriginValue(def.Origin, def.PluginID, def.Detection))})
@@ -2058,7 +2092,7 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 	}
 	// 7. Detection logic type + ZAP docs/source links
 	if def.Detection != nil && def.Detection.LogicType != "" {
-		props = append(props, [2]string{"Detection", escapeHTML(def.Detection.LogicType)})
+		props = append(props, [2]string{"Detection", escapeHTML(humanizeDetectionLogic(def.Detection.LogicType))})
 	}
 	// ZAP documentation link — use Detection.DocsURL if enriched, otherwise compute
 	// from pluginId when it is a numeric ZAP alert ID.
@@ -2102,25 +2136,41 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 }
 
 // prependFindingProperties adds a Page Properties macro to finding pages.
-// Canonical field order: Severity, Status, CWE, OWASP, Domain, Last Seen, Occurrences.
-// Additional contextual fields (Confidence, Definition, Source Tool, URL, Method, First Seen)
-// follow in supplementary positions.
+// Canonical primary field order (#19): Severity, Confidence, Definition (linked),
+// CWE, OWASP Top 10, URL, Method, Occurrences. Supplementary fields (WASC, Domain,
+// Last/First Seen, Owner, Analyst Cases, Jira Status, Tags, Updated, Notes,
+// Source Tool, Scans) follow. Status is intentionally omitted — Jira owns the
+// workflow state and is shown in the Jira workflow section below.
 func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, analystLogSection string, changelogSection string) string {
 	if f == nil {
 		return storageBody
 	}
 	var props [][2]string
+	def := ei.defByID(f.DefinitionID)
 
 	// 1. Severity
 	props = append(props, [2]string{"Severity", riskStatusMacro(f.Risk)})
 
-	// Status is intentionally omitted from Page Properties — Jira owns the workflow
-	// state and the Jira ticket status is shown in the Jira workflow section below.
-	def := ei.defByID(f.DefinitionID)
+	// 2. Confidence — promoted from supplementary so analysts see scanner certainty
+	// alongside severity (#19).
+	if c := strings.TrimSpace(f.Confidence); c != "" {
+		props = append(props, [2]string{"Confidence", escapeHTML(c)})
+	}
 
-	// 3. WASC
-	if def != nil && def.WASCID > 0 {
-		props = append(props, [2]string{"WASC", fmt.Sprintf("WASC-%d", def.WASCID)})
+	// 3. Definition — linked Confluence page. Title must match the page title format
+	// "<Alert> (Plugin <pluginID>)" written by obsidian WriteVault. Promoted to a
+	// primary slot (#19) so the vulnerability class is visible without scrolling.
+	if def != nil {
+		baseTitle := firstNonEmptyStr(def.Alert, def.Name)
+		defTitle := baseTitle
+		if def.PluginID != "" && baseTitle != "" {
+			defTitle = fmt.Sprintf("%s (Plugin %s)", baseTitle, def.PluginID)
+		}
+		if defTitle != "" {
+			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
+				escapeAttr(defTitle), baseTitle)
+			props = append(props, [2]string{"Definition", defLink})
+		}
 	}
 
 	// 4. CWE
@@ -2134,12 +2184,22 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 		props = append(props, [2]string{"OWASP Top 10", owaspTop10Links(def.Taxonomy.OWASPTop10)})
 	}
 
-	// 6. Domain — extracted from the finding URL host
+	// 6. URL
+	props = append(props, [2]string{"URL", escapeHTML(f.URL)})
+
+	// 7. Method
+	props = append(props, [2]string{"Method", escapeHTML(f.Method)})
+
+	// 8. Occurrences
+	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
+
+	// --- Supplementary fields ---
+	if def != nil && def.WASCID > 0 {
+		props = append(props, [2]string{"WASC", fmt.Sprintf("WASC-%d", def.WASCID)})
+	}
 	if f.URL != "" {
 		props = append(props, [2]string{"Domain", escapeHTML(hostFromURL(f.URL))})
 	}
-
-	// 6. Last Seen — always emit when non-empty; annotate with "(same run)" when equal to First
 	if obs, ok := ei.findingObs[f.FindingID]; ok {
 		if obs.Last != "" {
 			lastSeenVal := obs.Last
@@ -2149,12 +2209,6 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 			props = append(props, [2]string{"Last Seen", escapeHTML(lastSeenVal)})
 		}
 	}
-
-	// 7. Occurrences
-	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
-
-	// --- Supplementary fields ---
-	props = append(props, [2]string{"Confidence", escapeHTML(f.Confidence)})
 	if f.Analyst != nil {
 		// Prefer the live Jira assignee when a ticket is linked. Falls back to
 		// the analyst.owner field on the Finding when no Jira assignee is known.
@@ -2185,28 +2239,10 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 			props = append(props, [2]string{notesLabel, escapeHTML(f.Analyst.Notes)})
 		}
 	}
-	// Definition — linked page. Title must match the Confluence page title format:
-	// "<Alert> (Plugin <pluginID>)" — same as the H1 written by obsidian WriteVault.
-	if def != nil {
-		baseTitle := firstNonEmptyStr(def.Alert, def.Name)
-		defTitle := baseTitle
-		if def.PluginID != "" && baseTitle != "" {
-			defTitle = fmt.Sprintf("%s (Plugin %s)", baseTitle, def.PluginID)
-		}
-		if defTitle != "" {
-			defLink := fmt.Sprintf(`<ac:link><ri:page ri:content-title="%s"/><ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body></ac:link>`,
-				escapeAttr(defTitle), baseTitle)
-			props = append(props, [2]string{"Definition", defLink})
-		}
-	}
-
 	// Source tool (derived from definition tags: "nuclei", "zap", "burp", etc.)
 	if src := sourceToolFromDef(def); src != "" {
 		props = append(props, [2]string{"Source Tool", escapeHTML(src)})
 	}
-
-	props = append(props, [2]string{"URL", escapeHTML(f.URL)})
-	props = append(props, [2]string{"Method", escapeHTML(f.Method)})
 
 	// First Seen (supplementary — appears after Occurrences)
 	if obs, ok := ei.findingObs[f.FindingID]; ok {
