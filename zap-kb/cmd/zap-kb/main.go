@@ -624,7 +624,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("jira export: %v", err)
 		}
-		fmt.Printf("Jira: created=%d skipped=%d errors=%d\n", sum.Created, sum.Skipped, sum.Errors)
+		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
 
 		addedTicketKeys := 0
 		jiraStatusByKey := map[string]string(nil)

@@ -88,6 +88,10 @@ type Summary struct {
 	// EpicKeys maps definitionID → Epic issue key when DetectionEpic is on.
 	// Empty when the feature is disabled or Epic creation failed gracefully.
 	EpicKeys map[string]string
+	// Relinked counts existing findings whose `parent` field was retroactively
+	// set to a newly-created or pre-existing detection Epic. Useful when an
+	// older run created findings before -jira-detection-epic was enabled.
+	Relinked int
 }
 
 // Export creates Jira issues for each Finding at or above opts.MinRisk, or when an analyst opt-in tag is present.
@@ -258,6 +262,47 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		}
 	}
 
+	// Phase 1.5 (batch parallel): retroactively link skipped (already-existing)
+	// findings to their detection Epic when one is now available. Without this,
+	// findings created before -jira-detection-epic was enabled stay orphaned
+	// and the Epic shows zero child work items.
+	relinked := 0
+	if !opts.DryRun {
+		type relinkResult struct{ ok bool }
+		var (
+			relinkSem = make(chan struct{}, concurrency)
+			relinkWg  sync.WaitGroup
+			relinkMu  sync.Mutex
+		)
+		for i, r := range dedupResults {
+			if r.err != nil || !r.exists || r.issueKey == "" {
+				continue
+			}
+			f := candidates[i]
+			epicKey := strings.TrimSpace(epicKeys[f.DefinitionID])
+			if epicKey == "" {
+				continue
+			}
+			relinkWg.Add(1)
+			go func(issueKey, epic, fid string) {
+				defer relinkWg.Done()
+				relinkSem <- struct{}{}
+				defer func() { <-relinkSem }()
+				updated, err := ensureIssueParent(ctx, httpClient, auth, base, issueKey, epic)
+				if err != nil {
+					fmt.Printf("[jira] warning: could not relink %s to epic %s: %v\n", issueKey, epic, err)
+					return
+				}
+				if updated {
+					relinkMu.Lock()
+					relinked++
+					relinkMu.Unlock()
+				}
+			}(r.issueKey, epicKey, f.FindingID)
+		}
+		relinkWg.Wait()
+	}
+
 	// Phase 2 (batch parallel): create issues
 	type createResult struct {
 		findingID string
@@ -292,7 +337,82 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			}
 		}
 	}
-	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys, EpicKeys: epicKeys}, nil
+	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys, EpicKeys: epicKeys, Relinked: relinked}, nil
+}
+
+// ensureIssueParent reads the current `parent` field on issueKey and PUTs an
+// update setting it to epicKey when missing or different. Returns updated=true
+// only when an actual write happened. Errors from the read step are returned;
+// errors from the write step are returned with the read result lost.
+func ensureIssueParent(ctx context.Context, client httpDoer, auth, base, issueKey, epicKey string) (bool, error) {
+	issueKey = strings.TrimSpace(issueKey)
+	epicKey = strings.TrimSpace(epicKey)
+	if issueKey == "" || epicKey == "" {
+		return false, nil
+	}
+
+	// 1. Read current parent.
+	getURL := base + "/rest/api/3/issue/" + issueKey + "?fields=parent"
+	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+	if err != nil {
+		return false, err
+	}
+	getReq.Header.Set("Authorization", auth)
+	getReq.Header.Set("Accept", "application/json")
+	getResp, err := doWithRetry(client, getReq, 3)
+	if err != nil {
+		return false, fmt.Errorf("get parent: %w", err)
+	}
+	defer getResp.Body.Close()
+	if getResp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if getResp.StatusCode != http.StatusOK {
+		return false, jiraHTTPErr(getResp)
+	}
+	raw, err := io.ReadAll(io.LimitReader(getResp.Body, 64*1024))
+	if err != nil {
+		return false, fmt.Errorf("read parent response: %w", err)
+	}
+	var read struct {
+		Fields struct {
+			Parent *struct {
+				Key string `json:"key"`
+			} `json:"parent"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(raw, &read); err != nil {
+		return false, fmt.Errorf("decode parent response: %w", err)
+	}
+	if read.Fields.Parent != nil && strings.EqualFold(strings.TrimSpace(read.Fields.Parent.Key), epicKey) {
+		return false, nil // already linked
+	}
+
+	// 2. PUT the parent update.
+	putBody := map[string]any{
+		"fields": map[string]any{
+			"parent": map[string]string{"key": epicKey},
+		},
+	}
+	data, err := json.Marshal(putBody)
+	if err != nil {
+		return false, err
+	}
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, base+"/rest/api/3/issue/"+issueKey, bytes.NewReader(data))
+	if err != nil {
+		return false, err
+	}
+	putReq.Header.Set("Authorization", auth)
+	putReq.Header.Set("Content-Type", "application/json")
+	putResp, err := doWithRetry(client, putReq, 3)
+	if err != nil {
+		return false, fmt.Errorf("put parent: %w", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusNoContent && putResp.StatusCode != http.StatusOK {
+		return false, jiraHTTPErr(putResp)
+	}
+	return true, nil
 }
 
 // occurrenceIsNewer reports whether a should replace b as the "latest"
