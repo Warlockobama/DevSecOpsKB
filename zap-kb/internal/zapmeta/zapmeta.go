@@ -450,6 +450,29 @@ func fromRuleSource(ruleSource string) string {
 	return ""
 }
 
+// LookupPlugin returns a partial Result for a plugin ID using only the static
+// cweFallback map — no network calls. Returns nil if the plugin ID is unknown.
+// This is intentionally lightweight for use in offline enrichment paths.
+func LookupPlugin(pluginID string) *Result {
+	pid := strings.TrimSpace(pluginID)
+	if pid == "" {
+		return nil
+	}
+	cweID, ok := cweFallback[pid]
+	if !ok {
+		return nil
+	}
+	cweURI := ""
+	if cweID > 0 {
+		cweURI = fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", cweID)
+	}
+	return &Result{
+		CWEID:       cweID,
+		CWEURI:      cweURI,
+		MatchReason: "static-fallback",
+	}
+}
+
 // RuleSummary holds heuristic extraction from a Java scan rule
 type RuleSummary struct {
 	Headers   []string

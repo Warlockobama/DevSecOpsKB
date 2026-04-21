@@ -1,6 +1,7 @@
 # zap-kb Concepts (Data Model & Behavior)
 
-- **Entities model**: Definitions (rule metadata), Findings (deduped per rule+URL+method), Occurrences (every alert event).
+- **Entities model**: Definitions are static rule metadata, Findings are deduped analyst-facing issues, and Occurrences are scan-specific observations.
+- **Definition origin**: Definitions now carry an explicit `origin` of `tool` or `custom`. Custom definitions are project-owned detections and must stay distinct from tool-native rules even if taxonomy overlaps.
 - **IDs**:
   - Finding IDs: `fin-<hash>` (front matter `id` is `finding/<id>`).
   - Occurrence IDs: `occ-<hash>` (front matter `id` is `occurrence/<id>`), scoped by scan label so identical alerts across scans stay distinct.
@@ -12,13 +13,25 @@
 - **Dedup rules**:
   - Within a scan: alerts deduped by pluginId|url|method|param|riskcode|confidence|attack|evidence.
   - Across scans: same key is kept separate because scan label participates in the occurrence ID.
+- **Workflow ownership**:
+  - The KB is canonical for identity, evidence, scan history, and minimal analyst state.
+  - Jira is the analyst case-management layer when Jira export is enabled.
+  - Confluence is the evidence/publishing surface, not the primary workflow system. Confluence pull does not write workflow fields back by default.
 - **Status/triage**:
-  - Front matter fields `analyst.status|owner|tags|notes|ticketRefs|updatedAt` are preserved on regeneration by reading existing occurrence files first.
+  - Findings carry the primary analyst workflow overlay; occurrences preserve scan-level evidence and can still carry supporting analyst annotations.
+  - Obsidian regeneration preserves analyst fields by reading existing pages first.
   - Status rollups propagate to INDEX, DASHBOARD, findings, and triage-board.
+- **Analyst tags**:
+  - `case-ticket`: opt-in export tag for low/info findings into the analyst Jira project.
+  - `tune-scan`: marks a recurring false positive for detection-tuning follow-up.
+- **False positives**:
+  - `fp` remains a finding-level disposition.
+  - Repeated false positives across distinct scans are surfaced as tuning candidates.
+  - They do not auto-create tuning tickets; analysts opt in with `tune-scan` when follow-up is warranted.
 - **Vault pages**:
   - INDEX (issue + occurrence tables, triage board, by-domain links).
   - DASHBOARD (vault-wide snapshot).
-  - Auto-generated helpers: `triage-board.md`, `by-domain.md`.
+  - Auto-generated helpers: `triage-board.md`, `by-domain.md`, `tuning-candidates.md` (dedicated rollup of recurring-FP and `tune-scan`-tagged findings).
 - **Safety**:
   - “Next actions” endpoints are neutered (schemes stripped) to avoid live links.
   - Redaction flag `-redact domain,query,cookies,auth,headers,body` can scrub sensitive data in outputs.

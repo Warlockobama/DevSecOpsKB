@@ -1,0 +1,164 @@
+{
+  "schemaVersion": "v1",
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "sourceTool": "zap",
+  "definitions": [
+    {
+      "definitionId": "def-10038",
+      "pluginId": "10038",
+      "alert": "Content Security Policy (CSP) Header Not Set",
+      "name": "Content Security Policy (CSP) Header Not Set",
+      "wascid": 15,
+      "taxonomy": {
+        "cweid": 693,
+        "cweUri": "https://cwe.mitre.org/data/definitions/693.html",
+        "owaspTop10": ["A05:2021"]
+      },
+      "remediation": {
+        "summary": "Ensure that your web server, application server, load balancer, etc. is configured to set the Content-Security-Policy header.",
+        "references": [
+          "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP"
+        ]
+      }
+    },
+    {
+      "definitionId": "def-10021",
+      "pluginId": "10021",
+      "alert": "X-Content-Type-Options Header Missing",
+      "name": "X-Content-Type-Options Header Missing",
+      "wascid": 14,
+      "remediation": {
+        "summary": "Ensure that the application/web server sets the Content-Type header appropriately, and that it sets the X-Content-Type-Options header to 'nosniff'.",
+        "references": [
+          "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options"
+        ]
+      }
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "fin-aaa001",
+      "definitionId": "def-10038",
+      "pluginId": "10038",
+      "url": "https://example.com/login",
+      "method": "GET",
+      "name": "Content Security Policy (CSP) Header Not Set: login",
+      "risk": "Medium",
+      "riskcode": "2",
+      "confidence": "High",
+      "occurrenceCount": 1
+    },
+    {
+      "findingId": "fin-bbb001",
+      "definitionId": "def-10021",
+      "pluginId": "10021",
+      "url": "https://example.com/api/data",
+      "method": "GET",
+      "name": "X-Content-Type-Options Header Missing: api/data",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Medium",
+      "occurrenceCount": 2
+    },
+    {
+      "findingId": "fin-bbb002",
+      "definitionId": "def-10021",
+      "pluginId": "10021",
+      "url": "https://example.com/profile",
+      "method": "GET",
+      "name": "X-Content-Type-Options Header Missing: profile",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Medium",
+      "occurrenceCount": 2
+    }
+  ],
+  "occurrences": [
+    {
+      "occurrenceId": "occ-001",
+      "scanLabel": "scan-2026-01",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "definitionId": "def-10038",
+      "findingId": "fin-aaa001",
+      "name": "login",
+      "url": "https://example.com/login",
+      "method": "GET",
+      "risk": "Medium",
+      "riskcode": "2",
+      "confidence": "High"
+    },
+    {
+      "occurrenceId": "occ-002",
+      "scanLabel": "scan-2026-01",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "definitionId": "def-10021",
+      "findingId": "fin-bbb001",
+      "name": "api/data",
+      "url": "https://example.com/api/data",
+      "method": "GET",
+      "param": "token",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Medium"
+    },
+    {
+      "occurrenceId": "occ-003",
+      "scanLabel": "scan-2026-01",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "definitionId": "def-10021",
+      "findingId": "fin-bbb001",
+      "name": "api/data[id]",
+      "url": "https://example.com/api/data",
+      "method": "GET",
+      "param": "id",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Medium",
+      "analyst": {
+        "status": "triaged",
+        "owner": "alice",
+        "notes": "Known issue tracked in backlog.",
+        "updatedAt": "2026-01-05T09:00:00Z"
+      }
+    },
+    {
+      "occurrenceId": "occ-004",
+      "scanLabel": "scan-2026-01",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "definitionId": "def-10021",
+      "findingId": "fin-bbb002",
+      "name": "profile",
+      "url": "https://example.com/profile",
+      "method": "GET",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Medium",
+      "analyst": {
+        "status": "triaged",
+        "owner": "alice",
+        "notes": "Accepted risk pending header update in next sprint.",
+        "updatedAt": "2026-01-05T10:00:00Z"
+      }
+    },
+    {
+      "occurrenceId": "occ-005",
+      "scanLabel": "scan-2026-01",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "definitionId": "def-10021",
+      "findingId": "fin-bbb002",
+      "name": "profile[csrf]",
+      "url": "https://example.com/profile",
+      "method": "POST",
+      "param": "csrf",
+      "risk": "Low",
+      "riskcode": "1",
+      "confidence": "Low",
+      "analyst": {
+        "status": "fp",
+        "owner": "alice",
+        "notes": "Custom CSRF token handled by middleware.",
+        "updatedAt": "2026-01-05T10:05:00Z"
+      }
+    }
+  ]
+}

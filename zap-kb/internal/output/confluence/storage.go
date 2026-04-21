@@ -81,7 +81,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 			if macroName == "" {
 				macroName = "info"
 			}
-			out.WriteString(`<ac:structured-macro name="` + macroName + `"><ac:rich-text-body><p>`)
+			out.WriteString(`<ac:structured-macro ac:name="` + macroName + `"><ac:rich-text-body><p>`)
 			out.WriteString(body)
 			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			calloutLines = calloutLines[:0]
@@ -101,13 +101,13 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 				lang := codeLang
 				body := strings.Join(codeLines, "\n")
 				if lang != "" {
-					out.WriteString(`<ac:structured-macro name="code"><ac:parameter name="language">`)
+					out.WriteString(`<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">`)
 					out.WriteString(escapeHTML(lang))
 					out.WriteString(`</ac:parameter><ac:plain-text-body><![CDATA[`)
 					out.WriteString(body)
 					out.WriteString(`]]></ac:plain-text-body></ac:structured-macro>`)
 				} else {
-					out.WriteString(`<ac:structured-macro name="code"><ac:plain-text-body><![CDATA[`)
+					out.WriteString(`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[`)
 					out.WriteString(body)
 					out.WriteString(`]]></ac:plain-text-body></ac:structured-macro>`)
 				}
@@ -157,7 +157,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 
 			// Plain blockquote — close any open block, emit as info macro
 			closeOpenBlocks()
-			out.WriteString(`<ac:structured-macro name="info"><ac:rich-text-body><p>`)
+			out.WriteString(`<ac:structured-macro ac:name="info"><ac:rich-text-body><p>`)
 			out.WriteString(inline(content))
 			out.WriteString(`</p></ac:rich-text-body></ac:structured-macro>`)
 			continue
@@ -328,7 +328,7 @@ func mdToStorageWithTitles(md string, titleMap map[string]string) string {
 				i++
 			}
 			expandContent := strings.Join(expandLines, "\n")
-			out.WriteString(`<ac:structured-macro name="expand"><ac:parameter name="title">`)
+			out.WriteString(`<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">`)
 			out.WriteString(escapeHTML(expandTitle))
 			out.WriteString(`</ac:parameter><ac:rich-text-body>`)
 			out.WriteString(mdToStorageWithTitles(expandContent, titleMap))
@@ -397,12 +397,48 @@ func inlineToStorageWithTitles(s string, titleMap map[string]string) string {
 					if closeParen >= 0 {
 						text := s[i+1 : i+1+closeBracket]
 						url := s[afterBracket+1 : afterBracket+1+closeParen]
+						i = afterBracket + 1 + closeParen + 1
+						// Anchor-only links (#section) — map known KB section anchors to their
+						// Confluence folder page titles; others render as bold text.
+						if strings.HasPrefix(url, "#") {
+							anchorPageMap := map[string]string{
+								"#issues":      "Issues",
+								"#findings":    "Issues",
+								"#occurrences": "Occurrences",
+								"#rules":       "Rules",
+							}
+							if pageTitle, ok := anchorPageMap[url]; ok {
+								out.WriteString(`<ac:link><ri:page ri:content-title="`)
+								out.WriteString(escapeAttr(pageTitle))
+								out.WriteString(`"/><ac:plain-text-link-body><![CDATA[`)
+								out.WriteString(text)
+								out.WriteString(`]]></ac:plain-text-link-body></ac:link>`)
+							} else {
+								out.WriteString("<strong>")
+								out.WriteString(escapeHTML(text))
+								out.WriteString("</strong>")
+							}
+							continue
+						}
+						// Vault-relative .md links → Confluence page link macro
+						if strings.HasSuffix(url, ".md") && !strings.HasPrefix(url, "http") {
+							pageTitle := resolveWikilinkTitle(url, titleMap)
+							if pageTitle == wikilinkToTitle(url) && text != url {
+								pageTitle = text
+							}
+							out.WriteString(`<ac:link><ri:page ri:content-title="`)
+							out.WriteString(escapeAttr(pageTitle))
+							out.WriteString(`"/><ac:plain-text-link-body><![CDATA[`)
+							out.WriteString(text)
+							out.WriteString(`]]></ac:plain-text-link-body></ac:link>`)
+							continue
+						}
+						// External URL
 						out.WriteString(`<a href="`)
 						out.WriteString(escapeAttr(url))
 						out.WriteString(`">`)
 						out.WriteString(escapeHTML(text))
 						out.WriteString(`</a>`)
-						i = afterBracket + 1 + closeParen + 1
 						continue
 					}
 				}
@@ -606,6 +642,30 @@ func wikilinkToTitle(path string) string {
 	return base
 }
 
+// pagePropertiesReportMacro returns a Confluence Page Properties Report macro that
+// queries all pages with the kb-occurrence label in the given space.
+func pagePropertiesReportMacro(spaceKey string) string {
+	return fmt.Sprintf(
+		`<ac:structured-macro ac:name="page-properties-report" ac:schema-version="1">`+
+			`<ac:parameter ac:name="spaceKey">%s</ac:parameter>`+
+			`<ac:parameter ac:name="label">kb-occurrence</ac:parameter>`+
+			`<ac:parameter ac:name="headings">Status,Owner,Risk,Rule,Finding</ac:parameter>`+
+			`<ac:parameter ac:name="sortBy">Risk</ac:parameter>`+
+			`</ac:structured-macro>`,
+		escapeAttr(spaceKey),
+	)
+}
+
+// childrenMacro returns a Confluence Children macro that auto-lists child pages
+// sorted by title, showing all pages at depth 1.
+func childrenMacro() string {
+	return `<ac:structured-macro ac:name="children" ac:schema-version="1">` +
+		`<ac:parameter ac:name="sort">title</ac:parameter>` +
+		`<ac:parameter ac:name="depth">1</ac:parameter>` +
+		`<ac:parameter ac:name="all">true</ac:parameter>` +
+		`</ac:structured-macro>`
+}
+
 // riskStatusMacro returns a Confluence status lozenge macro for the given risk level.
 func riskStatusMacro(risk string) string {
 	color := "Grey"
@@ -624,7 +684,7 @@ func riskStatusMacro(risk string) string {
 	if label == "" {
 		label = "UNKNOWN"
 	}
-	return fmt.Sprintf(`<ac:structured-macro name="status"><ac:parameter name="colour">%s</ac:parameter><ac:parameter name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(label))
+	return fmt.Sprintf(`<ac:structured-macro ac:name="status"><ac:parameter ac:name="colour">%s</ac:parameter><ac:parameter ac:name="title">%s</ac:parameter></ac:structured-macro>`, color, escapeAttr(label))
 }
 
 // pagePropertiesMacro builds a Confluence Page Properties macro from key-value pairs.
@@ -640,7 +700,7 @@ func pagePropertiesMacro(props [][2]string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(`<ac:structured-macro name="details"><ac:rich-text-body><table><tbody>`)
+	b.WriteString(`<ac:structured-macro ac:name="details"><ac:rich-text-body><table><tbody>`)
 	for _, kv := range props {
 		b.WriteString("<tr><th>")
 		b.WriteString(escapeHTML(kv[0]))

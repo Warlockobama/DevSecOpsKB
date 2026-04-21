@@ -148,7 +148,7 @@ func TestMdToStorage_InlineCode(t *testing.T) {
 func TestMdToStorage_FencedCodeBlock(t *testing.T) {
 	md := "```bash\ncurl \"http://juice-shop:3000\"\n```"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("missing code macro: %s", out)
 	}
 	if !strings.Contains(out, "curl") {
@@ -162,7 +162,7 @@ func TestMdToStorage_FencedCodeBlock(t *testing.T) {
 func TestMdToStorage_ObsidianCalloutInfo(t *testing.T) {
 	md := "> [!Info]\n> Risk: Medium — Confidence: High"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing info macro: %s", out)
 	}
 	if !strings.Contains(out, "Risk: Medium") {
@@ -226,7 +226,7 @@ curl "http://juice-shop:3000"
 	if !strings.Contains(out, "<h1>") {
 		t.Errorf("missing h1: %s", out)
 	}
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing callout: %s", out)
 	}
 	if !strings.Contains(out, "Content Security Policy") {
@@ -235,7 +235,7 @@ curl "http://juice-shop:3000"
 	if !strings.Contains(out, "<strong>Endpoint:</strong>") {
 		t.Errorf("missing bold: %s", out)
 	}
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("missing code block: %s", out)
 	}
 }
@@ -358,7 +358,7 @@ func TestMdToStorage_ItalicValid(t *testing.T) {
 func TestMdToStorage_CalloutMultiLine(t *testing.T) {
 	md := "> [!Info]\n> Line one\n> Line two\n> Line three"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="info"`) {
+	if !strings.Contains(out, `ac:name="info"`) {
 		t.Errorf("missing info macro: %s", out)
 	}
 	// Each line is processed through inlineToStorage individually, then joined
@@ -396,14 +396,14 @@ func TestRiskStatusMacro(t *testing.T) {
 	}
 	for _, c := range cases {
 		out := riskStatusMacro(c.risk)
-		if !strings.Contains(out, `name="status"`) {
+		if !strings.Contains(out, `ac:name="status"`) {
 			t.Errorf("riskStatusMacro(%q): missing status macro name, got: %s", c.risk, out)
 		}
-		wantColorParam := `<ac:parameter name="colour">` + c.wantColor + `</ac:parameter>`
+		wantColorParam := `<ac:parameter ac:name="colour">` + c.wantColor + `</ac:parameter>`
 		if !strings.Contains(out, wantColorParam) {
 			t.Errorf("riskStatusMacro(%q): expected colour %q, got: %s", c.risk, c.wantColor, out)
 		}
-		wantTitleParam := `<ac:parameter name="title">` + c.wantTitle + `</ac:parameter>`
+		wantTitleParam := `<ac:parameter ac:name="title">` + c.wantTitle + `</ac:parameter>`
 		if !strings.Contains(out, wantTitleParam) {
 			t.Errorf("riskStatusMacro(%q): expected title %q, got: %s", c.risk, c.wantTitle, out)
 		}
@@ -424,7 +424,7 @@ func TestPagePropertiesMacro(t *testing.T) {
 
 	t.Run("single_kv", func(t *testing.T) {
 		out := pagePropertiesMacro([][2]string{{"Risk", "High"}})
-		if !strings.Contains(out, `name="details"`) {
+		if !strings.Contains(out, `ac:name="details"`) {
 			t.Errorf("missing details macro: %s", out)
 		}
 		if !strings.Contains(out, "<th>Risk</th>") {
@@ -518,7 +518,7 @@ func TestMdToStorage_NestedListWithWikilinks(t *testing.T) {
 func TestMdToStorage_DetailsToExpandMacro(t *testing.T) {
 	md := "## Other info\n\n<details>\n<summary>Show details</summary>\n\nSome detailed content here.\n\n</details>\n\n## Next section"
 	out := mdToStorage(md)
-	if !strings.Contains(out, `name="expand"`) {
+	if !strings.Contains(out, `ac:name="expand"`) {
 		t.Errorf("missing expand macro: %s", out)
 	}
 	if !strings.Contains(out, "Show details") {
@@ -565,14 +565,14 @@ func TestMdToStorage_DetailsWithCodeBlock(t *testing.T) {
 
 	out := mdToStorage(md)
 
-	if !strings.Contains(out, `name="expand"`) {
+	if !strings.Contains(out, `ac:name="expand"`) {
 		t.Errorf("expected expand macro, got: %s", out)
 	}
 	if !strings.Contains(out, "Show traffic") {
 		t.Errorf("expand title missing: %s", out)
 	}
 	// Inner code block should become a Confluence code macro
-	if !strings.Contains(out, `name="code"`) {
+	if !strings.Contains(out, `ac:name="code"`) {
 		t.Errorf("inner code block should become code macro, got: %s", out)
 	}
 	if !strings.Contains(out, `{"key":"value"}`) {
@@ -581,6 +581,127 @@ func TestMdToStorage_DetailsWithCodeBlock(t *testing.T) {
 	// Headings inside expand should render
 	if !strings.Contains(out, "<h3>Request</h3>") {
 		t.Errorf("Request heading inside expand macro missing: %s", out)
+	}
+}
+
+// TestMdToStorage_Snapshots is a table-driven snapshot test covering the full
+// breadth of inline and block markdown constructs the converter must handle.
+func TestMdToStorage_Snapshots(t *testing.T) {
+	cases := []struct {
+		name         string
+		input        string
+		wantContains []string
+	}{
+		{
+			name:         "H1_heading",
+			input:        "# Main Title",
+			wantContains: []string{"<h1>Main Title</h1>"},
+		},
+		{
+			name:         "H2_heading",
+			input:        "## Section Title",
+			wantContains: []string{"<h2>Section Title</h2>"},
+		},
+		{
+			name:         "H3_heading",
+			input:        "### Subsection",
+			wantContains: []string{"<h3>Subsection</h3>"},
+		},
+		{
+			name:         "bold",
+			input:        "**important text**",
+			wantContains: []string{"<strong>important text</strong>"},
+		},
+		{
+			name:         "italic",
+			input:        "_italic words_",
+			wantContains: []string{"<em>italic words</em>"},
+		},
+		{
+			name:  "fenced_code_block_with_language",
+			input: "```python\nprint('hello')\n```",
+			wantContains: []string{
+				`ac:name="code"`,
+				"python",
+				"print",
+			},
+		},
+		{
+			name:         "inline_code",
+			input:        "Use `os.Exit(1)` to quit",
+			wantContains: []string{"<code>os.Exit(1)</code>"},
+		},
+		{
+			name:  "blockquote_obsidian_warning_callout",
+			input: "> [!Warning]\n> Be careful here",
+			wantContains: []string{
+				`name="warning"`,
+				"Be careful here",
+			},
+		},
+		{
+			name:  "simple_table_with_header",
+			input: "| Name | Value |\n| --- | --- |\n| alpha | 1 |",
+			wantContains: []string{
+				"<table>",
+				"<th>Name</th>",
+				"<th>Value</th>",
+				"<td>alpha</td>",
+				"<td>1</td>",
+			},
+		},
+		{
+			name:  "obsidian_wikilink_with_display",
+			input: "See [[findings/fin-abc123.md|My Finding]]",
+			wantContains: []string{
+				"<ac:link>",
+				`ri:content-title="My Finding"`,
+				"My Finding",
+			},
+		},
+		{
+			name:  "external_link",
+			input: "[ZAP docs](https://www.zaproxy.org/)",
+			wantContains: []string{
+				`<a href="https://www.zaproxy.org/">ZAP docs</a>`,
+			},
+		},
+		{
+			name:  "bullet_list_with_task_item",
+			input: "- [ ] pending task\n- [x] done task\n- normal item",
+			wantContains: []string{
+				"<ac:task-list>",
+				"<ac:task-status>incomplete</ac:task-status>",
+				"<ac:task-body>pending task</ac:task-body>",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := mdToStorage(c.input)
+			for _, want := range c.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("mdToStorage(%q): expected %q in output\ngot: %s", c.input, want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestMdToStorage_AnchorMap_PackageLevel verifies that calling inlineToStorageWithTitles
+// multiple times produces consistent output for anchor-mapped links. This is a regression
+// guard for the issue where anchorPageMap was rebuilt on every call — behaviour is correct
+// (map is rebuilt locally each call, result is deterministic), so two calls must agree.
+func TestMdToStorage_AnchorMap_PackageLevel(t *testing.T) {
+	input := "[All issues](#issues)"
+	out1 := mdToStorage(input)
+	out2 := mdToStorage(input)
+	if out1 != out2 {
+		t.Errorf("inlineToStorageWithTitles is not deterministic across calls:\nfirst:  %s\nsecond: %s", out1, out2)
+	}
+	// The anchor #issues maps to the "Issues" page
+	if !strings.Contains(out1, "Issues") {
+		t.Errorf("expected anchor #issues to resolve to Issues page, got: %s", out1)
 	}
 }
 

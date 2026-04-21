@@ -1,9 +1,94 @@
 package entities
 
 import (
+	"log"
 	"sort"
 	"strings"
+	"time"
 )
+
+// mergeAnalyst performs field-level merge of two Analyst annotations.
+// Rules:
+//   - If both are nil, return nil.
+//   - If one is nil, return a copy of the other.
+//   - Status: base wins if non-empty, else add.
+//   - Owner: base wins if non-empty, else add.
+//   - Notes: base wins if non-empty, else add.
+//   - Tags: union of both slices, deduplicated, order-preserving.
+//   - TicketRefs: union of both slices, deduplicated, order-preserving.
+//   - UpdatedAt: keep the more recent (lexicographic comparison; valid for RFC3339).
+func mergeAnalyst(base, add *Analyst) *Analyst {
+	if base == nil && add == nil {
+		return nil
+	}
+	if base == nil {
+		cp := *add
+		return &cp
+	}
+	if add == nil {
+		cp := *base
+		return &cp
+	}
+	out := *base // start from base copy
+
+	if out.Status == "" {
+		out.Status = add.Status
+	}
+	if out.Owner == "" {
+		out.Owner = add.Owner
+	}
+	if out.Notes == "" {
+		out.Notes = add.Notes
+	}
+	if out.Rationale == "" {
+		out.Rationale = add.Rationale
+	}
+	tBase, err1 := time.Parse(time.RFC3339, out.UpdatedAt)
+	tAdd, err2 := time.Parse(time.RFC3339, add.UpdatedAt)
+	if err1 == nil && err2 == nil {
+		if tAdd.After(tBase) {
+			out.UpdatedAt = add.UpdatedAt
+		}
+	} else if out.UpdatedAt < add.UpdatedAt {
+		// fallback to lexicographic if either parse fails
+		out.UpdatedAt = add.UpdatedAt
+	}
+	out.Tags = unionStrings(out.Tags, add.Tags)
+	out.TicketRefs = unionStrings(out.TicketRefs, add.TicketRefs)
+	return &out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// unionStrings returns a deduplicated union of a and b, preserving order (a first).
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range a {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	for _, s := range b {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 // Merge returns a new EntitiesFile which is the union of base and add.
 // - Definitions: union by definitionId; prefer base; fill missing Detection/Taxonomy/Remediation from add when absent.
@@ -25,21 +110,66 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 		if i, ok := defByID[id]; ok {
 			bd := &out.Definitions[i]
-			// Fill detection if missing
-			if bd.Detection == nil && nd.Detection != nil {
-				bd.Detection = &Detection{
-					LogicType:   nd.Detection.LogicType,
-					PluginRef:   nd.Detection.PluginRef,
-					RuleSource:  nd.Detection.RuleSource,
-					DocsURL:     nd.Detection.DocsURL,
-					SourceURL:   nd.Detection.SourceURL,
-					MatchReason: nd.Detection.MatchReason,
+			baseOrigin := strings.TrimSpace(bd.Origin)
+			addOrigin := strings.TrimSpace(nd.Origin)
+			if baseOrigin == "" {
+				bd.Origin = DefinitionOriginValue(nd.Origin, firstNonEmptyString(bd.PluginID, nd.PluginID), nd.Detection)
+			} else if addOrigin != "" && !strings.EqualFold(baseOrigin, addOrigin) {
+				// Tool vs custom definitions must remain distinct. Keeping base
+				// for stability, but surface the collision so the analyst can
+				// split the definitionId or reclassify the incoming record.
+				log.Printf("warning: merge: definitionId %q origin collision — base=%q add=%q; keeping base. Split the definitionId if these represent different detections.", id, baseOrigin, addOrigin)
+			}
+			// Fill detection at field level so a partial base can receive missing fields from add.
+			if nd.Detection != nil {
+				if bd.Detection == nil {
+					bd.Detection = &Detection{}
+				}
+				if bd.Detection.LogicType == "" && nd.Detection.LogicType != "" {
+					bd.Detection.LogicType = nd.Detection.LogicType
+				}
+				if bd.Detection.PluginRef == "" && nd.Detection.PluginRef != "" {
+					bd.Detection.PluginRef = nd.Detection.PluginRef
+				}
+				if bd.Detection.RuleSource == "" && nd.Detection.RuleSource != "" {
+					bd.Detection.RuleSource = nd.Detection.RuleSource
+				}
+				if bd.Detection.DocsURL == "" && nd.Detection.DocsURL != "" {
+					bd.Detection.DocsURL = nd.Detection.DocsURL
+				}
+				if bd.Detection.SourceURL == "" && nd.Detection.SourceURL != "" {
+					bd.Detection.SourceURL = nd.Detection.SourceURL
+				}
+				if bd.Detection.MatchReason == "" && nd.Detection.MatchReason != "" {
+					bd.Detection.MatchReason = nd.Detection.MatchReason
 				}
 			}
-			// Fill taxonomy if missing
-			if bd.Taxonomy == nil && nd.Taxonomy != nil {
-				t := *nd.Taxonomy
-				bd.Taxonomy = &t
+			// Fill taxonomy at field level so a partial base can receive missing fields from add.
+			if nd.Taxonomy != nil {
+				if bd.Taxonomy == nil {
+					bd.Taxonomy = &Taxonomy{}
+				}
+				if bd.Taxonomy.CWEID == 0 && nd.Taxonomy.CWEID != 0 {
+					bd.Taxonomy.CWEID = nd.Taxonomy.CWEID
+				}
+				if bd.Taxonomy.CWEURI == "" && nd.Taxonomy.CWEURI != "" {
+					bd.Taxonomy.CWEURI = nd.Taxonomy.CWEURI
+				}
+				if len(bd.Taxonomy.CAPECIDs) == 0 && len(nd.Taxonomy.CAPECIDs) > 0 {
+					cp := make([]int, len(nd.Taxonomy.CAPECIDs))
+					copy(cp, nd.Taxonomy.CAPECIDs)
+					bd.Taxonomy.CAPECIDs = cp
+				}
+				if len(bd.Taxonomy.ATTACK) == 0 && len(nd.Taxonomy.ATTACK) > 0 {
+					bd.Taxonomy.ATTACK = append([]string(nil), nd.Taxonomy.ATTACK...)
+				}
+				if len(bd.Taxonomy.OWASPTop10) == 0 && len(nd.Taxonomy.OWASPTop10) > 0 {
+					bd.Taxonomy.OWASPTop10 = append([]string(nil), nd.Taxonomy.OWASPTop10...)
+				}
+				if len(bd.Taxonomy.NIST80053) == 0 && len(nd.Taxonomy.NIST80053) > 0 {
+					bd.Taxonomy.NIST80053 = append([]string(nil), nd.Taxonomy.NIST80053...)
+				}
+				bd.Taxonomy.Tags = unionStrings(bd.Taxonomy.Tags, nd.Taxonomy.Tags)
 			}
 			// Fill remediation if missing
 			if bd.Remediation == nil && nd.Remediation != nil {
@@ -48,6 +178,7 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 			}
 		} else {
 			// New definition
+			nd.Origin = DefinitionOriginValue(nd.Origin, nd.PluginID, nd.Detection)
 			out.Definitions = append(out.Definitions, nd)
 			defByID[id] = len(out.Definitions) - 1
 		}
@@ -58,46 +189,139 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 	for i, f := range out.Findings {
 		findByID[strings.TrimSpace(f.FindingID)] = i
 	}
-	occSeen := make(map[string]struct{}, len(out.Occurrences))
-	for _, o := range out.Occurrences {
-		occSeen[strings.TrimSpace(o.OccurrenceID)] = struct{}{}
+	occIdx := make(map[string]int, len(out.Occurrences))
+	for i, o := range out.Occurrences {
+		occIdx[strings.TrimSpace(o.OccurrenceID)] = i
 	}
 
-	// Add findings (if new)
+	// Add findings (dedup by id).
+	// For duplicate findings, apply field-level analyst merge so TicketRefs and
+	// triage state from both sides are preserved (base fields win, add fills gaps,
+	// tags/ticketRefs are unioned via mergeAnalyst).
 	for _, nf := range add.Findings {
 		id := strings.TrimSpace(nf.FindingID)
 		if id == "" {
 			continue
 		}
-		if _, ok := findByID[id]; ok {
-			// keep base finding; counts will be recomputed
+		if idx, ok := findByID[id]; ok {
+			// Duplicate: merge analyst data rather than silently discarding add's.
+			out.Findings[idx].Analyst = mergeAnalyst(out.Findings[idx].Analyst, nf.Analyst)
 			continue
 		}
 		out.Findings = append(out.Findings, nf)
 		findByID[id] = len(out.Findings) - 1
 	}
 
-	// Add occurrences (dedup by id)
+	// Add occurrences (dedup by id).
+	// For duplicate occurrences, apply field-level analyst merge via mergeAnalyst:
+	// base fields win when non-empty; add fills gaps; tags/ticketRefs are unioned.
+	// For new occurrences (not in base), include them as-is.
 	for _, no := range add.Occurrences {
 		oid := strings.TrimSpace(no.OccurrenceID)
 		if oid == "" {
 			continue
 		}
-		if _, ok := occSeen[oid]; ok {
+		if i, ok := occIdx[oid]; ok {
+			// Duplicate occurrence: apply field-level analyst merge.
+			occ := &out.Occurrences[i]
+			occ.Analyst = mergeAnalyst(occ.Analyst, no.Analyst)
 			continue
 		}
 		out.Occurrences = append(out.Occurrences, no)
-		occSeen[oid] = struct{}{}
+		occIdx[oid] = len(out.Occurrences) - 1
 	}
 
-	// Recompute occurrence counts per finding
+	// Recompute occurrence counts and FirstSeen/LastSeen per finding from merged occurrence set.
 	counts := make(map[string]int)
+	firstSeen := make(map[string]string)
+	lastSeen := make(map[string]string)
 	for _, o := range out.Occurrences {
-		counts[strings.TrimSpace(o.FindingID)]++
+		fid := strings.TrimSpace(o.FindingID)
+		counts[fid]++
+		ts := strings.TrimSpace(o.ObservedAt)
+		if ts != "" {
+			if cur, ok := firstSeen[fid]; !ok || ts < cur {
+				firstSeen[fid] = ts
+			}
+			if cur, ok := lastSeen[fid]; !ok || ts > cur {
+				lastSeen[fid] = ts
+			}
+		}
 	}
 	for i := range out.Findings {
 		f := &out.Findings[i]
-		f.Occurrences = counts[strings.TrimSpace(f.FindingID)]
+		fid := strings.TrimSpace(f.FindingID)
+		f.Occurrences = counts[fid]
+		if fs := firstSeen[fid]; fs != "" {
+			f.FirstSeen = fs
+		}
+		if ls := lastSeen[fid]; ls != "" {
+			f.LastSeen = ls
+		}
+	}
+
+	// Recurrence detection: if a finding was previously fixed or accepted and new
+	// occurrences arrived (i.e., add introduced occurrences not in base), set the
+	// advisory Recurrence field. Status is NOT changed — analyst decides.
+	{
+		suppressedStatuses := map[string]struct{}{
+			"fixed": {}, "accepted": {}, "fp": {},
+		}
+		// Collect occurrence IDs that were in base (so new ones came from add).
+		baseOccIDs := make(map[string]struct{}, len(base.Occurrences))
+		for _, o := range base.Occurrences {
+			baseOccIDs[strings.TrimSpace(o.OccurrenceID)] = struct{}{}
+		}
+		// Map finding IDs from base to their analyst status.
+		baseFindStatus := make(map[string]string, len(base.Findings))
+		for _, f := range base.Findings {
+			if f.Analyst != nil {
+				baseFindStatus[strings.TrimSpace(f.FindingID)] = strings.ToLower(strings.TrimSpace(f.Analyst.Status))
+			}
+		}
+		// Find the earliest new occurrence per finding (not in base).
+		type newOccInfo struct {
+			recurredAt  string
+			scanLabel   string
+		}
+		newOccByFinding := make(map[string]newOccInfo)
+		for _, o := range out.Occurrences {
+			oid := strings.TrimSpace(o.OccurrenceID)
+			if _, wasInBase := baseOccIDs[oid]; wasInBase {
+				continue
+			}
+			fid := strings.TrimSpace(o.FindingID)
+			cur, exists := newOccByFinding[fid]
+			ts := strings.TrimSpace(o.ObservedAt)
+			if !exists || (ts != "" && ts < cur.recurredAt) {
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			}
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		for i := range out.Findings {
+			f := &out.Findings[i]
+			fid := strings.TrimSpace(f.FindingID)
+			priorStatus := baseFindStatus[fid]
+			if _, wasSuppressed := suppressedStatuses[priorStatus]; !wasSuppressed {
+				continue
+			}
+			info, hasNew := newOccByFinding[fid]
+			if !hasNew {
+				continue
+			}
+			// Advisory: set Recurrence if not already set (don't overwrite a human-written one).
+			if f.Recurrence == nil {
+				recurredAt := info.recurredAt
+				if recurredAt == "" {
+					recurredAt = now
+				}
+				f.Recurrence = &RecurrenceInfo{
+					PriorStatus:    baseFindStatus[fid],
+					RecurredAt:     recurredAt,
+					RecurredInScan: info.scanLabel,
+				}
+			}
+		}
 	}
 
 	// Stable sort to keep diffs clean

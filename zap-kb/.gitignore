@@ -29,6 +29,7 @@ Thumbs.db
 
 # Obsidian vault internals
 kb-new/obsidian/.obsidian/
+docs/obsidian/
 
 # Generated data & examples
 alerts.json

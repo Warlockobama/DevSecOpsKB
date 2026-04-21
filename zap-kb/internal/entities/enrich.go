@@ -400,3 +400,52 @@ func EnrichDetectionSummaries(ctx context.Context, ef *EntitiesFile) {
 		}
 	}
 }
+
+// EnrichCustomTaxonomy applies static taxonomy overrides and false positive guidance
+// for custom/internal plugin IDs (e.g., authenticated-* rules) and well-known plugin IDs
+// that have FP guidance (e.g., CDM, CSP, CDJSF). Best-effort; never overwrites existing values.
+func EnrichCustomTaxonomy(defs []Definition) {
+	for i := range defs {
+		d := &defs[i]
+
+		// Apply custom taxonomy for authenticated-* and other internal rules.
+		if ct := zapmeta.LookupCustomTaxonomy(d.PluginID); ct != nil {
+			if d.Taxonomy == nil {
+				d.Taxonomy = &Taxonomy{}
+			}
+			if d.Taxonomy.CWEID == 0 {
+				d.Taxonomy.CWEID = ct.CWEID
+			}
+			if d.Taxonomy.CWEURI == "" {
+				d.Taxonomy.CWEURI = ct.CWEURI
+			}
+			if len(d.Taxonomy.CAPECIDs) == 0 {
+				ids := make([]int, len(ct.CAPECIDs))
+				copy(ids, ct.CAPECIDs)
+				d.Taxonomy.CAPECIDs = ids
+			}
+			if len(d.Taxonomy.ATTACK) == 0 {
+				atk := make([]string, len(ct.ATTACK))
+				copy(atk, ct.ATTACK)
+				d.Taxonomy.ATTACK = atk
+			}
+			if len(d.Taxonomy.OWASPTop10) == 0 {
+				owasp := make([]string, len(ct.OWASPTop10))
+				copy(owasp, ct.OWASPTop10)
+				d.Taxonomy.OWASPTop10 = owasp
+			}
+		}
+
+		// Apply false positive guidance for well-known plugin IDs.
+		if fp := zapmeta.LookupFalsePositiveGuidance(d.PluginID); fp != nil && len(fp.Conditions) > 0 {
+			if d.Remediation == nil {
+				d.Remediation = &Remediation{}
+			}
+			if len(d.Remediation.FalsePositiveConditions) == 0 {
+				conds := make([]string, len(fp.Conditions))
+				copy(conds, fp.Conditions)
+				d.Remediation.FalsePositiveConditions = conds
+			}
+		}
+	}
+}
