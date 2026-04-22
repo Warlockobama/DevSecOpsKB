@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/config"
 )
 
 // mergeAnalyst performs field-level merge of two Analyst annotations.
@@ -139,11 +141,38 @@ func unionStrings(a, b []string) []string {
 	return out
 }
 
-// Merge returns a new EntitiesFile which is the union of base and add.
-// - Definitions: union by definitionId; prefer base; fill missing Detection/Taxonomy/Remediation from add when absent.
-// - Findings: union by findingId; prefer base fields; occurrenceCount is recomputed.
-// - Occurrences: union by occurrenceId (dedup), then sorted.
+// Merge returns a new EntitiesFile which is the union of base and add, run
+// through the merge pipeline with the org's DEFAULT triage policy. Most
+// callers should use this; pass an explicit policy via MergeWithPolicy when
+// the caller has loaded triage-policy.yaml itself (e.g. cmd/zap-kb/main.go
+// calls LoadPolicy once at startup and threads the result through).
+//
+// Behaviors driven by the policy (epic #71 slice 1c-ii):
+//   - AutoReopenOnRecurrence: gate on/off the slice 1b auto-reopen of fp/fixed
+//     findings when new occurrences arrive.
+//   - FindingFPSuppressionThreshold/ExpiryDays: after N "auto-reopened from fp"
+//     history entries on a single finding, the pipeline writes a finding-scoped
+//     Suppression so the noisy detection stops nagging the analyst.
+//   - RuleTuneScanThreshold: after the same threshold of fp-reopens aggregated
+//     across all findings sharing a pluginId, tag the Definition "tune-scan"
+//     so security engineering knows to retune the detection rule.
 func Merge(base, add EntitiesFile) EntitiesFile {
+	return MergeWithPolicy(base, add, config.DefaultPolicy())
+}
+
+// MergeWithPolicy is Merge with an explicit operator-tunable policy. See
+// internal/config/policy.go for the policy schema.
+func MergeWithPolicy(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile {
+	out := mergeCore(base, add, policy)
+	applyFindingFPAutoSuppression(&out, policy)
+	applyRuleTuneScanTags(&out, policy)
+	return out
+}
+
+// mergeCore is the union/merge work; it does NOT apply the post-merge policy
+// passes (auto-suppression, tune-scan tagging). Split out so unit tests can
+// exercise the auto-reopen gate without dragging the suppression machinery in.
+func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile {
 	out := base
 
 	// Index base definitions by id
@@ -315,7 +344,8 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 	// in this merge, we always set an advisory RecurrenceInfo.
 	//
 	// For fp and fixed findings specifically, we additionally transition the
-	// analyst status back to "open" and append a deterministic history entry.
+	// analyst status back to "open" and append a deterministic history entry,
+	// gated by policy.AutoReopenOnRecurrence (slice 1c-ii made this toggleable).
 	// "accepted" is NOT auto-reopened: acceptance is a time-bounded analyst
 	// decision (acceptedUntil) handled separately by slice 2.
 	{
@@ -380,7 +410,11 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 				}
 			}
 
-			// Auto-reopen for fp/fixed. Skip accepted.
+			// Auto-reopen for fp/fixed. Skip accepted. Skip entirely when the
+			// org has disabled the behavior in triage-policy.yaml.
+			if !policy.AutoReopenOnRecurrence {
+				continue
+			}
 			if _, shouldReopen := reopenStatuses[priorStatus]; !shouldReopen {
 				continue
 			}
