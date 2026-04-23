@@ -229,7 +229,11 @@ func (m *Model) loadInputForCurrentStep() {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	keyMsg, ok := msg.(tea.KeyMsg)
 	if !ok {
-		return m, nil
+		// Forward non-key messages (e.g. cursor blink ticks from textinput.Blink)
+		// to the textinput so blinking works correctly on int-input steps.
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
 	switch keyMsg.String() {
 	case "ctrl+c", "q":
@@ -240,7 +244,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.step {
 	case stepWelcome:
 		switch keyMsg.String() {
-		case "enter", "right", "n":
+		case "enter", "right":
 			m.step = stepAutoReopen
 			m.loadInputForCurrentStep()
 		}

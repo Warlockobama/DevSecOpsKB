@@ -97,7 +97,7 @@ func TestModel_EditInts(t *testing.T) {
 // TestModel_InvalidIntSurfacesError: typing "abc" into an int field must
 // keep the user on that step with an error banner, not silently write 0.
 func TestModel_InvalidIntSurfacesError(t *testing.T) {
-	m := New(config.DefaultPolicy(), "/tmp/ignored.yaml")
+	m := New(config.DefaultPolicy(), filepath.Join(t.TempDir(), "ignored.yaml"))
 	// welcome → auto-reopen → FP threshold
 	m = send(t, m, "enter", "enter")
 	m.input.SetValue("abc")
@@ -113,7 +113,7 @@ func TestModel_InvalidIntSurfacesError(t *testing.T) {
 
 // TestModel_BoolToggle: y/n/space flip the auto-reopen bool correctly.
 func TestModel_BoolToggle(t *testing.T) {
-	m := New(config.DefaultPolicy(), "/tmp/ignored.yaml")
+	m := New(config.DefaultPolicy(), filepath.Join(t.TempDir(), "ignored.yaml"))
 	m = send(t, m, "enter") // welcome → auto-reopen step
 	if !m.Policy.AutoReopenOnRecurrence {
 		t.Fatal("default must start true")
@@ -136,7 +136,7 @@ func TestModel_BoolToggle(t *testing.T) {
 // step. Values typed on the later step are preserved so the user can walk
 // forward-back without losing work.
 func TestModel_Back(t *testing.T) {
-	m := New(config.DefaultPolicy(), "/tmp/ignored.yaml")
+	m := New(config.DefaultPolicy(), filepath.Join(t.TempDir(), "ignored.yaml"))
 	m = send(t, m, "enter", "enter") // → FP threshold
 	if m.step != stepFPSuppressThreshold {
 		t.Fatalf("setup: expected FP threshold, got %d", m.step)
@@ -151,7 +151,7 @@ func TestModel_Back(t *testing.T) {
 // cancellation message. The tea.Quit cmd is returned by Update but we don't
 // drive a real program here so we just check the model flag.
 func TestModel_Quit(t *testing.T) {
-	m := New(config.DefaultPolicy(), "/tmp/ignored.yaml")
+	m := New(config.DefaultPolicy(), filepath.Join(t.TempDir(), "ignored.yaml"))
 	m = send(t, m, "q")
 	if !m.quitting {
 		t.Error("q must set quitting=true")
