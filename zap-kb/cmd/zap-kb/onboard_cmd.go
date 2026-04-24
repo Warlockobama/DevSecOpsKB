@@ -56,6 +56,10 @@ func runOnboardCommand(args []string) {
 	}
 
 	if web {
+		if port < 0 || port > 65535 {
+			fmt.Fprintf(os.Stderr, "onboard: -port must be 0 (OS-assigned) or 1..65535, got %d\n", port)
+			os.Exit(1)
+		}
 		res, werr := webonboard.Run(start, path, port)
 		if werr != nil {
 			fmt.Fprintf(os.Stderr, "onboard: %v\n", werr)

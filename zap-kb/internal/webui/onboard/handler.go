@@ -262,7 +262,9 @@ func NewHandler(start config.TriagePolicy, outPath string, results chan<- Result
 		}
 		p, parseErr := parseForm(r)
 		if parseErr != nil {
-			renderForm(w, start, outPath, parseErr.Error())
+			// Re-render with the parsed policy so the user keeps their input
+			// and only needs to fix the failing field.
+			renderForm(w, p, outPath, parseErr.Error())
 			return
 		}
 		if err := config.WritePolicy(outPath, p); err != nil {
@@ -306,7 +308,8 @@ func Run(start config.TriagePolicy, outPath string, port int) (Result, error) {
 	fmt.Printf("Triage policy onboarding: %s\n", addr)
 	openBrowser(addr)
 
-	return <-results, nil
+	res := <-results
+	return res, res.Err
 }
 
 // openBrowser attempts to open url in the system default browser.

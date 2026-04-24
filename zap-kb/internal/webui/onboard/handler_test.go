@@ -63,7 +63,15 @@ func TestHandler_GET_PreFillsDefaults(t *testing.T) {
 	}
 	// Default threshold=3 should appear as input value
 	if !strings.Contains(s, `value="3"`) {
-		t.Errorf("default FP threshold 3 should appear in form, body snippet: %q", s[strings.Index(s, "findingFP"):strings.Index(s, "findingFP")+200])
+		start := strings.Index(s, "findingFP")
+		if start < 0 {
+			start = 0
+		}
+		end := start + 200
+		if end > len(s) {
+			end = len(s)
+		}
+		t.Errorf("default FP threshold 3 should appear in form, body snippet: %q", s[start:end])
 	}
 }
 
