@@ -62,9 +62,15 @@ func buildReportRows(ef entities.EntitiesFile, filterStatus string) []reportRow 
 			c = &counts{scanLabelsSeen: make(map[string]struct{})}
 			occMap[o.FindingID] = c
 		}
+		// Canonicalize aliases ("false positive" → "fp", "Accepted Risk" →
+		// "accepted", etc.) so report counts match the rest of the pipeline.
 		status := "open"
 		if o.Analyst != nil && o.Analyst.Status != "" {
-			status = o.Analyst.Status
+			if canon := entities.CanonicalAnalystStatus(o.Analyst.Status); canon != "" {
+				status = canon
+			} else {
+				status = o.Analyst.Status
+			}
 		}
 		switch status {
 		case "open":

@@ -90,8 +90,9 @@ type AnalystHistoryEntry struct {
 
 // NewAnalystHistoryEntry builds an entry with a deterministic EntryID. Callers
 // populate Seq separately (monotonic within a scan). notesHash intentionally
-// hashes the notes rather than including them verbatim so the EntryID stays
-// stable across whitespace-only edits and short enough for log lines.
+// hashes trimmed notes rather than including them verbatim so the EntryID stays
+// stable across leading/trailing whitespace changes and short enough for log
+// lines. Internal whitespace differences still change the hash.
 func NewAnalystHistoryEntry(scanLabel, status, priorStatus, owner, notes, updatedAt string) AnalystHistoryEntry {
 	nh := ""
 	if n := strings.TrimSpace(notes); n != "" {

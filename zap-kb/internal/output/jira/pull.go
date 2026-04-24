@@ -97,6 +97,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 		mapped   string
 		raw      string
 		assignee string
+		found    bool
 	}
 	statusCache := make(map[string]cachedFields)
 	var cacheMu sync.Mutex
@@ -123,7 +124,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			cacheMu.Lock()
 			if cached, ok := statusCache[ref.key]; ok {
 				cacheMu.Unlock()
-				results[i] = refResult{ref: ref, status: cached.mapped, raw: cached.raw, assignee: cached.assignee, found: true}
+				results[i] = refResult{ref: ref, status: cached.mapped, raw: cached.raw, assignee: cached.assignee, found: cached.found}
 				return
 			}
 			cacheMu.Unlock()
@@ -137,7 +138,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 				return
 			}
 			cacheMu.Lock()
-			statusCache[ref.key] = cachedFields{mapped: mapped, raw: raw, assignee: assignee}
+			statusCache[ref.key] = cachedFields{mapped: mapped, raw: raw, assignee: assignee, found: found}
 			cacheMu.Unlock()
 			results[i] = refResult{ref: ref, status: mapped, raw: raw, assignee: assignee, found: found}
 		}(i, ref)

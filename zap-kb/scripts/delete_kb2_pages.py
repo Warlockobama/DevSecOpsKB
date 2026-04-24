@@ -1,45 +1,96 @@
 #!/usr/bin/env python3
-"""Delete all pages in the KB2 Confluence space (cleanup before fresh export).
-Skips the space homepage (ID 3735717) and the space root (3735730).
+"""Delete pages in a Confluence space (one-off cleanup before fresh export).
+
+This is a DESTRUCTIVE operation. It requires --force to actually delete and
+accepts the Confluence base URL + comma-separated page IDs on the CLI so the
+script is not coupled to one hard-coded site/space.
+
+Usage:
+    CONFLUENCE_USER=you@example.com CONFLUENCE_TOKEN=xxx \\
+        python3 delete_kb2_pages.py \\
+            --base https://your-site.atlassian.net/wiki \\
+            --ids-file pageids.txt \\
+            [--skip 3735717,3735730] \\
+            [--force]
+
+Without --force the script performs a dry-run listing what would be deleted.
 """
-import os, sys, time, requests
+import argparse
+import os
+import sys
+import time
+
+import requests
 from requests.auth import HTTPBasicAuth
 
-BASE = "https://jameslerud.atlassian.net/wiki"
-USER = os.environ["CONFLUENCE_USER"]
-TOKEN = os.environ["CONFLUENCE_TOKEN"]
-auth = HTTPBasicAuth(USER, TOKEN)
 
-# All page IDs from KB2 space — homepage and space-root excluded
-SKIP = {"3735717", "3735730"}
+def parse_ids(raw: str):
+    return [p for p in raw.replace(",", " ").split() if p.strip()]
 
-PAGE_IDS = """10158109 11599932 10059817 10059799 11632665 9732309 11206681 9797761 10485888 11993128 9797692 11304980 10158091 10846318 10420298 9732168 10420402 10092571 9732243 10420278 11141206 11108437 10551349 11534396 11337821 12124204 12124224 11468920 9830489 11272228 11960372 11501672 10846338 9732331 10485868 11370616 12124188 11534374 10256433 10518607 9863213 9797783 9928813 10584263 12124266 11468886 11042918 10092604 10584197 11927660 9732353 11665490 11665468 10092714 9764904 11796613 11468864 11337778 11370654 10158124 10486003 11206811 11436145 11665535 10420333 10485952 10846416 9961590 9994363 11796553 10747958 10125441 9994394 11075688 9732219 11206786 11829361 9830536 11665513 11501692 11206706 9732195 10092626 11862231 9994324 11862253 10223656 10289200 11894797 10027197 9928795 10485930 11993150 9732265 11829301 11862426 9928747 10715213 9994304 11927584 9732287 11599912 10846356 11534354 11730957 11272248 11403348 11141185 10518638 11141165 9863283 9896002 9863333 11993220 10616924 11141224 9928835 10223730 11403398 12124291 11599958 10289217 10649721 9961532 11206866 9896111 9797740 9830556 9928857 11993188 10256456 10420355 10584291 11206844 9732382 11173975 11927638 9961619 10584227 9863312 10846382 10747986 11829323 11239474 11862367 10879066 10059854 10420375 11305018 11894919 9797812 11534414 11534529 10092651 11272206 11501652 10616883 9830504 10354748 11436076 10518589 9928767 9896022 11468826 9797671 11796582 9961568 11796533 11862211 9896089 11436098 11862331 11436126 11862279 10649650 10715171 10584132 10649676 11698201 11829285 10027121 11665449 10747924 10715187 12124246 11927604 10485908 11108415""".split()
 
-ids_to_delete = [i for i in PAGE_IDS if i not in SKIP]
-print(f"Deleting {len(ids_to_delete)} pages (skipping {len(SKIP)} root pages)...")
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--base", required=True, help="Confluence base URL, e.g. https://your-site.atlassian.net/wiki")
+    p.add_argument("--ids-file", help="File containing whitespace-separated page IDs to delete")
+    p.add_argument("--ids", help="Comma- or space-separated page IDs to delete (alternative to --ids-file)")
+    p.add_argument("--skip", default="", help="Comma-separated page IDs to skip (e.g. space root, homepage)")
+    p.add_argument("--force", action="store_true", help="Actually delete. Without this flag the script is a dry-run.")
+    args = p.parse_args()
 
-deleted = skipped = errors = 0
-for pid in ids_to_delete:
-    url = f"{BASE}/rest/api/content/{pid}?status=current"
-    r = requests.delete(url, auth=auth)
-    if r.status_code == 204:
-        deleted += 1
-        if deleted % 20 == 0:
-            print(f"  deleted {deleted}/{len(ids_to_delete)}...")
-    elif r.status_code == 404:
-        skipped += 1  # already gone
-    elif r.status_code == 429:
-        print("  rate limited, sleeping 5s...")
-        time.sleep(5)
-        r2 = requests.delete(url, auth=auth)
-        if r2.status_code == 204:
-            deleted += 1
-        else:
-            print(f"  ERROR {pid}: {r2.status_code}")
-            errors += 1
+    user = os.environ.get("CONFLUENCE_USER")
+    token = os.environ.get("CONFLUENCE_TOKEN")
+    if not user or not token:
+        sys.exit("CONFLUENCE_USER and CONFLUENCE_TOKEN must be set in the environment")
+
+    ids_raw = ""
+    if args.ids_file:
+        with open(args.ids_file) as f:
+            ids_raw = f.read()
+    elif args.ids:
+        ids_raw = args.ids
     else:
-        print(f"  ERROR {pid}: {r.status_code} {r.text[:80]}")
-        errors += 1
-    time.sleep(0.1)
+        sys.exit("Provide --ids-file or --ids")
 
-print(f"\nDone: deleted={deleted} already_gone={skipped} errors={errors}")
+    all_ids = parse_ids(ids_raw)
+    skip = set(parse_ids(args.skip))
+    ids_to_delete = [i for i in all_ids if i not in skip]
+
+    mode = "DELETING" if args.force else "DRY-RUN"
+    print(f"[{mode}] {len(ids_to_delete)} pages on {args.base} (skipping {len(skip)})")
+
+    if not args.force:
+        for pid in ids_to_delete:
+            print(f"  would delete: {pid}")
+        print("\nRe-run with --force to actually delete.")
+        return
+
+    auth = HTTPBasicAuth(user, token)
+    deleted = skipped = errors = 0
+    for pid in ids_to_delete:
+        url = f"{args.base}/rest/api/content/{pid}?status=current"
+        r = requests.delete(url, auth=auth)
+        if r.status_code == 204:
+            deleted += 1
+            if deleted % 20 == 0:
+                print(f"  deleted {deleted}/{len(ids_to_delete)}...")
+        elif r.status_code == 404:
+            skipped += 1  # already gone
+        elif r.status_code == 429:
+            print("  rate limited, sleeping 5s...")
+            time.sleep(5)
+            r2 = requests.delete(url, auth=auth)
+            if r2.status_code == 204:
+                deleted += 1
+            else:
+                print(f"  ERROR {pid}: {r2.status_code}")
+                errors += 1
+        else:
+            print(f"  ERROR {pid}: {r.status_code} {r.text[:80]}")
+            errors += 1
+        time.sleep(0.1)
+
+    print(f"\nDone: deleted={deleted} already_gone={skipped} errors={errors}")
+
+
+if __name__ == "__main__":
+    main()
