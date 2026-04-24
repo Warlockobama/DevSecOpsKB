@@ -1,9 +1,15 @@
 package main
 
-// onboard sub-command: launches the Bubble Tea triage-policy onboarding TUI
-// (epic #71 slice 1c-iii). Pre-loads the existing policy (or defaults when
-// none) so the user's previous answers are shown as starting values and they
-// can walk through again to adjust.
+// onboard sub-command: launches the triage-policy onboarding UI.
+//
+// Two modes (epic #71 slices 1c-iii / 1c-iv):
+//
+//	zap-kb onboard              — Bubble Tea terminal wizard (default)
+//	zap-kb onboard -web         — local HTTP server, auto-opens browser
+//	zap-kb onboard -web -port N — same, on a specific port (0 = OS-assigned)
+//
+// Both modes pre-fill from the existing triage-policy.yaml (or built-in
+// defaults) so re-running edits rather than starting blank.
 
 import (
 	"flag"
@@ -13,12 +19,19 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/config"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/tui/onboard"
+	webonboard "github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/webui/onboard"
 )
 
 func runOnboardCommand(args []string) {
 	fs := flag.NewFlagSet("onboard", flag.ExitOnError)
-	var path string
+	var (
+		path string
+		web  bool
+		port int
+	)
 	fs.StringVar(&path, "path", "", "Where to write the YAML (default: ./triage-policy.yaml)")
+	fs.BoolVar(&web, "web", false, "Launch a browser-based wizard instead of the terminal TUI")
+	fs.IntVar(&port, "port", 0, "Port for the web UI (0 = OS-assigned; ignored without -web)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "onboard: %v\n", err)
 		os.Exit(1)
@@ -41,6 +54,25 @@ func runOnboardCommand(args []string) {
 	if src != "" {
 		fmt.Fprintf(os.Stderr, "[info] pre-filling from %s\n", src)
 	}
+
+	if web {
+		if port < 0 || port > 65535 {
+			fmt.Fprintf(os.Stderr, "onboard: -port must be 0 (OS-assigned) or 1..65535, got %d\n", port)
+			os.Exit(1)
+		}
+		res, werr := webonboard.Run(start, path, port)
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "onboard: %v\n", werr)
+			os.Exit(1)
+		}
+		if !res.Saved {
+			fmt.Fprintln(os.Stderr, "Onboarding exited without saving.")
+			return
+		}
+		fmt.Printf("Wrote triage policy to %s\n", res.SavedTo)
+		return
+	}
+
 	final, err := onboard.Run(start, path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "onboard: %v\n", err)

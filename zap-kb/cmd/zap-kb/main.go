@@ -181,6 +181,10 @@ func main() {
 		runOnboardCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "expired" {
+		runExpiredCommand(os.Args[2:])
+		return
+	}
 
 	flag.Parse()
 
