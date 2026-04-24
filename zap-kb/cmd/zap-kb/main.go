@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/config"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
@@ -195,6 +196,28 @@ func main() {
 	envFallback(&confToken, "CONFLUENCE_TOKEN")
 	envFallback(&jiraUser, "JIRA_USER")
 	envFallback(&jiraToken, "JIRA_API_TOKEN")
+
+	// Load operator-tunable triage policy once at startup. This drives the
+	// auto-reopen gate, auto-suppression cadence, and rule-tune-scan tagging
+	// inside entities.MergeWithPolicy. When no YAML is present the call
+	// falls back to config.DefaultPolicy() — which matches pre-epic-#71 behavior
+	// for the auto-reopen toggle. See docs/triage-policy.md.
+	cwdForPolicy, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		// Surface the failure: policy still loads from user-config/defaults,
+		// but operators deserve a warning when project-local lookup is skipped.
+		log.Printf("[warn] cannot determine working directory for triage policy lookup: %v", cwdErr)
+		cwdForPolicy = ""
+	}
+	triagePolicy, policySrc, perr := config.LoadPolicy(cwdForPolicy)
+	if perr != nil {
+		// Broken YAML should surface loudly; silently falling back to defaults
+		// hides policy drift from operators who think their overrides are live.
+		log.Fatalf("triage policy: %v", perr)
+	}
+	if policySrc != "" {
+		fmt.Fprintf(os.Stderr, "[info] triage policy loaded from %s\n", policySrc)
+	}
 
 	// Prune-only mode: delete occurrence files by scan label (and optional site) from the vault, then refresh INDEX/DASHBOARD
 	if strings.TrimSpace(pruneScanLabel) != "" {
@@ -440,7 +463,7 @@ func main() {
 			if len(ent.Definitions) == 0 && len(ent.Findings) == 0 && len(ent.Occurrences) == 0 {
 				ent = built
 			} else {
-				ent = entities.Merge(ent, built)
+				ent = entities.MergeWithPolicy(ent, built, triagePolicy)
 			}
 		}
 
@@ -947,9 +970,21 @@ func runMergeCommand(args []string) {
 		artifacts = append(artifacts, art.Entities)
 	}
 
+	// Load triage policy so post-merge passes (auto-suppression, tune-scan
+	// tagging) run the same way as the main pipeline. A broken YAML fails the
+	// sub-command rather than silently falling back to defaults.
+	cwd, _ := os.Getwd()
+	policy, policySrc, perr := config.LoadPolicy(cwd)
+	if perr != nil {
+		fmt.Fprintf(os.Stderr, "merge: triage policy: %v\n", perr)
+		os.Exit(1)
+	}
+	if policySrc != "" {
+		fmt.Fprintf(os.Stderr, "merge: triage policy loaded from %s\n", policySrc)
+	}
 	merged := artifacts[0]
 	for _, ef := range artifacts[1:] {
-		merged = entities.Merge(merged, ef)
+		merged = entities.MergeWithPolicy(merged, ef, policy)
 	}
 
 	// Encode output.
