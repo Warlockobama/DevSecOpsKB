@@ -173,6 +173,62 @@ acceptedDefaultExpiryDays: %d
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
+// WritePolicy writes a TriagePolicy as a heavily commented YAML to path.
+// Used by the onboarding TUI/GUI when the user has filled in the form. Unlike
+// WriteCommentedDefault, this overwrites an existing file — the user just
+// answered the prompts, they're explicitly authorizing the write. The
+// rendered YAML is byte-for-byte the same shape as WriteCommentedDefault so
+// hand-edits and tool-edits look identical in diffs.
+func WritePolicy(path string, p TriagePolicy) error {
+	content := fmt.Sprintf(`# triage-policy.yaml — operator-tunable triage policy for zap-kb.
+#
+# Loaded from (in order): ./triage-policy.yaml, then
+# <user-config-home>/devsecopskb/triage-policy.yaml, then built-in defaults.
+# Any field omitted here keeps its default — partial files are safe.
+#
+# These are POLICY decisions, not engineering knobs. There are deliberately no
+# CLI flags that shadow them — keep policy in this file so it travels with the
+# vault and so analysts share a consistent view across runs.
+
+# Auto-reopen findings whose status was fp or fixed when new occurrences
+# arrive in a scan. Default: true. Disable to restore the pre-epic-#71-slice-1b
+# behavior where Recurrence is an advisory note and the analyst re-triages by
+# hand. "accepted" is never auto-reopened — slice 2 handles that via expiry.
+autoReopenOnRecurrence: %t
+
+# After this many distinct false-positive history entries on a single finding,
+# zap-kb writes an auto-Suppression so the finding stops appearing in triage
+# queues. Set <=0 to disable. Slice 1c-ii consumes this.
+findingFPSuppressionThreshold: %d
+
+# How many days an auto-Suppression lasts before it expires and the finding
+# returns for re-confirmation. Prevents permanent hide-and-forget on findings
+# whose context may have changed.
+findingFPSuppressionExpiryDays: %d
+
+# Aggregate fp count across all findings under the same pluginId. When the
+# total reaches this threshold, the Definition is tagged "tune-scan" so
+# security engineering can prioritize tuning the detection rule. Set <=0 to
+# disable. Slice 1c-ii consumes this.
+ruleTuneScanThreshold: %d
+
+# Default acceptedUntil window applied when an analyst marks a finding
+# "accepted" without specifying their own acceptedUntil date. Slice 2 (#58)
+# consumes this for the acceptance-expired report.
+acceptedDefaultExpiryDays: %d
+`,
+		p.AutoReopenOnRecurrence,
+		p.FindingFPSuppressionThreshold,
+		p.FindingFPSuppressionExpiryDays,
+		p.RuleTuneScanThreshold,
+		p.AcceptedDefaultExpiryDays,
+	)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 // userConfigDir returns the per-user config dir for devsecopskb files. Wraps
 // os.UserConfigDir but tolerates the empty case (returns "" rather than
 // erroring; the caller treats missing config dir as "skip that lookup").

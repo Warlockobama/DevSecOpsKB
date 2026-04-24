@@ -177,6 +177,10 @@ func main() {
 		runConfigCommand(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "onboard" {
+		runOnboardCommand(os.Args[2:])
+		return
+	}
 
 	flag.Parse()
 

@@ -176,6 +176,63 @@ func TestWriteCommentedDefault_RefusesOverwrite(t *testing.T) {
 	}
 }
 
+// TestWritePolicy_Overwrites: WritePolicy must succeed even when the target
+// file already exists (the user just confirmed values in the wizard).
+func TestWritePolicy_Overwrites(t *testing.T) {
+	root := t.TempDir()
+	withCleanHome(t)
+	path := filepath.Join(root, PolicyFileName)
+	mustWrite(t, path, "autoReopenOnRecurrence: false\n")
+
+	p := DefaultPolicy()
+	p.AutoReopenOnRecurrence = true
+	p.FindingFPSuppressionThreshold = 7
+
+	if err := WritePolicy(path, p); err != nil {
+		t.Fatalf("WritePolicy: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after write: %v", err)
+	}
+	if !strings.Contains(string(data), "autoReopenOnRecurrence: true") {
+		t.Errorf("written file should contain updated value, got:\n%s", data)
+	}
+	if !strings.Contains(string(data), "#") {
+		t.Error("written file must contain operator-readable comments")
+	}
+}
+
+// TestWritePolicy_RoundTrip: the YAML written by WritePolicy must round-trip
+// cleanly back through LoadPolicy and reproduce the same TriagePolicy values.
+// This locks the "byte-for-byte same shape" contract stated in the doc comment.
+func TestWritePolicy_RoundTrip(t *testing.T) {
+	root := t.TempDir()
+	withCleanHome(t)
+	path := filepath.Join(root, PolicyFileName)
+
+	want := TriagePolicy{
+		AutoReopenOnRecurrence:         false,
+		FindingFPSuppressionThreshold:  7,
+		FindingFPSuppressionExpiryDays: 45,
+		RuleTuneScanThreshold:          10,
+		AcceptedDefaultExpiryDays:      365,
+	}
+	if err := WritePolicy(path, want); err != nil {
+		t.Fatalf("WritePolicy: %v", err)
+	}
+	got, src, err := LoadPolicy(root)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	if src != path {
+		t.Errorf("source: want %q, got %q", path, src)
+	}
+	if got != want {
+		t.Errorf("round-trip mismatch:\n  want %+v\n   got %+v", want, got)
+	}
+}
+
 // withCleanHome points HOME / XDG_CONFIG_HOME / APPDATA at a fresh temp dir
 // so tests never accidentally pick up a real user's triage-policy.yaml.
 // Returns the temp HOME path so tests can plant fixtures inside it when
