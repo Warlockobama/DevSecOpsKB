@@ -47,7 +47,7 @@ Finding
 - firstSeen, lastSeen
 - analyst { status, owner, tags[], notes, rationale, ticketRefs[], updatedAt, priorStatus, acceptedUntil, history[] } (optional)
 - suppression { scope, reason, decidedBy, decidedAt, expiresAt, occurrenceRef } (optional)
-- recurrence { priorStatus, recurredAt, recurredInScan } (optional; set by Merge when a previously fixed/accepted finding reappears)
+- recurrence { priorStatus, recurredAt, recurredInScan } (optional; set by Merge when a finding previously marked `fp`, `fixed`, or `accepted` reappears — `fp`/`fixed` are auto-reopened; `accepted` stays as advisory only)
 
 Finding analyst conventions
 - The finding is the primary analyst workflow object.

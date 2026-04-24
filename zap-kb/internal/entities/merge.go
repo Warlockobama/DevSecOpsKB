@@ -379,13 +379,28 @@ func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile 
 				continue
 			}
 			fid := strings.TrimSpace(o.FindingID)
-			cur, exists := newOccByFinding[fid]
 			ts := strings.TrimSpace(o.ObservedAt)
-			if !exists || (ts != "" && ts < cur.recurredAt) {
+			cur, exists := newOccByFinding[fid]
+			switch {
+			case !exists:
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			case cur.recurredAt == "" && ts != "":
+				// Replace a placeholder (no timestamp) with any real timestamp.
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			case ts != "" && ts < cur.recurredAt:
+				// Keep the earliest non-empty timestamp.
 				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
 			}
 		}
-		now := time.Now().UTC().Format(time.RFC3339)
+		// Fallback timestamp: prefer the scan-stable GeneratedAt of the `add`
+		// entities file so merge output is deterministic across re-runs of the
+		// same input. Only fall back to wall-clock time when GeneratedAt is
+		// absent (older imports) — that path will churn but is explicitly opt-out
+		// when operators supply a scan-level timestamp.
+		now := strings.TrimSpace(add.GeneratedAt)
+		if now == "" {
+			now = time.Now().UTC().Format(time.RFC3339)
+		}
 		for i := range out.Findings {
 			f := &out.Findings[i]
 			fid := strings.TrimSpace(f.FindingID)
@@ -401,13 +416,15 @@ func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile 
 			if recurredAt == "" {
 				recurredAt = now
 			}
-			// Advisory: set Recurrence if not already set (don't overwrite a human-written one).
-			if f.Recurrence == nil {
-				f.Recurrence = &RecurrenceInfo{
-					PriorStatus:    priorStatus,
-					RecurredAt:     recurredAt,
-					RecurredInScan: info.scanLabel,
-				}
+			// Advisory: refresh Recurrence on each detected recurrence so the
+			// banner reflects the latest scan — this is Merge()-owned metadata,
+			// not analyst state, so stale values from an earlier run would
+			// mislead analysts reviewing an `accepted` finding that keeps
+			// recurring across scans.
+			f.Recurrence = &RecurrenceInfo{
+				PriorStatus:    priorStatus,
+				RecurredAt:     recurredAt,
+				RecurredInScan: info.scanLabel,
 			}
 
 			// Auto-reopen for fp/fixed. Skip accepted. Skip entirely when the

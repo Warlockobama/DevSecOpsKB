@@ -72,7 +72,14 @@ func ReadFlexible(path string) (Artifact, error) {
 		}
 		return Artifact{}, fmt.Errorf("open entities JSON %q: %w", path, err2)
 	}
-	raw, _ = entities.NormalizeImportJSON(raw)
+	normalized, nerr := entities.NormalizeImportJSON(raw)
+	if nerr != nil {
+		if err != nil {
+			return Artifact{}, err
+		}
+		return Artifact{}, fmt.Errorf("normalize entities JSON %q: %w", path, nerr)
+	}
+	raw = normalized
 	if err3 := json.Unmarshal(raw, &ent); err3 != nil {
 		if err != nil {
 			return Artifact{}, err
