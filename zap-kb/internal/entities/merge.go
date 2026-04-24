@@ -309,12 +309,21 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 	}
 
-	// Recurrence detection: if a finding was previously fixed or accepted and new
-	// occurrences arrived (i.e., add introduced occurrences not in base), set the
-	// advisory Recurrence field. Status is NOT changed — analyst decides.
+	// Recurrence detection + auto-reopen (epic #71, slice 1b / issue #57).
+	//
+	// If a finding that had been marked fixed/fp/accepted receives new occurrences
+	// in this merge, we always set an advisory RecurrenceInfo.
+	//
+	// For fp and fixed findings specifically, we additionally transition the
+	// analyst status back to "open" and append a deterministic history entry.
+	// "accepted" is NOT auto-reopened: acceptance is a time-bounded analyst
+	// decision (acceptedUntil) handled separately by slice 2.
 	{
 		suppressedStatuses := map[string]struct{}{
 			"fixed": {}, "accepted": {}, "fp": {},
+		}
+		reopenStatuses := map[string]struct{}{
+			"fixed": {}, "fp": {},
 		}
 		// Collect occurrence IDs that were in base (so new ones came from add).
 		baseOccIDs := make(map[string]struct{}, len(base.Occurrences))
@@ -330,8 +339,8 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 		}
 		// Find the earliest new occurrence per finding (not in base).
 		type newOccInfo struct {
-			recurredAt  string
-			scanLabel   string
+			recurredAt string
+			scanLabel  string
 		}
 		newOccByFinding := make(map[string]newOccInfo)
 		for _, o := range out.Occurrences {
@@ -340,13 +349,28 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 				continue
 			}
 			fid := strings.TrimSpace(o.FindingID)
-			cur, exists := newOccByFinding[fid]
 			ts := strings.TrimSpace(o.ObservedAt)
-			if !exists || (ts != "" && ts < cur.recurredAt) {
+			cur, exists := newOccByFinding[fid]
+			switch {
+			case !exists:
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			case cur.recurredAt == "" && ts != "":
+				// Replace a placeholder (no timestamp) with any real timestamp.
+				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
+			case ts != "" && ts < cur.recurredAt:
+				// Keep the earliest non-empty timestamp.
 				newOccByFinding[fid] = newOccInfo{recurredAt: ts, scanLabel: strings.TrimSpace(o.ScanLabel)}
 			}
 		}
-		now := time.Now().UTC().Format(time.RFC3339)
+		// Fallback timestamp: prefer the scan-stable GeneratedAt of the `add`
+		// entities file so merge output is deterministic across re-runs of the
+		// same input. Only fall back to wall-clock time when GeneratedAt is
+		// absent (older imports) — that path will churn but is explicitly opt-out
+		// when operators supply a scan-level timestamp.
+		now := strings.TrimSpace(add.GeneratedAt)
+		if now == "" {
+			now = time.Now().UTC().Format(time.RFC3339)
+		}
 		for i := range out.Findings {
 			f := &out.Findings[i]
 			fid := strings.TrimSpace(f.FindingID)
@@ -358,18 +382,48 @@ func Merge(base, add EntitiesFile) EntitiesFile {
 			if !hasNew {
 				continue
 			}
-			// Advisory: set Recurrence if not already set (don't overwrite a human-written one).
-			if f.Recurrence == nil {
-				recurredAt := info.recurredAt
-				if recurredAt == "" {
-					recurredAt = now
-				}
-				f.Recurrence = &RecurrenceInfo{
-					PriorStatus:    baseFindStatus[fid],
-					RecurredAt:     recurredAt,
-					RecurredInScan: info.scanLabel,
-				}
+			recurredAt := info.recurredAt
+			if recurredAt == "" {
+				recurredAt = now
 			}
+			// Advisory: refresh Recurrence on each detected recurrence so the
+			// banner reflects the latest scan — this is Merge()-owned metadata,
+			// not analyst state, so stale values from an earlier run would
+			// mislead analysts reviewing an `accepted` finding that keeps
+			// recurring across scans.
+			f.Recurrence = &RecurrenceInfo{
+				PriorStatus:    priorStatus,
+				RecurredAt:     recurredAt,
+				RecurredInScan: info.scanLabel,
+			}
+
+			// Auto-reopen for fp/fixed. Skip accepted.
+			if _, shouldReopen := reopenStatuses[priorStatus]; !shouldReopen {
+				continue
+			}
+			// If the merged analyst state has already moved off fp/fixed (e.g.
+			// human manually reopened between merges, or a previous merge
+			// already auto-reopened), do not write another entry.
+			if f.Analyst == nil {
+				// Can't happen if priorStatus is non-empty (we pulled it from a
+				// non-nil base Analyst), but defend anyway.
+				f.Analyst = &Analyst{}
+			}
+			currentStatus := strings.ToLower(strings.TrimSpace(f.Analyst.Status))
+			if currentStatus != "fp" && currentStatus != "fixed" {
+				continue
+			}
+			owner := strings.TrimSpace(f.Analyst.Owner)
+			notes := "auto-reopened: recurrence in scan " + info.scanLabel
+			if info.scanLabel == "" {
+				notes = "auto-reopened: recurrence detected"
+			}
+			entry := NewAnalystHistoryEntry(info.scanLabel, "open", priorStatus, owner, notes, recurredAt)
+			// History union de-dupes by EntryID, so re-merging the same scan is a no-op.
+			f.Analyst.History = unionHistory(f.Analyst.History, []AnalystHistoryEntry{entry})
+			f.Analyst.PriorStatus = priorStatus
+			f.Analyst.Status = "open"
+			f.Analyst.UpdatedAt = recurredAt
 		}
 	}
 

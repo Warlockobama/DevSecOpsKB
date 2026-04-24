@@ -256,8 +256,11 @@ func TestMergeAnalyst_AddNil(t *testing.T) {
 }
 
 // TestMerge_Recurrence_FixedFindingReappears verifies that when a finding with
-// analyst.Status="fixed" receives new occurrences in add (not present in base),
-// Merge() sets Recurrence with PriorStatus="fixed" and does NOT change the status.
+// analyst.Status="fixed" receives new occurrences in add (not present in
+// base), Merge() sets Recurrence AND auto-reopens the finding (epic #71 slice
+// 1b / issue #57). Prior behavior (leave status alone) was superseded by the
+// auto-reopen contract; detailed reopen-scenario coverage lives in
+// merge_reopen_test.go.
 func TestMerge_Recurrence_FixedFindingReappears(t *testing.T) {
 	base := EntitiesFile{
 		SchemaVersion: "v1",
@@ -286,17 +289,20 @@ func TestMerge_Recurrence_FixedFindingReappears(t *testing.T) {
 	}
 	f := merged.Findings[0]
 
-	// Status must NOT be changed — analyst decides.
-	if f.Analyst == nil || f.Analyst.Status != "fixed" {
-		t.Errorf("Status must remain 'fixed', got: %v", f.Analyst)
+	// Auto-reopen transitions status to open and stashes prior on the Analyst.
+	if f.Analyst == nil || f.Analyst.Status != "open" {
+		t.Errorf("Status must auto-reopen to 'open', got: %v", f.Analyst)
+	}
+	if f.Analyst.PriorStatus != "fixed" {
+		t.Errorf("PriorStatus: want 'fixed', got %q", f.Analyst.PriorStatus)
 	}
 
-	// Recurrence must be set.
+	// Recurrence advisory is still set alongside the reopen.
 	if f.Recurrence == nil {
 		t.Fatal("expected Recurrence to be set")
 	}
 	if f.Recurrence.PriorStatus != "fixed" {
-		t.Errorf("PriorStatus: want 'fixed', got %q", f.Recurrence.PriorStatus)
+		t.Errorf("Recurrence.PriorStatus: want 'fixed', got %q", f.Recurrence.PriorStatus)
 	}
 	if f.Recurrence.RecurredInScan != "scan-2" {
 		t.Errorf("RecurredInScan: want 'scan-2', got %q", f.Recurrence.RecurredInScan)
