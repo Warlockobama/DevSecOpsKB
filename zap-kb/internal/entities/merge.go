@@ -55,7 +55,56 @@ func mergeAnalyst(base, add *Analyst) *Analyst {
 	}
 	out.Tags = unionStrings(out.Tags, add.Tags)
 	out.TicketRefs = unionStrings(out.TicketRefs, add.TicketRefs)
+	// PriorStatus: prefer base when set, else add.
+	if out.PriorStatus == "" {
+		out.PriorStatus = add.PriorStatus
+	}
+	// AcceptedUntil: base wins if non-empty, else add.
+	if out.AcceptedUntil == "" {
+		out.AcceptedUntil = add.AcceptedUntil
+	}
+	// History: union by EntryID. Order is (base entries in original order) then
+	// (add entries whose EntryID is new). Seq is preserved from whichever side
+	// contributed the entry; cross-side reseq would make the union
+	// non-idempotent, so we deliberately leave it alone.
+	out.History = unionHistory(out.History, add.History)
 	return &out
+}
+
+// unionHistory deduplicates AnalystHistoryEntry slices by EntryID. Entries with
+// empty EntryID are dropped (callers should always use NewAnalystHistoryEntry).
+func unionHistory(a, b []AnalystHistoryEntry) []AnalystHistoryEntry {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(a)+len(b))
+	out := make([]AnalystHistoryEntry, 0, len(a)+len(b))
+	for _, e := range a {
+		id := strings.TrimSpace(e.EntryID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, e)
+	}
+	for _, e := range b {
+		id := strings.TrimSpace(e.EntryID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func firstNonEmptyString(values ...string) string {

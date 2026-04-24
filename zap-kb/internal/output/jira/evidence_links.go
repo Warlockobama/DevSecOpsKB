@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -122,6 +123,11 @@ func hasRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, w
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// Cap the read so a pathological server can't exhaust memory.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("list remote links %s: status=%d body=%s", issueKey, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	var links []struct {
 		Object struct {
 			URL string `json:"url"`
@@ -160,6 +166,13 @@ func addRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, t
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	// Jira returns 201 Created on success; anything else is a real failure
+	// (401/403 auth, 404 missing issue, 5xx upstream) and must not be silently
+	// treated as a successful link creation.
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("add remote link %s: status=%d body=%s", issueKey, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	return nil
 }

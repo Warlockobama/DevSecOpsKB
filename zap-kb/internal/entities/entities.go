@@ -51,6 +51,70 @@ type Analyst struct {
 	Rationale  string   `json:"rationale,omitempty"` // decision reasoning (why this status/disposition was chosen)
 	TicketRefs []string `json:"ticketRefs,omitempty"`
 	UpdatedAt  string   `json:"updatedAt,omitempty"` // RFC3339
+
+	// Analyst lifecycle (epic #71). All additive; pipeline-populated. Inbound
+	// sync (Confluence/Jira pull) MUST NOT overwrite these — they are an
+	// append-only internal audit trail.
+	//
+	// PriorStatus captures the analyst.Status value that existed immediately
+	// before the most recent transition. Used by reopen-on-recurrence (#57) to
+	// remember that a finding was previously "fp" or "fixed".
+	PriorStatus string `json:"priorStatus,omitempty"`
+
+	// AcceptedUntil is the analyst intent for when an "accepted" disposition
+	// should lapse and the finding should return to the triage queue (#58).
+	// One-way derived flow: when Status transitions to "accepted", the pipeline
+	// copies AcceptedUntil to Suppression.ExpiresAt. AcceptedUntil is the
+	// analyst's stated intent; Suppression.ExpiresAt is the enforced date.
+	AcceptedUntil string `json:"acceptedUntil,omitempty"` // RFC3339
+
+	// History is the append-only audit trail of status transitions (#63).
+	// Entries are deduplicated on merge by EntryID; order within a scan is
+	// preserved via Seq.
+	History []AnalystHistoryEntry `json:"history,omitempty"`
+}
+
+// AnalystHistoryEntry records a single triage transition in Analyst.History.
+// EntryID is deterministic (sha1 of scanLabel+status+owner+notesHash) so that
+// re-importing the same entities file never double-appends.
+type AnalystHistoryEntry struct {
+	EntryID     string `json:"entryId"`               // dedup key; sha1(scanLabel|status|owner|notesHash)
+	Seq         int    `json:"seq,omitempty"`         // monotonic within a single scan
+	ScanLabel   string `json:"scanLabel,omitempty"`   // scan that produced this transition
+	Status      string `json:"status"`                // new status after the transition
+	PriorStatus string `json:"priorStatus,omitempty"` // status before the transition
+	Owner       string `json:"owner,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"` // RFC3339
+}
+
+// NewAnalystHistoryEntry builds an entry with a deterministic EntryID. Callers
+// populate Seq separately (monotonic within a scan). notesHash intentionally
+// hashes trimmed notes rather than including them verbatim so the EntryID stays
+// stable across leading/trailing whitespace changes and short enough for log
+// lines. Internal whitespace differences still change the hash.
+func NewAnalystHistoryEntry(scanLabel, status, priorStatus, owner, notes, updatedAt string) AnalystHistoryEntry {
+	nh := ""
+	if n := strings.TrimSpace(notes); n != "" {
+		s := sha1.Sum([]byte(n))
+		nh = hex.EncodeToString(s[:4])
+	}
+	key := strings.Join([]string{
+		strings.TrimSpace(scanLabel),
+		strings.ToLower(strings.TrimSpace(status)),
+		strings.TrimSpace(owner),
+		nh,
+	}, "|")
+	sum := sha1.Sum([]byte(key))
+	return AnalystHistoryEntry{
+		EntryID:     hex.EncodeToString(sum[:8]),
+		ScanLabel:   strings.TrimSpace(scanLabel),
+		Status:      strings.TrimSpace(status),
+		PriorStatus: strings.TrimSpace(priorStatus),
+		Owner:       strings.TrimSpace(owner),
+		Notes:       strings.TrimSpace(notes),
+		UpdatedAt:   strings.TrimSpace(updatedAt),
+	}
 }
 
 // Suppression records a deliberate analyst decision to suppress a finding
@@ -72,8 +136,8 @@ type Suppression struct {
 // accepted reappears with new occurrences. It is advisory — it does NOT auto-
 // change analyst.Status; that remains the analyst's decision.
 type RecurrenceInfo struct {
-	PriorStatus   string `json:"priorStatus"`             // analyst.Status value before the recurrence was detected
-	RecurredAt    string `json:"recurredAt"`              // RFC3339 timestamp of detection
+	PriorStatus    string `json:"priorStatus"`              // analyst.Status value before the recurrence was detected
+	RecurredAt     string `json:"recurredAt"`               // RFC3339 timestamp of detection
 	RecurredInScan string `json:"recurredInScan,omitempty"` // ScanLabel of the triggering occurrence
 }
 
