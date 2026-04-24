@@ -86,15 +86,20 @@ func applyFindingFPAutoSuppression(ef *EntitiesFile, policy config.TriagePolicy)
 			continue
 		}
 		// Respect a still-valid pipeline suppression so we don't churn the
-		// expiresAt field on every merge.
-		if f.Suppression != nil && f.Suppression.ExpiresAt != "" {
+		// expiresAt field on every merge. A pipeline suppression with an empty
+		// ExpiresAt is documented as permanent — treat it as still valid rather
+		// than rewriting it on every run.
+		if f.Suppression != nil {
+			if f.Suppression.ExpiresAt == "" {
+				continue
+			}
 			if exp, err := time.Parse(time.RFC3339, f.Suppression.ExpiresAt); err == nil && exp.After(now) {
 				continue
 			}
 		}
 		f.Suppression = &Suppression{
 			Scope:     "finding",
-			Reason:    "auto-suppressed: " + itoa(count) + " confirmed false-positive recurrences exceed threshold",
+			Reason:    "auto-suppressed: " + itoa(count) + " confirmed false-positive recurrences meet or exceed threshold",
 			DecidedBy: pipelineAutoSuppressDecidedBy,
 			DecidedAt: nowStr,
 			ExpiresAt: expires,

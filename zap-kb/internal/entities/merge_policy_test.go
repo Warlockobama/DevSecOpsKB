@@ -158,6 +158,33 @@ func TestApplyAutoSuppression_RefreshesOnlyAfterExpiry(t *testing.T) {
 	}
 }
 
+// TestApplyAutoSuppression_ZeroExpiryDaysIsPermanentAndDoesNotChurn:
+// FindingFPSuppressionExpiryDays <= 0 produces an empty ExpiresAt
+// ("permanent" per Suppression docs). The refresh guard must treat that as
+// still-valid so re-running the pipeline never rewrites DecidedAt.
+func TestApplyAutoSuppression_ZeroExpiryDaysIsPermanentAndDoesNotChurn(t *testing.T) {
+	policy := config.DefaultPolicy()
+	policy.FindingFPSuppressionExpiryDays = 0 // permanent suppressions
+	ef := EntitiesFile{Findings: []Finding{findingWithFPReopens("fin-1", "10001", 5)}}
+
+	applyFindingFPAutoSuppression(&ef, policy)
+	s := ef.Findings[0].Suppression
+	if s == nil {
+		t.Fatal("expected pipeline suppression, got nil")
+	}
+	if s.ExpiresAt != "" {
+		t.Errorf("expiryDays<=0 must produce empty ExpiresAt (permanent), got %q", s.ExpiresAt)
+	}
+	firstDecidedAt := s.DecidedAt
+
+	// Re-run: permanent pipeline suppression must not be rewritten.
+	applyFindingFPAutoSuppression(&ef, policy)
+	if ef.Findings[0].Suppression.DecidedAt != firstDecidedAt {
+		t.Errorf("permanent pipeline suppression must not churn on re-run: before=%q after=%q",
+			firstDecidedAt, ef.Findings[0].Suppression.DecidedAt)
+	}
+}
+
 // TestApplyTuneScanTags_AggregatesAcrossFindings: fp-reopen counts across
 // findings sharing a pluginId roll up into one rule-level total. When the
 // total meets RuleTuneScanThreshold (default 5), the matching Definition's

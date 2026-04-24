@@ -202,7 +202,13 @@ func main() {
 	// inside entities.MergeWithPolicy. When no YAML is present the call
 	// falls back to config.DefaultPolicy() — which matches pre-epic-#71 behavior
 	// for the auto-reopen toggle. See docs/triage-policy.md.
-	cwdForPolicy, _ := os.Getwd()
+	cwdForPolicy, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		// Surface the failure: policy still loads from user-config/defaults,
+		// but operators deserve a warning when project-local lookup is skipped.
+		log.Printf("[warn] cannot determine working directory for triage policy lookup: %v", cwdErr)
+		cwdForPolicy = ""
+	}
 	triagePolicy, policySrc, perr := config.LoadPolicy(cwdForPolicy)
 	if perr != nil {
 		// Broken YAML should surface loudly; silently falling back to defaults
