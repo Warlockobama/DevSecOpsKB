@@ -136,8 +136,8 @@ type Suppression struct {
 // accepted reappears with new occurrences. It is advisory — it does NOT auto-
 // change analyst.Status; that remains the analyst's decision.
 type RecurrenceInfo struct {
-	PriorStatus   string `json:"priorStatus"`             // analyst.Status value before the recurrence was detected
-	RecurredAt    string `json:"recurredAt"`              // RFC3339 timestamp of detection
+	PriorStatus    string `json:"priorStatus"`              // analyst.Status value before the recurrence was detected
+	RecurredAt     string `json:"recurredAt"`               // RFC3339 timestamp of detection
 	RecurredInScan string `json:"recurredInScan,omitempty"` // ScanLabel of the triggering occurrence
 }
 
