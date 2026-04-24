@@ -91,11 +91,15 @@ func LoadPolicy(projectRoot string) (TriagePolicy, string, error) {
 			}
 			return DefaultPolicy(), "", fmt.Errorf("read %s: %w", path, err)
 		}
-		p, err := mergeOntoDefaults(data)
-		if err != nil {
-			return DefaultPolicy(), path, fmt.Errorf("parse %s: %w", path, err)
+		abs, aerr := filepath.Abs(path)
+		if aerr != nil {
+			abs = path
 		}
-		return p, path, nil
+		p, perr := mergeOntoDefaults(data)
+		if perr != nil {
+			return DefaultPolicy(), abs, fmt.Errorf("parse %s: %w", abs, perr)
+		}
+		return p, abs, nil
 	}
 	return DefaultPolicy(), "", nil
 }
