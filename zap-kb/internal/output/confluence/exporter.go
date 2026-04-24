@@ -2379,6 +2379,15 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 			}
 			props = append(props, [2]string{notesLabel, escapeHTML(f.Analyst.Notes)})
 		}
+		if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) == "accepted" {
+			if au := strings.TrimSpace(f.Analyst.AcceptedUntil); au != "" {
+				val := escapeHTML(au)
+				if t, err := time.Parse(time.RFC3339, au); err == nil && t.Before(time.Now().UTC()) {
+					val += ` <strong>(expired)</strong>`
+				}
+				props = append(props, [2]string{"Accepted Until", val})
+			}
+		}
 	}
 	// Source tool (derived from definition tags: "nuclei", "zap", "burp", etc.)
 	if src := sourceToolFromDef(def); src != "" {
@@ -2413,10 +2422,52 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// vulnerability context and fix guidance without leaving the finding page.
 	defSection := buildDefContextSection(def)
 
-	// Page order: properties → recurrence warning → changelog → analyst log
-	// (do work here) → Jira workflow → suppression → description/solution →
-	// rollup/occurrences/traffic
-	return pagePropertiesMacro(props) + recurrenceSection + changelogSection + analystLogSection + workflowSection + suppressionSection + defSection + storageBody
+	// History timeline — collapsible expand showing analyst triage audit trail
+	// (#62). Placed before the analyst log form so analysts can reference past
+	// decisions while writing their current entry.
+	historySection := ""
+	if f.Analyst != nil {
+		historySection = buildHistoryTimelineSection(f.Analyst.History)
+	}
+
+	// Page order: properties → recurrence warning → changelog → history timeline
+	// → analyst log (do work here) → Jira workflow → suppression →
+	// description/solution → rollup/occurrences/traffic
+	return pagePropertiesMacro(props) + recurrenceSection + changelogSection + historySection + analystLogSection + workflowSection + suppressionSection + defSection + storageBody
+}
+
+// buildHistoryTimelineSection renders the analyst triage audit trail
+// (Analyst.History) as a collapsible Confluence expand macro. Empty history
+// renders an explicit "No triage history recorded" note so the section is
+// never a blank accordion — requirement from epic #71 slice 2 (#62).
+func buildHistoryTimelineSection(history []entities.AnalystHistoryEntry) string {
+	var b strings.Builder
+	b.WriteString(`<ac:structured-macro ac:name="expand">`)
+	title := "Triage History"
+	if len(history) > 0 {
+		title = fmt.Sprintf("Triage History (%d entries)", len(history))
+	}
+	b.WriteString(`<ac:parameter ac:name="title">` + escapeHTML(title) + `</ac:parameter>`)
+	b.WriteString(`<ac:rich-text-body>`)
+	if len(history) == 0 {
+		b.WriteString(`<p>No triage history recorded.</p>`)
+	} else {
+		b.WriteString(`<table><tbody>`)
+		b.WriteString(`<tr><th>Date</th><th>Status</th><th>Previous</th><th>Owner</th><th>Scan</th><th>Notes</th></tr>`)
+		for _, e := range history {
+			b.WriteString(`<tr>`)
+			b.WriteString(`<td>` + escapeHTML(e.UpdatedAt) + `</td>`)
+			b.WriteString(`<td>` + escapeHTML(e.Status) + `</td>`)
+			b.WriteString(`<td>` + escapeHTML(e.PriorStatus) + `</td>`)
+			b.WriteString(`<td>` + escapeHTML(e.Owner) + `</td>`)
+			b.WriteString(`<td><code>` + escapeHTML(e.ScanLabel) + `</code></td>`)
+			b.WriteString(`<td>` + escapeHTML(e.Notes) + `</td>`)
+			b.WriteString(`</tr>`)
+		}
+		b.WriteString(`</tbody></table>`)
+	}
+	b.WriteString(`</ac:rich-text-body></ac:structured-macro>`)
+	return b.String()
 }
 
 // buildRecurrenceSection renders an info panel warning when Merge() detected that
