@@ -2707,6 +2707,27 @@ type jiraCaseOverviewRow struct {
 	FindingTitle string
 }
 
+// isValidJiraProjectKey returns true when key matches the standard Jira project
+// key format: 2–10 uppercase ASCII letters optionally followed by digits
+// (e.g. "SEC", "KAN", "PROJ2"). Rejects anything with whitespace, quotes, or
+// other characters that could alter JQL semantics.
+func isValidJiraProjectKey(key string) bool {
+	if len(key) < 2 || len(key) > 10 {
+		return false
+	}
+	for i, c := range key {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			// always valid
+		case c >= '0' && c <= '9' && i > 0:
+			// digits allowed after first char
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // prependJiraIssuesMacro injects a live Jira Issues macro at the top of the
 // Triage Board page when serverID, serverName, and projectKey are all set.
 // Server ID is the Confluence application-link UUID for the Jira instance
@@ -2722,7 +2743,12 @@ func prependJiraIssuesMacro(pageTitle, storageBody, serverID, serverName, projec
 	if sid == "" || sname == "" || pkey == "" {
 		return storageBody
 	}
-	jql := fmt.Sprintf("project = %s ORDER BY priority DESC, created DESC", pkey)
+	// Validate project key is safe (Jira keys are uppercase letters + digits).
+	// Reject anything that would alter the JQL semantics.
+	if !isValidJiraProjectKey(pkey) {
+		return storageBody
+	}
+	jql := fmt.Sprintf(`project = "%s" ORDER BY priority DESC, created DESC`, pkey)
 	macro := `<h2>Live Jira Queue</h2>` +
 		`<ac:structured-macro ac:name="jira" ac:schema-version="1">` +
 		`<ac:parameter ac:name="server">` + escapeHTML(sname) + `</ac:parameter>` +

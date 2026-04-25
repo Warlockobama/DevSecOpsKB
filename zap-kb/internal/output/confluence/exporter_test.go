@@ -2044,7 +2044,7 @@ func TestPrependJiraIssuesMacro_TriageBoardWithAllFieldsRendersMacro(t *testing.
 		`ac:structured-macro ac:name="jira"`,
 		`<ac:parameter ac:name="serverId">6ee9717b-54c7-35fc-8b8c-517e863e5ce4</ac:parameter>`,
 		`<ac:parameter ac:name="server">My Jira</ac:parameter>`,
-		`project = SEC ORDER BY priority DESC`,
+		`project = "SEC" ORDER BY priority DESC`,
 		`<h1>Triage board</h1>`, // original body preserved after macro
 	} {
 		if !strings.Contains(out, want) {
@@ -2081,6 +2081,30 @@ func TestPrependJiraIssuesMacro_MissingFieldNoOps(t *testing.T) {
 				t.Errorf("body must be unchanged when macro skipped, got:\n%s", out)
 			}
 		})
+	}
+}
+
+func TestPrependJiraIssuesMacro_InvalidProjectKeyNoOps(t *testing.T) {
+	for _, bad := range []string{"sec", "my project", `"; DROP TABLE`, "S", "TOOLONGKEY1"} {
+		out := prependJiraIssuesMacro("Triage Board", "<p>body</p>", "sid", "name", bad)
+		if strings.Contains(out, `ac:name="jira"`) {
+			t.Errorf("invalid project key %q must skip macro, got:\n%s", bad, out)
+		}
+	}
+}
+
+func TestIsValidJiraProjectKey(t *testing.T) {
+	valid := []string{"SEC", "KAN", "PROJ2", "AB"}
+	for _, k := range valid {
+		if !isValidJiraProjectKey(k) {
+			t.Errorf("expected %q to be valid", k)
+		}
+	}
+	invalid := []string{"", "S", "TOOLONGKEY1", "sec", "MY-PROJECT", "my project", `"sec"`}
+	for _, k := range invalid {
+		if isValidJiraProjectKey(k) {
+			t.Errorf("expected %q to be invalid", k)
+		}
 	}
 }
 
