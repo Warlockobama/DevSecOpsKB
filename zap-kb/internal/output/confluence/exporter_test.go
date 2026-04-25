@@ -2740,3 +2740,84 @@ func TestExportVault_PublishesQuickNavigationCompanionPages(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendAcceptanceExpiredSection_RendersExpiredRow(t *testing.T) {
+	past := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339)
+	ei := &entityIndex{
+		finds: map[string]*entities.Finding{
+			"fin-1": {
+				FindingID: "fin-1",
+				Name:      "SQL Injection",
+				Risk:      "High",
+				Analyst: &entities.Analyst{
+					Status:        "accepted",
+					AcceptedUntil: past,
+					Owner:         "alice",
+				},
+			},
+		},
+	}
+	out := appendAcceptanceExpiredSection("Triage Board", "<p>body</p>", ei)
+	if !strings.Contains(out, "Acceptance Expired") {
+		t.Errorf("expected 'Acceptance Expired' heading; got: %s", out)
+	}
+	if !strings.Contains(out, past) {
+		t.Errorf("expected expiry date %q in output; got: %s", past, out)
+	}
+	if !strings.Contains(out, "alice") {
+		t.Errorf("expected owner 'alice' in output; got: %s", out)
+	}
+}
+
+func TestAppendAcceptanceExpiredSection_SkipsNonExpiredAndNoDueDate(t *testing.T) {
+	future := time.Now().UTC().Add(48 * time.Hour).Format(time.RFC3339)
+	ei := &entityIndex{
+		finds: map[string]*entities.Finding{
+			"fin-2": {
+				FindingID: "fin-2",
+				Name:      "XSS",
+				Risk:      "Medium",
+				Analyst: &entities.Analyst{
+					Status:        "accepted",
+					AcceptedUntil: future,
+				},
+			},
+			"fin-3": {
+				FindingID: "fin-3",
+				Name:      "CSRF",
+				Risk:      "Low",
+				Analyst: &entities.Analyst{
+					Status: "accepted",
+					// no AcceptedUntil — permanently accepted
+				},
+			},
+		},
+	}
+	out := appendAcceptanceExpiredSection("Triage Board", "<p>body</p>", ei)
+	if strings.Contains(out, "Acceptance Expired") {
+		t.Errorf("expected no 'Acceptance Expired' section when no findings expired; got: %s", out)
+	}
+}
+
+func TestAppendAcceptanceExpiredSection_OnlyOnTriageBoard(t *testing.T) {
+	past := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+	ei := &entityIndex{
+		finds: map[string]*entities.Finding{
+			"fin-4": {
+				FindingID: "fin-4",
+				Name:      "Open Redirect",
+				Risk:      "Medium",
+				Analyst: &entities.Analyst{
+					Status:        "accepted",
+					AcceptedUntil: past,
+				},
+			},
+		},
+	}
+	for _, title := range []string{"KB Index", "KB Dashboard", "Issues", "Occurrences"} {
+		out := appendAcceptanceExpiredSection(title, "<p>body</p>", ei)
+		if strings.Contains(out, "Acceptance Expired") {
+			t.Errorf("page %q should not get Acceptance Expired section; got: %s", title, out)
+		}
+	}
+}
