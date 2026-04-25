@@ -38,19 +38,27 @@ type Options struct {
 
 // VaultOptions controls full-vault export to Confluence.
 type VaultOptions struct {
-	BaseURL          string
-	Username         string
-	APIToken         string
-	SpaceKey         string
-	DryRun           bool
-	Concurrency      int                    // default 3, capped at 5
-	Timeout          time.Duration          // per-request timeout; default 30s
-	RequestDelay     time.Duration          // minimum delay between API requests; default 250ms
-	JiraBaseURL      string                 // optional; turns Jira issue keys into browse links in properties/workflow views
-	JiraStatusByKey   map[string]string     // optional; raw Jira status names keyed by issue key
-	JiraAssigneeByKey map[string]string     // optional; Jira assignee display names keyed by issue key ("" = unassigned)
-	JiraStatusSynced  string                // optional; RFC3339 time when JiraStatusByKey was fetched
-	Entities         *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
+	BaseURL           string
+	Username          string
+	APIToken          string
+	SpaceKey          string
+	DryRun            bool
+	Concurrency       int               // default 3, capped at 5
+	Timeout           time.Duration     // per-request timeout; default 30s
+	RequestDelay      time.Duration     // minimum delay between API requests; default 250ms
+	JiraBaseURL       string            // optional; turns Jira issue keys into browse links in properties/workflow views
+	JiraStatusByKey   map[string]string // optional; raw Jira status names keyed by issue key
+	JiraAssigneeByKey map[string]string // optional; Jira assignee display names keyed by issue key ("" = unassigned)
+	JiraStatusSynced  string            // optional; RFC3339 time when JiraStatusByKey was fetched
+	// JiraServerID is the Confluence-side application-link identifier for the
+	// Jira instance (UUID, e.g. "6ee9717b-54c7-35fc-8b8c-517e863e5ce4"). When
+	// JiraServerID, JiraServerName, and JiraProjectKey are all set, the Triage
+	// Board page embeds a live `ac:structured-macro name="jira"` filtered to
+	// the project key.
+	JiraServerID   string
+	JiraServerName string
+	JiraProjectKey string
+	Entities       *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
 }
 
 // VaultSummary reports what the vault export did.
@@ -287,6 +295,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			continue // skip missing files
 		}
 		storageBody := mdToStorageWithTitles(content, titleMap)
+		storageBody = prependJiraIssuesMacro(tp.title, storageBody, opts.JiraServerID, opts.JiraServerName, opts.JiraProjectKey)
 		storageBody = appendJiraOverviewSection(tp.title, storageBody, &ei, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced)
 		// The Page Properties Report macro is intentionally NOT appended here —
 		// it depends on the page-properties macro which fails in Confluence Cloud
@@ -2696,6 +2705,32 @@ type jiraCaseOverviewRow struct {
 	KBStatus     string
 	Severity     string
 	FindingTitle string
+}
+
+// prependJiraIssuesMacro injects a live Jira Issues macro at the top of the
+// Triage Board page when serverID, serverName, and projectKey are all set.
+// Server ID is the Confluence application-link UUID for the Jira instance
+// (e.g. "6ee9717b-54c7-35fc-8b8c-517e863e5ce4"). The JQL filters by project
+// and orders by priority so the highest-impact tickets surface first.
+func prependJiraIssuesMacro(pageTitle, storageBody, serverID, serverName, projectKey string) string {
+	if strings.TrimSpace(pageTitle) != "Triage Board" {
+		return storageBody
+	}
+	sid := strings.TrimSpace(serverID)
+	sname := strings.TrimSpace(serverName)
+	pkey := strings.TrimSpace(projectKey)
+	if sid == "" || sname == "" || pkey == "" {
+		return storageBody
+	}
+	jql := fmt.Sprintf("project = %s ORDER BY priority DESC, created DESC", pkey)
+	macro := `<h2>Live Jira Queue</h2>` +
+		`<ac:structured-macro ac:name="jira" ac:schema-version="1">` +
+		`<ac:parameter ac:name="server">` + escapeHTML(sname) + `</ac:parameter>` +
+		`<ac:parameter ac:name="serverId">` + escapeHTML(sid) + `</ac:parameter>` +
+		`<ac:parameter ac:name="jqlQuery">` + escapeHTML(jql) + `</ac:parameter>` +
+		`<ac:parameter ac:name="columns">key,summary,type,status,assignee,priority</ac:parameter>` +
+		`</ac:structured-macro>`
+	return macro + storageBody
 }
 
 func appendJiraOverviewSection(pageTitle, storageBody string, ei *entityIndex, jiraBaseURL string, jiraStatusByKey map[string]string, jiraStatusSynced string) string {

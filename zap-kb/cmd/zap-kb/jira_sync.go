@@ -23,22 +23,25 @@ type jiraSyncContext struct {
 }
 
 type confluencePublishOptions struct {
-	BaseURL          string
-	Username         string
-	APIToken         string
-	SpaceKey         string
-	ParentPageID     string
-	TitlePrefix      string
-	DryRun           bool
-	Full             bool
-	Concurrency      int
-	ScanLabel        string
-	SiteLabel        string
-	ZapBaseURL       string
-	JiraBaseURL      string
+	BaseURL           string
+	Username          string
+	APIToken          string
+	SpaceKey          string
+	ParentPageID      string
+	TitlePrefix       string
+	DryRun            bool
+	Full              bool
+	Concurrency       int
+	ScanLabel         string
+	SiteLabel         string
+	ZapBaseURL        string
+	JiraBaseURL       string
 	JiraStatusByKey   map[string]string
 	JiraAssigneeByKey map[string]string
 	JiraStatusSynced  string
+	JiraServerID      string
+	JiraServerName    string
+	JiraProjectKey    string
 }
 
 // mergeDefinitionEpicRefs persists Epic issue keys onto each Definition so
@@ -161,17 +164,20 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer confCancel()
 		sum, err := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
-			BaseURL:          opts.BaseURL,
-			Username:         opts.Username,
-			APIToken:         opts.APIToken,
-			SpaceKey:         opts.SpaceKey,
-			DryRun:           opts.DryRun,
-			Concurrency:      opts.Concurrency,
-			JiraBaseURL:      opts.JiraBaseURL,
+			BaseURL:           opts.BaseURL,
+			Username:          opts.Username,
+			APIToken:          opts.APIToken,
+			SpaceKey:          opts.SpaceKey,
+			DryRun:            opts.DryRun,
+			Concurrency:       opts.Concurrency,
+			JiraBaseURL:       opts.JiraBaseURL,
 			JiraStatusByKey:   opts.JiraStatusByKey,
 			JiraAssigneeByKey: opts.JiraAssigneeByKey,
 			JiraStatusSynced:  opts.JiraStatusSynced,
-			Entities:         &ent,
+			JiraServerID:      opts.JiraServerID,
+			JiraServerName:    opts.JiraServerName,
+			JiraProjectKey:    opts.JiraProjectKey,
+			Entities:          &ent,
 		})
 		if err != nil {
 			return confluence.VaultSummary{}, fmt.Errorf("confluence vault export: %w", err)

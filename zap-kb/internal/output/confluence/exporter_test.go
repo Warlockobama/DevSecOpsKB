@@ -2032,6 +2032,58 @@ func TestAppendJiraOverviewSection_RendersLinkedCases(t *testing.T) {
 		}
 	}
 }
+func TestPrependJiraIssuesMacro_TriageBoardWithAllFieldsRendersMacro(t *testing.T) {
+	out := prependJiraIssuesMacro(
+		"Triage Board",
+		"<h1>Triage board</h1>",
+		"6ee9717b-54c7-35fc-8b8c-517e863e5ce4",
+		"My Jira",
+		"SEC",
+	)
+	for _, want := range []string{
+		`ac:structured-macro ac:name="jira"`,
+		`<ac:parameter ac:name="serverId">6ee9717b-54c7-35fc-8b8c-517e863e5ce4</ac:parameter>`,
+		`<ac:parameter ac:name="server">My Jira</ac:parameter>`,
+		`project = SEC ORDER BY priority DESC`,
+		`<h1>Triage board</h1>`, // original body preserved after macro
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("prependJiraIssuesMacro missing %q in output:\n%s", want, out)
+		}
+	}
+}
+
+func TestPrependJiraIssuesMacro_OnlyRendersOnTriageBoard(t *testing.T) {
+	for _, title := range []string{"KB Index", "KB Dashboard", "Security Posture", ""} {
+		out := prependJiraIssuesMacro(title, "<p>body</p>", "sid", "name", "SEC")
+		if strings.Contains(out, `ac:name="jira"`) {
+			t.Errorf("page %q must not embed Jira macro, got:\n%s", title, out)
+		}
+	}
+}
+
+func TestPrependJiraIssuesMacro_MissingFieldNoOps(t *testing.T) {
+	cases := []struct {
+		name, sid, sname, pkey string
+	}{
+		{"missing serverID", "", "name", "SEC"},
+		{"missing serverName", "sid", "", "SEC"},
+		{"missing projectKey", "sid", "name", ""},
+		{"all whitespace", "  ", "  ", "  "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := prependJiraIssuesMacro("Triage Board", "<p>body</p>", tc.sid, tc.sname, tc.pkey)
+			if strings.Contains(out, `ac:name="jira"`) {
+				t.Errorf("missing field must skip macro, got:\n%s", out)
+			}
+			if out != "<p>body</p>" {
+				t.Errorf("body must be unchanged when macro skipped, got:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 	ef := &entities.EntitiesFile{
 		Definitions: []entities.Definition{{DefinitionID: "def-10038", Alert: "CSP Header Not Set"}},

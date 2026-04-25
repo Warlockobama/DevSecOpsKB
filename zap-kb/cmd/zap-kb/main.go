@@ -79,6 +79,8 @@ func main() {
 		jiraUser           string
 		jiraToken          string
 		jiraProject        string
+		jiraServerID       string
+		jiraServerName     string
 		jiraIssueType      string
 		jiraComponent      string
 		jiraLabels         string
@@ -147,6 +149,8 @@ func main() {
 	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER).")
 	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN).")
 	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (e.g. SEC).")
+	flag.StringVar(&jiraServerID, "jira-server-id", "", "Confluence application-link UUID for the Jira instance (e.g. 6ee9717b-54c7-35fc-8b8c-517e863e5ce4). Enables a live Jira Issues macro on the Triage Board page when combined with -jira-server-name and -jira-project.")
+	flag.StringVar(&jiraServerName, "jira-server-name", "", "Display name of the linked Jira application (as configured on the Confluence side). Required alongside -jira-server-id and -jira-project to render the Triage Board live macro.")
 	flag.StringVar(&jiraIssueType, "jira-issue-type", "Bug", "Jira issue type (default: Bug).")
 	flag.StringVar(&jiraComponent, "jira-component", "", "Optional Jira component name to assign.")
 	flag.StringVar(&jiraLabels, "jira-labels", "", "Comma-separated extra labels to add to each issue.")
@@ -634,6 +638,9 @@ func main() {
 			JiraBaseURL:      jiraURL,
 			JiraStatusByKey:  nil,
 			JiraStatusSynced: "",
+			JiraServerID:     jiraServerID,
+			JiraServerName:   jiraServerName,
+			JiraProjectKey:   jiraProject,
 		}); err != nil {
 			log.Fatalf("%v", err)
 		}
@@ -652,13 +659,13 @@ func main() {
 		jiraCtx, jiraCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer jiraCancel()
 		sum, err := jira.Export(jiraCtx, ent, jira.Options{
-			BaseURL:     jiraURL,
-			Username:    jiraUser,
-			APIToken:    jiraToken,
-			ProjectKey:  jiraProject,
-			IssueType:   jiraIssueType,
-			Component:   jiraComponent,
-			ExtraLabels: extraLabels,
+			BaseURL:       jiraURL,
+			Username:      jiraUser,
+			APIToken:      jiraToken,
+			ProjectKey:    jiraProject,
+			IssueType:     jiraIssueType,
+			Component:     jiraComponent,
+			ExtraLabels:   extraLabels,
 			MinRisk:       jiraMinRisk,
 			OptInTag:      jiraOptInTag,
 			DryRun:        jiraDryRun,
@@ -737,22 +744,25 @@ func main() {
 
 		if strings.TrimSpace(confURL) != "" {
 			confSum, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
-				BaseURL:          confURL,
-				Username:         confUser,
-				APIToken:         confToken,
-				SpaceKey:         confSpace,
-				ParentPageID:     confParent,
-				TitlePrefix:      confTitlePrefix,
-				DryRun:           confDryRun,
-				Full:             confFull,
-				Concurrency:      confConcurrency,
-				ScanLabel:        scanLabel,
-				SiteLabel:        siteLabel,
-				ZapBaseURL:       zapBase,
-				JiraBaseURL:      jiraURL,
+				BaseURL:           confURL,
+				Username:          confUser,
+				APIToken:          confToken,
+				SpaceKey:          confSpace,
+				ParentPageID:      confParent,
+				TitlePrefix:       confTitlePrefix,
+				DryRun:            confDryRun,
+				Full:              confFull,
+				Concurrency:       confConcurrency,
+				ScanLabel:         scanLabel,
+				SiteLabel:         siteLabel,
+				ZapBaseURL:        zapBase,
+				JiraBaseURL:       jiraURL,
 				JiraStatusByKey:   jiraStatusByKey,
 				JiraAssigneeByKey: jiraAssigneeByKey,
 				JiraStatusSynced:  jiraStatusSynced,
+				JiraServerID:      jiraServerID,
+				JiraServerName:    jiraServerName,
+				JiraProjectKey:    jiraProject,
 			})
 			if err != nil {
 				log.Fatalf("%v", err)
