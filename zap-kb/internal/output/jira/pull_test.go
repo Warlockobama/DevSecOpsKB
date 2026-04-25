@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
@@ -25,29 +26,40 @@ func TestMapJiraStatus_AllMappings(t *testing.T) {
 		input string
 		want  string
 	}{
+		// open
 		{"TO DO", "open"},
 		{"to do", "open"},
 		{"Open", "open"},
 		{"Backlog", "open"},
 		{"New", "open"},
+		// triaged
 		{"In Progress", "triaged"},
 		{"IN PROGRESS", "triaged"},
 		{"In Review", "triaged"},
 		{"Review", "triaged"},
 		{"Under Review", "triaged"},
+		{"triaged", "triaged"},
+		// fixed
 		{"Done", "fixed"},
 		{"DONE", "fixed"},
 		{"Closed", "fixed"},
 		{"Fixed", "fixed"},
 		{"Resolved", "fixed"},
 		{"Completed", "fixed"},
+		// accepted
 		{"Won't Fix", "accepted"},
+		{"Wont Fix", "accepted"},
+		{"wont fix", "accepted"},
 		{"Risk Accepted", "accepted"},
 		{"Accepted", "accepted"},
+		{"Mitigated", "accepted"},
+		{"mitigated", "accepted"},
+		// fp
 		{"False Positive", "fp"},
 		{"FP", "fp"},
 		{"Not A Bug", "fp"},
 		{"Not Applicable", "fp"},
+		// unknown
 		{"Unknown Status", ""},
 		{"", ""},
 	}
@@ -82,17 +94,29 @@ func TestExtractTicketKey(t *testing.T) {
 func TestPullStatus_StatusMappingAllFour(t *testing.T) {
 	cases := []struct {
 		jiraStatus  string
+		ticketKey   string
 		wantAnalyst string
 	}{
-		{"TO DO", "open"},
-		{"IN PROGRESS", "triaged"},
-		{"IN REVIEW", "triaged"},
-		{"DONE", "fixed"},
+		{"TO DO", "KAN-1", "open"},
+		{"IN PROGRESS", "KAN-2", "triaged"},
+		{"IN REVIEW", "KAN-3", "triaged"},
+		{"DONE", "KAN-4", "fixed"},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.jiraStatus, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected method: got %q; want GET", r.Method)
+					http.Error(w, "unexpected method", http.StatusBadRequest)
+					return
+				}
+				if !strings.HasSuffix(r.URL.Path, "/"+tc.ticketKey) {
+					t.Errorf("unexpected path: %q", r.URL.Path)
+				}
+				if got := r.URL.Query().Get("fields"); got != "status,assignee" {
+					t.Errorf("unexpected fields query: got %q; want status,assignee", got)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(issueStatusResponse(tc.jiraStatus))
 			}))
@@ -103,7 +127,7 @@ func TestPullStatus_StatusMappingAllFour(t *testing.T) {
 				Name:      "Test Finding",
 				Analyst: &entities.Analyst{
 					Status:     "open",
-					TicketRefs: []string{"KAN-1"},
+					TicketRefs: []string{tc.ticketKey},
 				},
 			})
 			res, err := PullStatus(context.Background(), ef, PullOptions{
@@ -126,9 +150,9 @@ func TestPullStatus_StatusMappingAllFour(t *testing.T) {
 }
 
 func TestPullStatus_SkipsFindingWithNoTicketRef(t *testing.T) {
-	var called bool
+	var called atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -146,22 +170,21 @@ func TestPullStatus_SkipsFindingWithNoTicketRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if called {
+	if called.Load() != 0 {
 		t.Error("expected no HTTP call for findings without TicketRefs")
 	}
 	if res.Result.Updated != 0 {
 		t.Errorf("expected 0 updates; got %d", res.Result.Updated)
 	}
-	// Status must be unchanged
 	if got := res.Updated.Findings[0].Analyst.Status; got != "open" {
 		t.Errorf("expected status unchanged 'open'; got %q", got)
 	}
 }
 
 func TestPullStatus_NilAnalystSkipped(t *testing.T) {
-	var called bool
+	var called atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		called.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -179,13 +202,16 @@ func TestPullStatus_NilAnalystSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if called {
+	if called.Load() != 0 {
 		t.Error("expected no HTTP call for finding with nil analyst")
 	}
 }
 
 func TestPullStatus_UnchangedWhenStatusSame(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %q", r.Method)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(issueStatusResponse("TO DO"))
 	}))
@@ -228,6 +254,15 @@ func TestPullStatus_MissingFieldsError(t *testing.T) {
 
 func TestPullStatus_RawStatusesPopulated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %q", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/SEC-5") {
+			t.Errorf("unexpected path: %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("fields"); got != "status,assignee" {
+			t.Errorf("unexpected fields query: got %q; want status,assignee", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(issueStatusResponse("In Progress"))
 	}))
