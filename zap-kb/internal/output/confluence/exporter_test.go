@@ -2821,3 +2821,73 @@ func TestAppendAcceptanceExpiredSection_OnlyOnTriageBoard(t *testing.T) {
 		}
 	}
 }
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	r.Close()
+	return string(buf[:n])
+}
+
+func TestWarnPermanentAcceptance_EmitsOneWarningPerPermanentFinding(t *testing.T) {
+	ei := &entityIndex{
+		finds: map[string]*entities.Finding{
+			"fin-perm-1": {
+				FindingID: "fin-perm-1",
+				Analyst:   &entities.Analyst{Status: "accepted"}, // no AcceptedUntil
+			},
+			"fin-perm-2": {
+				FindingID: "fin-perm-2",
+				Analyst:   &entities.Analyst{Status: "accepted"}, // no AcceptedUntil
+			},
+			"fin-bounded": {
+				FindingID: "fin-bounded",
+				Analyst: &entities.Analyst{
+					Status:        "accepted",
+					AcceptedUntil: time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339),
+				},
+			},
+			"fin-open": {
+				FindingID: "fin-open",
+				Analyst:   &entities.Analyst{Status: "open"},
+			},
+		},
+	}
+	out := captureStdout(t, func() { warnPermanentAcceptance(ei) })
+	if strings.Count(out, "permanently accepted") != 2 {
+		t.Errorf("expected exactly 2 warnings; got:\n%s", out)
+	}
+	if !strings.Contains(out, `"fin-perm-1"`) || !strings.Contains(out, `"fin-perm-2"`) {
+		t.Errorf("expected warnings for fin-perm-1 and fin-perm-2; got:\n%s", out)
+	}
+	if strings.Contains(out, "fin-bounded") || strings.Contains(out, "fin-open") {
+		t.Errorf("unexpected warning for bounded or non-accepted finding; got:\n%s", out)
+	}
+}
+
+func TestWarnPermanentAcceptance_DeterministicOrder(t *testing.T) {
+	ei := &entityIndex{
+		finds: map[string]*entities.Finding{
+			"fin-z": {FindingID: "fin-z", Analyst: &entities.Analyst{Status: "accepted"}},
+			"fin-a": {FindingID: "fin-a", Analyst: &entities.Analyst{Status: "accepted"}},
+			"fin-m": {FindingID: "fin-m", Analyst: &entities.Analyst{Status: "accepted"}},
+		},
+	}
+	out := captureStdout(t, func() { warnPermanentAcceptance(ei) })
+	idxA := strings.Index(out, "fin-a")
+	idxM := strings.Index(out, "fin-m")
+	idxZ := strings.Index(out, "fin-z")
+	if !(idxA < idxM && idxM < idxZ) {
+		t.Errorf("expected warnings in sorted order fin-a, fin-m, fin-z; got:\n%s", out)
+	}
+}

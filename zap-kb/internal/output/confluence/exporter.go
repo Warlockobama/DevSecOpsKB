@@ -2708,6 +2708,7 @@ func warnPermanentAcceptance(ei *entityIndex) {
 	if ei == nil {
 		return
 	}
+	var ids []string
 	for _, f := range ei.finds {
 		if f == nil || f.Analyst == nil {
 			continue
@@ -2718,7 +2719,11 @@ func warnPermanentAcceptance(ei *entityIndex) {
 		if strings.TrimSpace(f.Analyst.AcceptedUntil) != "" {
 			continue
 		}
-		fmt.Printf("[confluence] warning: finding %q is permanently accepted (no acceptedUntil set)\n", f.FindingID)
+		ids = append(ids, f.FindingID)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Printf("[confluence] warning: finding %q is permanently accepted (no acceptedUntil set)\n", id)
 	}
 }
 
@@ -2759,7 +2764,8 @@ func appendAcceptanceExpiredSection(pageTitle, storageBody string, ei *entityInd
 type acceptanceExpiredRow struct {
 	FindingTitle string
 	Severity     string
-	ExpiredAt    string
+	ExpiredAt    string    // original RFC3339 string for display
+	expiredAtT   time.Time // parsed time for deterministic sorting
 	Owner        string
 }
 
@@ -2791,6 +2797,7 @@ func collectExpiredAcceptanceRows(ei *entityIndex) []acceptanceExpiredRow {
 			FindingTitle: findingPageTitle(f, ei),
 			Severity:     strings.TrimSpace(f.Risk),
 			ExpiredAt:    until,
+			expiredAtT:   t.UTC(),
 			Owner:        strings.TrimSpace(f.Analyst.Owner),
 		})
 	}
@@ -2798,7 +2805,7 @@ func collectExpiredAcceptanceRows(ei *entityIndex) []acceptanceExpiredRow {
 		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
 			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
 		}
-		return rows[i].ExpiredAt < rows[j].ExpiredAt
+		return rows[i].expiredAtT.Before(rows[j].expiredAtT)
 	})
 	return rows
 }
