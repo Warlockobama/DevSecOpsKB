@@ -318,13 +318,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // styles for View. Defined once at package scope so we don't re-allocate per
 // render. Lipgloss tolerates terminals that don't support color.
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
-	stepStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
-	rowKey      = lipgloss.NewStyle().Width(36).Foreground(lipgloss.Color("244"))
-	rowVal      = lipgloss.NewStyle().Bold(true)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	helpStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Italic(true)
+	stepStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	rowKey     = lipgloss.NewStyle().Width(36).Foreground(lipgloss.Color("244"))
+	rowVal     = lipgloss.NewStyle().Bold(true)
 )
 
 // View is the standard Bubble Tea render. We keep the layout deliberately

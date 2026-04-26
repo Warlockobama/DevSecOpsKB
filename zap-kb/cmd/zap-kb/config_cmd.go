@@ -72,8 +72,8 @@ func runConfigShow(args []string) {
 		src = "(built-in defaults)"
 	}
 	out := struct {
-		Source string               `json:"source"`
-		Policy config.TriagePolicy  `json:"policy"`
+		Source string              `json:"source"`
+		Policy config.TriagePolicy `json:"policy"`
 	}{src, policy}
 	enc, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {

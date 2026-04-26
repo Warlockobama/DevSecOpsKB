@@ -44,7 +44,7 @@ type HTTPResponse struct {
 }
 
 type Analyst struct {
-	Status     string   `json:"status,omitempty"`    // open|triaged|fp|accepted|fixed
+	Status     string   `json:"status,omitempty"` // open|triaged|fp|accepted|fixed
 	Owner      string   `json:"owner,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
 	Notes      string   `json:"notes,omitempty"`
@@ -208,7 +208,7 @@ type Finding struct {
 	PluginID     string          `json:"pluginId"`
 	URL          string          `json:"url"`
 	Method       string          `json:"method"`
-	Name         string          `json:"name,omitempty"`        // human-readable name
+	Name         string          `json:"name,omitempty"` // human-readable name
 	Risk         string          `json:"risk,omitempty"`
 	RiskCode     string          `json:"riskcode,omitempty"`
 	Confidence   string          `json:"confidence,omitempty"`
