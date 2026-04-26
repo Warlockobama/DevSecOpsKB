@@ -38,19 +38,19 @@ type Options struct {
 
 // VaultOptions controls full-vault export to Confluence.
 type VaultOptions struct {
-	BaseURL          string
-	Username         string
-	APIToken         string
-	SpaceKey         string
-	DryRun           bool
-	Concurrency      int                    // default 3, capped at 5
-	Timeout          time.Duration          // per-request timeout; default 30s
-	RequestDelay     time.Duration          // minimum delay between API requests; default 250ms
-	JiraBaseURL      string                 // optional; turns Jira issue keys into browse links in properties/workflow views
-	JiraStatusByKey   map[string]string     // optional; raw Jira status names keyed by issue key
-	JiraAssigneeByKey map[string]string     // optional; Jira assignee display names keyed by issue key ("" = unassigned)
-	JiraStatusSynced  string                // optional; RFC3339 time when JiraStatusByKey was fetched
-	Entities         *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
+	BaseURL           string
+	Username          string
+	APIToken          string
+	SpaceKey          string
+	DryRun            bool
+	Concurrency       int                    // default 3, capped at 5
+	Timeout           time.Duration          // per-request timeout; default 30s
+	RequestDelay      time.Duration          // minimum delay between API requests; default 250ms
+	JiraBaseURL       string                 // optional; turns Jira issue keys into browse links in properties/workflow views
+	JiraStatusByKey   map[string]string      // optional; raw Jira status names keyed by issue key
+	JiraAssigneeByKey map[string]string      // optional; Jira assignee display names keyed by issue key ("" = unassigned)
+	JiraStatusSynced  string                 // optional; RFC3339 time when JiraStatusByKey was fetched
+	Entities          *entities.EntitiesFile // optional; enables structured metadata (labels, properties, risk lozenges)
 }
 
 // VaultSummary reports what the vault export did.
