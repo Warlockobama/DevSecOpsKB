@@ -48,7 +48,7 @@ func extractOccurrenceNote(body string) string {
 func buildOccurrenceNoteSection(existingNote string) string {
 	body := strings.TrimSpace(existingNote)
 	if body == "" {
-		body = `<p><em>Add scan-specific observations, repro steps, or evidence here. This block is preserved across re-publishes and is independent of the finding-level verdict above.</em></p>`
+		body = `<p><em>Add scan-specific observations, repro steps, or evidence here. This block is preserved across re-publishes and is separate from any finding-level verdict.</em></p>`
 	}
 	var b strings.Builder
 	b.WriteString(`<h2>Scan Observation</h2>`)

@@ -554,14 +554,22 @@ func captureStderr(t *testing.T, fn func()) string {
 	}
 	orig := os.Stderr
 	os.Stderr = w
+	defer func() { os.Stderr = orig }()
 	done := make(chan string, 1)
 	go func() {
+		defer r.Close()
 		buf, _ := io.ReadAll(r)
 		done <- string(buf)
 	}()
+	defer func() {
+		if w != nil {
+			_ = w.Close()
+			w = nil
+		}
+	}()
 	fn()
-	w.Close()
-	os.Stderr = orig
+	_ = w.Close()
+	w = nil
 	return <-done
 }
 

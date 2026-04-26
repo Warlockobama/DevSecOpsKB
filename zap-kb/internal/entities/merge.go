@@ -201,17 +201,17 @@ func warnOccurrenceStatusDivergence(ef *EntitiesFile) {
 		if o.Analyst == nil {
 			continue
 		}
-		os := strings.TrimSpace(CanonicalAnalystStatus(o.Analyst.Status))
-		if os == "" {
+		occStatus := strings.TrimSpace(CanonicalAnalystStatus(o.Analyst.Status))
+		if occStatus == "" {
 			continue
 		}
 		fs := findStatus[o.FindingID]
-		if fs == "" || fs == os {
+		if fs == "" || fs == occStatus {
 			continue
 		}
 		divergences = append(divergences, divergence{
 			occID:         o.OccurrenceID,
-			occStatus:     os,
+			occStatus:     occStatus,
 			findingStatus: fs,
 			findingID:     o.FindingID,
 		})
