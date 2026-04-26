@@ -467,8 +467,8 @@ func TestExtractOccurrenceNote_Absent(t *testing.T) {
 
 func TestExtractOccurrenceNote_RoundTrip(t *testing.T) {
 	section := buildOccurrenceNoteSection("<p>my analyst note</p>")
-	if !strings.Contains(section, "<h2>Analyst Note</h2>") {
-		t.Errorf("expected heading in built section, got: %s", section)
+	if !strings.Contains(section, "<h2>Scan Observation</h2>") {
+		t.Errorf("expected 'Scan Observation' heading in built section, got: %s", section)
 	}
 	if !strings.Contains(section, occNoteStart) || !strings.Contains(section, occNoteEnd) {
 		t.Errorf("expected markers in built section, got: %s", section)
@@ -483,8 +483,50 @@ func TestExtractOccurrenceNote_RoundTrip(t *testing.T) {
 
 func TestBuildOccurrenceNoteSection_SeedsPlaceholderWhenEmpty(t *testing.T) {
 	section := buildOccurrenceNoteSection("")
-	if !strings.Contains(section, "Add analyst notes") {
-		t.Errorf("expected placeholder seed, got: %s", section)
+	if !strings.Contains(section, "scan-specific observations") {
+		t.Errorf("expected scan-specific placeholder seed, got: %s", section)
+	}
+}
+
+func TestBuildFindingVerdictSection_RendersAllFields(t *testing.T) {
+	f := &entities.Finding{
+		FindingID: "fin-1",
+		Analyst: &entities.Analyst{
+			Status:    "accepted",
+			Owner:     "alice",
+			Notes:     "low risk in this env",
+			Rationale: "compensating control: WAF",
+		},
+	}
+	section := buildFindingVerdictSection(f)
+	for _, want := range []string{
+		"<h2>Finding Verdict</h2>",
+		"alice",
+		"low risk in this env",
+		"compensating control: WAF",
+		`ac:name="status"`, // status macro
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("expected %q in verdict section; got:\n%s", want, section)
+		}
+	}
+}
+
+func TestBuildFindingVerdictSection_EmptyWhenNoAnalystData(t *testing.T) {
+	cases := []struct {
+		name string
+		f    *entities.Finding
+	}{
+		{"nil finding", nil},
+		{"nil analyst", &entities.Finding{FindingID: "x"}},
+		{"empty analyst", &entities.Finding{FindingID: "x", Analyst: &entities.Analyst{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildFindingVerdictSection(tc.f); got != "" {
+				t.Errorf("expected empty section; got: %s", got)
+			}
+		})
 	}
 }
 

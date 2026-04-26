@@ -1,6 +1,11 @@
 package entities
 
-import "testing"
+import (
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
 
 func analystPtr(status string) *Analyst {
 	return &Analyst{Status: status}
@@ -538,5 +543,91 @@ func TestMerge_FindingAnalyst_Preserved(t *testing.T) {
 		if !refs["KAN-1"] || !refs["KAN-2"] {
 			t.Errorf("TicketRefs: want [KAN-1 KAN-2], got %v", a.TicketRefs)
 		}
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stderr
+	os.Stderr = w
+	done := make(chan string, 1)
+	go func() {
+		buf, _ := io.ReadAll(r)
+		done <- string(buf)
+	}()
+	fn()
+	w.Close()
+	os.Stderr = orig
+	return <-done
+}
+
+// TestWarnOccurrenceStatusDivergence_EmitsLineWhenDivergent verifies the
+// merge-time warning fires when an occurrence status differs from its parent
+// finding status (#60 AC: occurrence status is writable but is not propagated
+// up; divergence is logged, not blocked).
+func TestWarnOccurrenceStatusDivergence_EmitsLineWhenDivergent(t *testing.T) {
+	ef := EntitiesFile{
+		Findings: []Finding{{
+			FindingID: "fin-1",
+			Analyst:   &Analyst{Status: "accepted"},
+		}},
+		Occurrences: []Occurrence{{
+			OccurrenceID: "occ-A",
+			FindingID:    "fin-1",
+			Analyst:      &Analyst{Status: "open"},
+		}},
+	}
+	out := captureStderr(t, func() { warnOccurrenceStatusDivergence(&ef) })
+	if !strings.Contains(out, "occ-A") {
+		t.Errorf("expected occurrence ID in warning; got: %s", out)
+	}
+	if !strings.Contains(out, "fin-1") {
+		t.Errorf("expected finding ID in warning; got: %s", out)
+	}
+	if !strings.Contains(out, `"open"`) || !strings.Contains(out, `"accepted"`) {
+		t.Errorf("expected both statuses in warning; got: %s", out)
+	}
+}
+
+// TestWarnOccurrenceStatusDivergence_SilentWhenAligned verifies no warning
+// fires when occurrence and finding statuses match, or when one side is empty.
+func TestWarnOccurrenceStatusDivergence_SilentWhenAligned(t *testing.T) {
+	cases := []struct {
+		name string
+		ef   EntitiesFile
+	}{
+		{
+			"matching statuses",
+			EntitiesFile{
+				Findings:    []Finding{{FindingID: "f1", Analyst: &Analyst{Status: "open"}}},
+				Occurrences: []Occurrence{{OccurrenceID: "o1", FindingID: "f1", Analyst: &Analyst{Status: "open"}}},
+			},
+		},
+		{
+			"empty occurrence status",
+			EntitiesFile{
+				Findings:    []Finding{{FindingID: "f1", Analyst: &Analyst{Status: "open"}}},
+				Occurrences: []Occurrence{{OccurrenceID: "o1", FindingID: "f1", Analyst: &Analyst{}}},
+			},
+		},
+		{
+			"empty finding status",
+			EntitiesFile{
+				Findings:    []Finding{{FindingID: "f1"}},
+				Occurrences: []Occurrence{{OccurrenceID: "o1", FindingID: "f1", Analyst: &Analyst{Status: "open"}}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := captureStderr(t, func() { warnOccurrenceStatusDivergence(&tc.ef) })
+			if strings.TrimSpace(out) != "" {
+				t.Errorf("expected silent; got: %s", out)
+			}
+		})
 	}
 }

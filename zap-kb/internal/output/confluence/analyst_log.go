@@ -41,16 +41,56 @@ func extractOccurrenceNote(body string) string {
 // buildOccurrenceNoteSection wraps the preserved analyst note in markers with
 // a heading. On first publish (existingNote == "") a placeholder prompt is
 // seeded so analysts know the block is editable.
+//
+// The heading "Scan Observation" is intentional: this block is occurrence-
+// scoped (per-scan repro/evidence), distinct from the finding-level verdict
+// rendered separately in buildFindingVerdictSection.
 func buildOccurrenceNoteSection(existingNote string) string {
 	body := strings.TrimSpace(existingNote)
 	if body == "" {
-		body = `<p><em>Add analyst notes, repro steps, or context here. This block is preserved across re-publishes.</em></p>`
+		body = `<p><em>Add scan-specific observations, repro steps, or evidence here. This block is preserved across re-publishes and is independent of the finding-level verdict above.</em></p>`
 	}
 	var b strings.Builder
-	b.WriteString(`<h2>Analyst Note</h2>`)
+	b.WriteString(`<h2>Scan Observation</h2>`)
 	b.WriteString(occNoteStart)
 	b.WriteString(body)
 	b.WriteString(occNoteEnd)
+	return b.String()
+}
+
+// buildFindingVerdictSection renders a read-only block on occurrence pages
+// showing the parent finding's analyst verdict (status, owner, notes,
+// rationale). The verdict is finding-level — analysts who need to amend it
+// edit the finding page, not the occurrence page. Returns "" when the parent
+// finding has no analyst block.
+func buildFindingVerdictSection(f *entities.Finding) string {
+	if f == nil || f.Analyst == nil {
+		return ""
+	}
+	status := strings.TrimSpace(entities.CanonicalAnalystStatus(f.Analyst.Status))
+	owner := strings.TrimSpace(f.Analyst.Owner)
+	notes := strings.TrimSpace(f.Analyst.Notes)
+	rationale := strings.TrimSpace(f.Analyst.Rationale)
+	if status == "" && owner == "" && notes == "" && rationale == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Finding Verdict</h2>`)
+	b.WriteString(`<p><em>Finding-level triage decision (read-only here — edit on the finding page).</em></p>`)
+	b.WriteString(`<table><tbody>`)
+	writeRow := func(key, val string) {
+		if val == "" {
+			return
+		}
+		b.WriteString(`<tr><th>` + escapeHTML(key) + `</th><td>` + val + `</td></tr>`)
+	}
+	if status != "" {
+		writeRow("Status", triageStatusMacro(status))
+	}
+	writeRow("Owner", escapeHTML(owner))
+	writeRow("Verdict notes", escapeHTML(notes))
+	writeRow("Rationale", escapeHTML(rationale))
+	b.WriteString(`</tbody></table>`)
 	return b.String()
 }
 
