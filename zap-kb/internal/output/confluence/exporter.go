@@ -2362,8 +2362,8 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 		}
 		if len(f.Analyst.TicketRefs) > 0 {
 			props = append(props, [2]string{"Analyst Cases", ticketRefsPropertyValue(f.Analyst.TicketRefs, jiraBaseURL)})
-			if raw := primaryJiraStatus(f.Analyst.TicketRefs, jiraStatusByKey); raw != "" {
-				props = append(props, [2]string{"Jira Status", jiraStatusMacro(raw)})
+			if strings.TrimSpace(jiraStatusSynced) != "" {
+				props = append(props, [2]string{"Jira Sync Source", escapeHTML(jiraWorkflowSource(jiraStatusSynced))})
 			}
 		}
 		if len(f.Analyst.Tags) > 0 {
@@ -2674,11 +2674,6 @@ func jiraWorkflowSection(refs []string, jiraBaseURL string, jiraStatusByKey map[
 		}
 		b.WriteString(`<p>`)
 		b.WriteString(jiraSmartLink(browseURL, label, "block"))
-		b.WriteString(`</p>`)
-	}
-	if raw := primaryJiraStatus(refs, jiraStatusByKey); raw != "" {
-		b.WriteString(`<p>Last synced Jira status: `)
-		b.WriteString(jiraStatusMacro(raw))
 		b.WriteString(`</p>`)
 	}
 	if strings.TrimSpace(jiraStatusSynced) != "" {
@@ -3158,10 +3153,9 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	}
 	if refs := trimUniqueStrings(ticketRefs); len(refs) > 0 {
 		infoProps = append(infoProps, [2]string{"Analyst Cases", ticketRefsPropertyValue(refs, jiraBaseURL)})
-		if raw := primaryJiraStatus(refs, jiraStatusByKey); raw != "" {
-			infoProps = append(infoProps, [2]string{"Jira Status", jiraStatusMacro(raw)})
+		if strings.TrimSpace(jiraStatusSynced) != "" {
+			infoProps = append(infoProps, [2]string{"Jira Sync Source", escapeHTML(jiraWorkflowSource(jiraStatusSynced))})
 		}
-		infoProps = append(infoProps, [2]string{"Workflow Source", escapeHTML(jiraWorkflowSource(jiraStatusSynced))})
 	}
 
 	var infoTable strings.Builder

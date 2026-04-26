@@ -2062,11 +2062,19 @@ func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 	ei := buildEntityIndex(ef)
 	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "2026-04-08T21:00:00Z", "", "")
 	// Status row is intentionally absent — Jira owns workflow state.
-	// Workflow Source row is intentionally absent — removed as noise.
-	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Status</th><td><ac:structured-macro ac:name=\"status\"", "In Review</ac:parameter>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
+	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Sync Source</th>", "synced 2026-04-08T21:00:00Z", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prependFindingProperties missing %q:\n%s", want, out)
 		}
+	}
+	for _, unwanted := range []string{"<th>Jira Status</th>", "Last synced Jira status:"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("prependFindingProperties unexpectedly kept %q:\n%s", unwanted, out)
+		}
+	}
+	outNoSync := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "", "", "")
+	if strings.Contains(outNoSync, "<th>Jira Sync Source</th>") {
+		t.Errorf("prependFindingProperties showed Jira Sync Source without a sync timestamp:\n%s", outNoSync)
 	}
 }
 func TestDefProperties_OpenFindingsAndHumanDetection(t *testing.T) {
