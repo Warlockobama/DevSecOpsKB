@@ -350,6 +350,21 @@ func TestExport_OptInTagAllowsLowSeverityFinding(t *testing.T) {
 	}
 }
 
+// decodeIssuePayloadFields unmarshals a captured create-issue request body
+// and returns the "fields" sub-object as a generic map. Test helper for
+// asserting on individual field presence/values without relying on JSON
+// substring matching.
+func decodeIssuePayloadFields(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var body struct {
+		Fields map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal payload: %v\nraw=%s", err, raw)
+	}
+	return body.Fields
+}
+
 // TestExport_AssigneeFromUsernameMap verifies #61 AC3: when a finding's
 // analyst.owner has a mapping in opts.UsernameMap, the create-issue payload
 // includes assignee.accountId. When no mapping exists, the payload omits
@@ -381,8 +396,13 @@ func TestExport_AssigneeFromUsernameMap(t *testing.T) {
 	if _, err := Export(context.Background(), ef, opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(string(capturedPayload), `"assignee":{"accountId":"5e3fabc"}`) {
-		t.Errorf("expected assignee accountId in payload; got: %s", capturedPayload)
+	fields := decodeIssuePayloadFields(t, capturedPayload)
+	assignee, ok := fields["assignee"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fields.assignee to be an object; got: %#v", fields["assignee"])
+	}
+	if got := assignee["accountId"]; got != "5e3fabc" {
+		t.Errorf("expected assignee.accountId=%q; got %#v", "5e3fabc", got)
 	}
 }
 
@@ -410,7 +430,8 @@ func TestExport_OwnerWithoutMappingOmitsAssignee(t *testing.T) {
 	if _, err := Export(context.Background(), ef, opts); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(string(capturedPayload), `"assignee"`) {
-		t.Errorf("expected NO assignee in payload (no mapping for 'carol'); got: %s", capturedPayload)
+	fields := decodeIssuePayloadFields(t, capturedPayload)
+	if _, present := fields["assignee"]; present {
+		t.Errorf("expected NO assignee in payload (no mapping for 'carol'); got: %#v", fields["assignee"])
 	}
 }

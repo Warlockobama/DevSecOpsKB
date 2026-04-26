@@ -164,6 +164,32 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 		// Capture assignee even when the status is unmapped so live Owner
 		// display still works. Empty string means the Jira issue is unassigned.
 		rawAssignees[r.ref.key] = strings.TrimSpace(r.assignee)
+
+		// Owner write-back (#61): non-destructive — fill analyst.Owner when
+		// the KB side is empty and Jira reports an assignee. This MUST run
+		// before the r.status == "" early-continue so the write-back fires
+		// even for tickets with custom/unmapped Jira workflow states.
+		if assignee := strings.TrimSpace(r.assignee); assignee != "" {
+			switch r.ref.kind {
+			case "finding":
+				f := &ef.Findings[r.ref.idx]
+				if f.Analyst == nil {
+					f.Analyst = &entities.Analyst{}
+				}
+				if strings.TrimSpace(f.Analyst.Owner) == "" {
+					f.Analyst.Owner = assignee
+				}
+			case "occurrence":
+				o := &ef.Occurrences[r.ref.idx]
+				if o.Analyst == nil {
+					o.Analyst = &entities.Analyst{}
+				}
+				if strings.TrimSpace(o.Analyst.Owner) == "" {
+					o.Analyst.Owner = assignee
+				}
+			}
+		}
+
 		if r.status == "" {
 			res.NotFound++
 			continue
@@ -181,12 +207,6 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 				f.Analyst.Status = r.status
 				res.Updated++
 			}
-			// Owner write-back (#61): non-destructive — only fill when KB
-			// owner is empty so analyst overrides on the KB side are not
-			// clobbered by Jira assignee changes.
-			if strings.TrimSpace(f.Analyst.Owner) == "" && strings.TrimSpace(r.assignee) != "" {
-				f.Analyst.Owner = strings.TrimSpace(r.assignee)
-			}
 		case "occurrence":
 			o := &ef.Occurrences[r.ref.idx]
 			if o.Analyst == nil {
@@ -197,9 +217,6 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			} else {
 				o.Analyst.Status = r.status
 				res.Updated++
-			}
-			if strings.TrimSpace(o.Analyst.Owner) == "" && strings.TrimSpace(r.assignee) != "" {
-				o.Analyst.Owner = strings.TrimSpace(r.assignee)
 			}
 		}
 	}

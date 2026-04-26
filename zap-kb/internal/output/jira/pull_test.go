@@ -287,6 +287,42 @@ func TestPullStatus_OwnerWriteBackFillsEmptyOwner(t *testing.T) {
 	}
 }
 
+func TestPullStatus_OwnerWriteBackFillsEmptyOwnerWithUnmappedStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Unmapped status — write-back must still fire because AC4 only
+		// depends on assignee presence, not status mapping.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fields": map[string]any{
+				"status":   map[string]string{"name": "Custom Workflow State"},
+				"assignee": map[string]string{"displayName": "Alice Example"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ef := makeEntities(entities.Finding{
+		FindingID: "fin-empty-owner-unmapped",
+		Name:      "Empty Owner Unmapped Status",
+		Analyst: &entities.Analyst{
+			Status:     "open",
+			Owner:      "",
+			TicketRefs: []string{"KAN-9"},
+		},
+	})
+	res, err := PullStatus(context.Background(), ef, PullOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		Token:    "token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := res.Updated.Findings[0].Analyst.Owner; got != "Alice Example" {
+		t.Errorf("expected owner='Alice Example' for unmapped status; got %q", got)
+	}
+}
+
 func TestPullStatus_OwnerWriteBackPreservesExistingOwner(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
