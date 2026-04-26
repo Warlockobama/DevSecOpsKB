@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,13 @@ type Options struct {
 	EpicIssueType string
 	// EpicComponent is an optional component name applied to detection Epics.
 	EpicComponent string
+
+	// UsernameMap maps a KB analyst owner handle (e.g. "alice") to a Jira
+	// Cloud accountId. Set by CLI flag -jira-user-map. When a finding's
+	// analyst.owner has a mapping, the issue is assigned to that account on
+	// create. When the owner is set but no mapping exists, the issue is
+	// created unassigned and a stderr warning is emitted (#61).
+	UsernameMap map[string]string
 }
 
 // httpDoer abstracts HTTP request execution for throttling and testing.
@@ -552,6 +560,19 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 		// Classic projects use customfield_10014; that variant can be added later
 		// if users hit compatibility issues.
 		fields["parent"] = map[string]string{"key": ek}
+	}
+
+	// Assignee mapping (#61): translate KB analyst.owner → Jira accountId via
+	// opts.UsernameMap. Skip silently when there's no owner. Warn (don't block)
+	// when an owner is set but absent from the map — issue is created unassigned.
+	if f.Analyst != nil {
+		if owner := strings.TrimSpace(f.Analyst.Owner); owner != "" {
+			if accountID := strings.TrimSpace(opts.UsernameMap[owner]); accountID != "" {
+				fields["assignee"] = map[string]string{"accountId": accountID}
+			} else {
+				fmt.Fprintf(os.Stderr, "[jira] warning: no Jira accountId mapping for owner %q on finding %s; issue will be unassigned\n", owner, f.FindingID)
+			}
+		}
 	}
 
 	body := map[string]any{"fields": fields}

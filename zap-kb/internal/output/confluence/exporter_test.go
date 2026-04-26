@@ -2898,6 +2898,72 @@ func TestAppendAcceptanceExpiredSection_OnlyOnTriageBoard(t *testing.T) {
 	}
 }
 
+func TestAppendUnownedSection_RendersOpenUnownedFindings(t *testing.T) {
+	defs := map[string]*entities.Definition{
+		"def-1": {DefinitionID: "def-1", Alert: "SQL Injection"},
+		"def-2": {DefinitionID: "def-2", Alert: "XSS"},
+		"def-3": {DefinitionID: "def-3", Alert: "Closed One"},
+	}
+	ei := &entityIndex{
+		defs: defs,
+		finds: map[string]*entities.Finding{
+			"fin-1": {
+				FindingID: "fin-1", DefinitionID: "def-1", Risk: "High",
+				Analyst: &entities.Analyst{Status: "open", Owner: ""},
+			},
+			"fin-2": {
+				FindingID: "fin-2", DefinitionID: "def-2", Risk: "Medium",
+				Analyst: &entities.Analyst{Status: "open", Owner: "alice"},
+			},
+			"fin-3": {
+				FindingID: "fin-3", DefinitionID: "def-3", Risk: "High",
+				Analyst: &entities.Analyst{Status: "fixed", Owner: ""},
+			},
+		},
+	}
+	out := appendUnownedSection("Triage Board", "<p>body</p>", ei)
+	if !strings.Contains(out, "<h2>Unowned</h2>") {
+		t.Errorf("expected 'Unowned' heading; got: %s", out)
+	}
+	if !strings.Contains(out, "SQL Injection") {
+		t.Errorf("expected SQL Injection (open + unowned) in section; got: %s", out)
+	}
+	if strings.Contains(out, "XSS") {
+		t.Errorf("XSS has owner — must not appear; got: %s", out)
+	}
+	if strings.Contains(out, "Closed One") {
+		t.Errorf("fixed findings must not appear; got: %s", out)
+	}
+}
+
+func TestAppendUnownedSection_OnlyOnTriageBoard(t *testing.T) {
+	ei := &entityIndex{
+		defs: map[string]*entities.Definition{"def-1": {DefinitionID: "def-1", Alert: "X"}},
+		finds: map[string]*entities.Finding{
+			"fin-1": {FindingID: "fin-1", DefinitionID: "def-1", Risk: "High", Analyst: &entities.Analyst{Status: "open"}},
+		},
+	}
+	for _, title := range []string{"KB Index", "KB Dashboard", "Issues"} {
+		out := appendUnownedSection(title, "<p>body</p>", ei)
+		if strings.Contains(out, "Unowned") {
+			t.Errorf("page %q should not get Unowned section; got: %s", title, out)
+		}
+	}
+}
+
+func TestAppendUnownedSection_NoOpWhenAllOwned(t *testing.T) {
+	ei := &entityIndex{
+		defs: map[string]*entities.Definition{"def-1": {DefinitionID: "def-1", Alert: "X"}},
+		finds: map[string]*entities.Finding{
+			"fin-1": {FindingID: "fin-1", DefinitionID: "def-1", Risk: "High", Analyst: &entities.Analyst{Status: "open", Owner: "alice"}},
+		},
+	}
+	out := appendUnownedSection("Triage Board", "<p>body</p>", ei)
+	if strings.Contains(out, "Unowned") {
+		t.Errorf("expected no section when all open findings are owned; got: %s", out)
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()

@@ -300,6 +300,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		storageBody = prependJiraIssuesMacro(tp.title, storageBody, opts.JiraServerID, opts.JiraServerName, opts.JiraProjectKey)
 		storageBody = appendJiraOverviewSection(tp.title, storageBody, &ei, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced)
 		storageBody = appendAcceptanceExpiredSection(tp.title, storageBody, &ei)
+		storageBody = appendUnownedSection(tp.title, storageBody, &ei)
 		// The Page Properties Report macro is intentionally NOT appended here —
 		// it depends on the page-properties macro which fails in Confluence Cloud
 		// via REST API. Triage is done by editing individual occurrence pages.
@@ -2734,6 +2735,78 @@ func warnPermanentAcceptance(ei *entityIndex) {
 	for _, id := range ids {
 		fmt.Printf("[confluence] warning: finding %q is permanently accepted (no acceptedUntil set)\n", id)
 	}
+}
+
+// appendUnownedSection appends an "Unowned" table to the Triage Board page
+// listing all status=open findings whose analyst.owner is empty (#61). The
+// section makes workload distribution visible at a glance — unowned findings
+// are findings nobody is actively triaging.
+func appendUnownedSection(pageTitle, storageBody string, ei *entityIndex) string {
+	if strings.TrimSpace(pageTitle) != "Triage Board" {
+		return storageBody
+	}
+	rows := collectUnownedRows(ei)
+	if len(rows) == 0 {
+		return storageBody
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Unowned</h2>`)
+	b.WriteString(`<p><em>Open findings with no analyst owner. Assign these to a team member so they are not silently ignored.</em></p>`)
+	b.WriteString(`<table><tbody>`)
+	b.WriteString(`<tr><th>Finding</th><th>Severity</th><th>Last seen</th></tr>`)
+	for _, row := range rows {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(findingPageLink(row.FindingTitle))
+		b.WriteString(`</td><td>`)
+		if row.Severity != "" {
+			b.WriteString(riskStatusMacro(row.Severity))
+		} else {
+			b.WriteString(`-`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(escapeHTML(row.LastSeen))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</tbody></table>`)
+	return storageBody + b.String()
+}
+
+type unownedRow struct {
+	FindingTitle string
+	Severity     string
+	LastSeen     string
+	FindingID    string
+}
+
+func collectUnownedRows(ei *entityIndex) []unownedRow {
+	if ei == nil {
+		return nil
+	}
+	var rows []unownedRow
+	for _, f := range ei.finds {
+		if f == nil || f.Analyst == nil {
+			continue
+		}
+		if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) != "open" {
+			continue
+		}
+		if strings.TrimSpace(f.Analyst.Owner) != "" {
+			continue
+		}
+		rows = append(rows, unownedRow{
+			FindingTitle: findingPageTitle(f, ei),
+			Severity:     strings.TrimSpace(f.Risk),
+			LastSeen:     strings.TrimSpace(f.LastSeen),
+			FindingID:    f.FindingID,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
+			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
+		}
+		return rows[i].FindingID < rows[j].FindingID
+	})
+	return rows
 }
 
 // appendAcceptanceExpiredSection appends an "Acceptance Expired" table to the

@@ -237,3 +237,35 @@ func TestContainsCustomDefinitions(t *testing.T) {
 		t.Fatal("expected custom definition detection")
 	}
 }
+
+func TestParseJiraUserMap(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want map[string]string
+	}{
+		{"empty", "", nil},
+		{"whitespace only", "   ", nil},
+		{"single pair", "alice=acc1", map[string]string{"alice": "acc1"}},
+		{
+			"multiple pairs with whitespace",
+			"alice=acc1, bob = acc2 ,carol=acc3",
+			map[string]string{"alice": "acc1", "bob": "acc2", "carol": "acc3"},
+		},
+		{"skips malformed", "alice=acc1,bad,=missing,key=,ok=v", map[string]string{"alice": "acc1", "ok": "v"}},
+		{"all malformed returns nil", ",,bad,=,", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseJiraUserMap(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("size mismatch: got %v want %v", got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("key %q: got %q want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}

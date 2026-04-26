@@ -3,6 +3,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -346,5 +347,70 @@ func TestExport_OptInTagAllowsLowSeverityFinding(t *testing.T) {
 	}
 	if int(atomic.LoadInt64(&createCount)) != 1 {
 		t.Fatalf("expected 1 POST call, got %d", createCount)
+	}
+}
+
+// TestExport_AssigneeFromUsernameMap verifies #61 AC3: when a finding's
+// analyst.owner has a mapping in opts.UsernameMap, the create-issue payload
+// includes assignee.accountId. When no mapping exists, the payload omits
+// assignee (issue created unassigned + warning logged).
+func TestExport_AssigneeFromUsernameMap(t *testing.T) {
+	var capturedPayload []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			_ = json.NewEncoder(w).Encode(searchResponse(""))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			capturedPayload, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"key": "SEC-1"})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	f := makeFinding("fin-mapped", "high", "https://example.com/x")
+	f.Analyst = &entities.Analyst{Owner: "alice"}
+	ef := makeEntities(f)
+
+	opts := defaultOpts(srv.URL)
+	opts.UsernameMap = map[string]string{"alice": "5e3fabc"}
+	if _, err := Export(context.Background(), ef, opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(capturedPayload), `"assignee":{"accountId":"5e3fabc"}`) {
+		t.Errorf("expected assignee accountId in payload; got: %s", capturedPayload)
+	}
+}
+
+func TestExport_OwnerWithoutMappingOmitsAssignee(t *testing.T) {
+	var capturedPayload []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			_ = json.NewEncoder(w).Encode(searchResponse(""))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			capturedPayload, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"key": "SEC-1"})
+		}
+	}))
+	defer srv.Close()
+
+	f := makeFinding("fin-unmapped", "high", "https://example.com/x")
+	f.Analyst = &entities.Analyst{Owner: "carol"} // not in map
+	ef := makeEntities(f)
+
+	opts := defaultOpts(srv.URL)
+	opts.UsernameMap = map[string]string{"alice": "5e3fabc"}
+	if _, err := Export(context.Background(), ef, opts); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(capturedPayload), `"assignee"`) {
+		t.Errorf("expected NO assignee in payload (no mapping for 'carol'); got: %s", capturedPayload)
 	}
 }

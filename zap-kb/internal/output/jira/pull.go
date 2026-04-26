@@ -181,6 +181,12 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 				f.Analyst.Status = r.status
 				res.Updated++
 			}
+			// Owner write-back (#61): non-destructive — only fill when KB
+			// owner is empty so analyst overrides on the KB side are not
+			// clobbered by Jira assignee changes.
+			if strings.TrimSpace(f.Analyst.Owner) == "" && strings.TrimSpace(r.assignee) != "" {
+				f.Analyst.Owner = strings.TrimSpace(r.assignee)
+			}
 		case "occurrence":
 			o := &ef.Occurrences[r.ref.idx]
 			if o.Analyst == nil {
@@ -191,6 +197,9 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			} else {
 				o.Analyst.Status = r.status
 				res.Updated++
+			}
+			if strings.TrimSpace(o.Analyst.Owner) == "" && strings.TrimSpace(r.assignee) != "" {
+				o.Analyst.Owner = strings.TrimSpace(r.assignee)
 			}
 		}
 	}

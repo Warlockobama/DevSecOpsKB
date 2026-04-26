@@ -216,6 +216,38 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+// parseJiraUserMap parses a comma-separated "owner=accountId" list into a
+// map suitable for jira.Options.UsernameMap. Entries missing the "=" or with
+// blank halves are skipped silently. Returns nil for empty input so callers
+// can pass it through without checking.
+func parseJiraUserMap(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		eq := strings.IndexByte(pair, '=')
+		if eq < 1 || eq == len(pair)-1 {
+			continue
+		}
+		key := strings.TrimSpace(pair[:eq])
+		val := strings.TrimSpace(pair[eq+1:])
+		if key == "" || val == "" {
+			continue
+		}
+		out[key] = val
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func hasFindingTicketRefs(ent entities.EntitiesFile) bool {
 	for _, finding := range ent.Findings {
 		if finding.Analyst == nil {
