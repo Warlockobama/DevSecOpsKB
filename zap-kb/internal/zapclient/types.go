@@ -14,24 +14,24 @@ type AlertsFilter struct {
 
 // Alert is a tolerant mapping of ZAP alerts (numbers-as-strings safe).
 type Alert struct {
-	PluginID   string `json:"pluginId"`
-	Alert      string `json:"alert"`
-	Name       string `json:"name"`
-	Risk       string `json:"risk"`
-	RiskCode   string `json:"riskcode"`
-	Confidence string `json:"confidence"`
-	URL        string `json:"url"`
-	Method     string `json:"method"`
-	Param      string `json:"param"`
-	Attack     string `json:"attack"`
-	Evidence   string `json:"evidence"`
+	PluginID    string `json:"pluginId"`
+	Alert       string `json:"alert"`
+	Name        string `json:"name"`
+	Risk        string `json:"risk"`
+	RiskCode    string `json:"riskcode"`
+	Confidence  string `json:"confidence"`
+	URL         string `json:"url"`
+	Method      string `json:"method"`
+	Param       string `json:"param"`
+	Attack      string `json:"attack"`
+	Evidence    string `json:"evidence"`
 	Other       string `json:"other"`
 	Description string `json:"desc"` // ZAP alert description ("desc" in API / report JSON)
 	Solution    string `json:"solution"`
-	Reference  string `json:"reference"`
-	CWEID      Intish `json:"cweid"`
-	WASCID     Intish `json:"wascid"`
-	SourceID   string `json:"sourceid"`
+	Reference   string `json:"reference"`
+	CWEID       Intish `json:"cweid"`
+	WASCID      Intish `json:"wascid"`
+	SourceID    string `json:"sourceid"`
 	// Optional inline traffic fields (present in traditional-json-plus exports)
 	RequestHeader  string `json:"requestHeader"`
 	RequestBody    string `json:"requestBody"`
