@@ -237,6 +237,8 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// Build entity indexes for structured enrichment
 	ei := buildEntityIndex(opts.Entities)
 
+	warnPermanentAcceptance(&ei)
+
 	// Build title map: vault-relative path → actual Confluence page title
 	titleMap := buildTitleMap(vaultRoot, &ei)
 
@@ -297,6 +299,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		storageBody := mdToStorageWithTitles(content, titleMap)
 		storageBody = prependJiraIssuesMacro(tp.title, storageBody, opts.JiraServerID, opts.JiraServerName, opts.JiraProjectKey)
 		storageBody = appendJiraOverviewSection(tp.title, storageBody, &ei, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced)
+		storageBody = appendAcceptanceExpiredSection(tp.title, storageBody, &ei)
 		// The Page Properties Report macro is intentionally NOT appended here —
 		// it depends on the page-properties macro which fails in Confluence Cloud
 		// via REST API. Triage is done by editing individual occurrence pages.
@@ -2705,6 +2708,115 @@ type jiraCaseOverviewRow struct {
 	KBStatus     string
 	Severity     string
 	FindingTitle string
+}
+
+// warnPermanentAcceptance prints a stdout warning for each finding that is
+// permanently accepted (status=accepted, no acceptedUntil set). Called once per
+// ExportVault so operators notice indefinite suppressions in CI logs.
+func warnPermanentAcceptance(ei *entityIndex) {
+	if ei == nil {
+		return
+	}
+	var ids []string
+	for _, f := range ei.finds {
+		if f == nil || f.Analyst == nil {
+			continue
+		}
+		if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) != "accepted" {
+			continue
+		}
+		if strings.TrimSpace(f.Analyst.AcceptedUntil) != "" {
+			continue
+		}
+		ids = append(ids, f.FindingID)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Printf("[confluence] warning: finding %q is permanently accepted (no acceptedUntil set)\n", id)
+	}
+}
+
+// appendAcceptanceExpiredSection appends an "Acceptance Expired" table to the
+// Triage Board page listing findings whose accepted risk window has lapsed.
+func appendAcceptanceExpiredSection(pageTitle, storageBody string, ei *entityIndex) string {
+	if strings.TrimSpace(pageTitle) != "Triage Board" {
+		return storageBody
+	}
+	rows := collectExpiredAcceptanceRows(ei)
+	if len(rows) == 0 {
+		return storageBody
+	}
+	var b strings.Builder
+	b.WriteString(`<h2>Acceptance Expired</h2>`)
+	b.WriteString(`<p><em>These findings were accepted with a time-bounded window that has since lapsed. Return them to the triage queue or renew the acceptance decision.</em></p>`)
+	b.WriteString(`<table><tbody>`)
+	b.WriteString(`<tr><th>Finding</th><th>Severity</th><th>Expired At</th><th>Owner</th></tr>`)
+	for _, row := range rows {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(findingPageLink(row.FindingTitle))
+		b.WriteString(`</td><td>`)
+		if row.Severity != "" {
+			b.WriteString(riskStatusMacro(row.Severity))
+		} else {
+			b.WriteString(`-`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(escapeHTML(row.ExpiredAt))
+		b.WriteString(`</td><td>`)
+		b.WriteString(escapeHTML(row.Owner))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</tbody></table>`)
+	return storageBody + b.String()
+}
+
+type acceptanceExpiredRow struct {
+	FindingTitle string
+	Severity     string
+	ExpiredAt    string    // original RFC3339 string for display
+	expiredAtT   time.Time // parsed time for deterministic sorting
+	Owner        string
+}
+
+func collectExpiredAcceptanceRows(ei *entityIndex) []acceptanceExpiredRow {
+	if ei == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	var rows []acceptanceExpiredRow
+	for _, f := range ei.finds {
+		if f == nil || f.Analyst == nil {
+			continue
+		}
+		if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) != "accepted" {
+			continue
+		}
+		until := strings.TrimSpace(f.Analyst.AcceptedUntil)
+		if until == "" {
+			continue // indefinitely accepted — warned separately
+		}
+		t, err := time.Parse(time.RFC3339, until)
+		if err != nil {
+			continue // unparseable — skip
+		}
+		if !t.Before(now) {
+			continue // not yet expired
+		}
+		rows = append(rows, acceptanceExpiredRow{
+			FindingTitle: findingPageTitle(f, ei),
+			Severity:     strings.TrimSpace(f.Risk),
+			ExpiredAt:    until,
+			expiredAtT:   t.UTC(),
+			Owner:        strings.TrimSpace(f.Analyst.Owner),
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
+			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
+		}
+		return rows[i].expiredAtT.Before(rows[j].expiredAtT)
+	})
+	return rows
 }
 
 // isValidJiraProjectKey returns true when key matches the standard Jira project
