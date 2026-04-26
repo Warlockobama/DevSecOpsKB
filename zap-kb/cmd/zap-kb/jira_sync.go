@@ -39,6 +39,9 @@ type confluencePublishOptions struct {
 	JiraStatusByKey   map[string]string
 	JiraAssigneeByKey map[string]string
 	JiraStatusSynced  string
+	JiraServerID      string
+	JiraServerName    string
+	JiraProjectKey    string
 }
 
 // mergeDefinitionEpicRefs persists Epic issue keys onto each Definition so
@@ -171,6 +174,9 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 			JiraStatusByKey:   opts.JiraStatusByKey,
 			JiraAssigneeByKey: opts.JiraAssigneeByKey,
 			JiraStatusSynced:  opts.JiraStatusSynced,
+			JiraServerID:      opts.JiraServerID,
+			JiraServerName:    opts.JiraServerName,
+			JiraProjectKey:    opts.JiraProjectKey,
 			Entities:          &ent,
 		})
 		if err != nil {
