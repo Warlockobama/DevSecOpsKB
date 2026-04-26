@@ -18,7 +18,7 @@ func TestFieldsToAnalyst_DropsLifecycleFields(t *testing.T) {
 		"owner":         "alice",
 		"tags":          "case-ticket",
 		"tickets":       "SEC-1",
-		"priorStatus":   "open",                  // must be ignored
+		"priorStatus":   "open",                 // must be ignored
 		"acceptedUntil": "2026-12-31T00:00:00Z", // must be ignored
 		"history":       "some pasted history",  // must be ignored
 	})

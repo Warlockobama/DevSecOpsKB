@@ -23,8 +23,8 @@ func TestCWEToOWASP(t *testing.T) {
 		{942, "A05:2021"},
 		{209, "A05:2021"},
 		{327, "A02:2021"},
-		{9999, ""},  // unmapped
-		{0, ""},     // zero value
+		{9999, ""}, // unmapped
+		{0, ""},    // zero value
 	}
 	for _, tc := range cases {
 		got := CWEToOWASP(tc.cwe)

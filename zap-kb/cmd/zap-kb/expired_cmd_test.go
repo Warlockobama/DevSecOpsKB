@@ -100,9 +100,9 @@ func TestBuildExpiredRows_NonAcceptedIgnored(t *testing.T) {
 func TestBuildExpiredRows_SortedMostOverdueFirst(t *testing.T) {
 	ef := entities.EntitiesFile{
 		Findings: []entities.Finding{
-			acceptedFinding("f-recent", "2026-04-01T00:00:00Z"),  // 23 days ago
-			acceptedFinding("f-oldest", "2025-01-01T00:00:00Z"),  // 1+ year ago
-			acceptedFinding("f-middle", "2026-02-01T00:00:00Z"),  // ~82 days ago
+			acceptedFinding("f-recent", "2026-04-01T00:00:00Z"), // 23 days ago
+			acceptedFinding("f-oldest", "2025-01-01T00:00:00Z"), // 1+ year ago
+			acceptedFinding("f-middle", "2026-02-01T00:00:00Z"), // ~82 days ago
 		},
 	}
 	now := mustParseRFC3339("2026-04-24T00:00:00Z")
