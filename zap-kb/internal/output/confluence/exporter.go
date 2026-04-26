@@ -3349,7 +3349,11 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 	infoTable.WriteString(`</tbody></table>`)
 
 	workflowSection := jiraWorkflowSection(ticketRefs, jiraBaseURL, jiraStatusByKey, jiraStatusSynced)
-	return editInstruction + infoTable.String() + workflowSection + occNoteSection + storageBody
+	verdictSection := ""
+	if ei != nil {
+		verdictSection = buildFindingVerdictSection(ei.finds[o.FindingID])
+	}
+	return editInstruction + infoTable.String() + workflowSection + verdictSection + occNoteSection + storageBody
 }
 
 // --- Confluence Labels API ---

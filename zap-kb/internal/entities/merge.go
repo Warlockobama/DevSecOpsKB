@@ -1,7 +1,9 @@
 package entities
 
 import (
+	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -166,7 +168,59 @@ func MergeWithPolicy(base, add EntitiesFile, policy config.TriagePolicy) Entitie
 	out := mergeCore(base, add, policy)
 	applyFindingFPAutoSuppression(&out, policy)
 	applyRuleTuneScanTags(&out, policy)
+	warnOccurrenceStatusDivergence(&out)
 	return out
+}
+
+// warnOccurrenceStatusDivergence prints a [merge] warning line for each
+// occurrence whose analyst.Status diverges from its parent finding's
+// analyst.Status. Both statuses are compared after canonicalisation; the
+// warning fires only when both are non-empty and differ. Per #60, occurrence
+// status is writable but is NEVER propagated up — the warning makes the
+// divergence visible without blocking the merge. Output is sorted by
+// occurrence ID so CI logs are deterministic.
+func warnOccurrenceStatusDivergence(ef *EntitiesFile) {
+	if ef == nil {
+		return
+	}
+	findStatus := make(map[string]string, len(ef.Findings))
+	for i := range ef.Findings {
+		f := &ef.Findings[i]
+		if f.Analyst == nil {
+			continue
+		}
+		s := strings.TrimSpace(CanonicalAnalystStatus(f.Analyst.Status))
+		if s != "" {
+			findStatus[f.FindingID] = s
+		}
+	}
+	type divergence struct{ occID, occStatus, findingStatus, findingID string }
+	var divergences []divergence
+	for i := range ef.Occurrences {
+		o := &ef.Occurrences[i]
+		if o.Analyst == nil {
+			continue
+		}
+		occStatus := strings.TrimSpace(CanonicalAnalystStatus(o.Analyst.Status))
+		if occStatus == "" {
+			continue
+		}
+		fs := findStatus[o.FindingID]
+		if fs == "" || fs == occStatus {
+			continue
+		}
+		divergences = append(divergences, divergence{
+			occID:         o.OccurrenceID,
+			occStatus:     occStatus,
+			findingStatus: fs,
+			findingID:     o.FindingID,
+		})
+	}
+	sort.Slice(divergences, func(i, j int) bool { return divergences[i].occID < divergences[j].occID })
+	for _, d := range divergences {
+		fmt.Fprintf(os.Stderr, "[merge] warning: occurrence %s status=%q diverges from finding %s status=%q (occurrence status is not propagated)\n",
+			d.occID, d.occStatus, d.findingID, d.findingStatus)
+	}
 }
 
 // mergeCore is the union/merge work; it does NOT apply the post-merge policy
