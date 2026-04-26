@@ -81,6 +81,7 @@ func main() {
 		jiraProject        string
 		jiraServerID       string
 		jiraServerName     string
+		jiraUserMap        string
 		jiraIssueType      string
 		jiraComponent      string
 		jiraLabels         string
@@ -151,6 +152,7 @@ func main() {
 	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (e.g. SEC).")
 	flag.StringVar(&jiraServerID, "jira-server-id", "", "Confluence application-link UUID for the Jira instance (e.g. 6ee9717b-54c7-35fc-8b8c-517e863e5ce4). Enables a live Jira Issues macro on the Triage Board page when combined with -jira-server-name and -jira-project.")
 	flag.StringVar(&jiraServerName, "jira-server-name", "", "Display name of the linked Jira application (as configured on the Confluence side). Required alongside -jira-server-id and -jira-project to render the Triage Board live macro.")
+	flag.StringVar(&jiraUserMap, "jira-user-map", "", "Comma-separated KB-owner→Jira-accountId map for setting Jira assignee from analyst.owner on issue create (e.g. \"alice=5e3f...,bob=602a...\"). Owners with no mapping are logged and the issue is created unassigned.")
 	flag.StringVar(&jiraIssueType, "jira-issue-type", "Bug", "Jira issue type (default: Bug).")
 	flag.StringVar(&jiraComponent, "jira-component", "", "Optional Jira component name to assign.")
 	flag.StringVar(&jiraLabels, "jira-labels", "", "Comma-separated extra labels to add to each issue.")
@@ -681,6 +683,7 @@ func main() {
 				}
 				return jiraComponent
 			}(),
+			UsernameMap: parseJiraUserMap(jiraUserMap),
 		})
 		if err != nil {
 			log.Fatalf("jira export: %v", err)
