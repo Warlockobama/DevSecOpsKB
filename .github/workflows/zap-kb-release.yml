@@ -1,0 +1,68 @@
+name: release-zap-kb
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: zap-kb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${GITHUB_REF_NAME:-manual}"
+          targets=(
+            "linux amd64"
+            "linux arm64"
+            "darwin amd64"
+            "darwin arm64"
+            "windows amd64"
+          )
+          for target in "${targets[@]}"; do
+            read -r goos goarch <<< "$target"
+            name="zap-kb-${version}-${goos}-${goarch}"
+            if [ "$goos" = "windows" ]; then
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}.exe" ./cmd/zap-kb
+              (cd dist && zip "${name}.zip" "${name}.exe")
+              rm "dist/${name}.exe"
+            else
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}" ./cmd/zap-kb
+              tar -C dist -czf "dist/${name}.tar.gz" "$name"
+              rm "dist/${name}"
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-kb-release-${{ github.run_id }}
+          path: zap-kb/dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --title "$GITHUB_REF_NAME"

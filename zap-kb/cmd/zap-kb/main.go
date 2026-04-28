@@ -49,6 +49,8 @@ func main() {
 		zapBase            string
 		trafficMinRisk     string
 		includeDetect      bool
+		includeMITRE       bool
+		includeCVSS        bool
 		detectDetails      string
 		initMode           bool
 		runOut             string
@@ -119,6 +121,8 @@ func main() {
 	flag.StringVar(&siteLabel, "site-label", "", "Optional site/domain label override when domains are redacted")
 	flag.StringVar(&zapBase, "zap-base-url", "", "Optional ZAP base URL to link back to messages in Obsidian")
 	flag.BoolVar(&includeDetect, "include-detection", false, "Enrich with detection logic links from ZAP docs/GitHub")
+	flag.BoolVar(&includeMITRE, "include-mitre", true, "Enrich taxonomy with curated MITRE CWE/CAPEC/ATT&CK metadata")
+	flag.BoolVar(&includeCVSS, "include-cvss", true, "Estimate definition CVSS from scanner risk when official CVSS is unavailable")
 	flag.StringVar(&detectDetails, "detection-details", "links", "Detection enrichment detail: links|summary")
 	flag.BoolVar(&initMode, "init", false, "Init KB without run data: seed/update definitions only (no alert fetch)")
 	flag.StringVar(&runOut, "run-out", "", "Write a pipeline-friendly run artifact JSON (entities+meta[+alerts])")
@@ -165,30 +169,9 @@ func main() {
 	flag.StringVar(&jiraEpicComponent, "jira-epic-component", "", "Optional Jira component name applied to detection Epics.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
-	// Sub-command dispatch: if the first argument is "merge", run the merge
-	// sub-command with its own flag set and exit without touching the global flags.
-	if len(os.Args) > 1 && os.Args[1] == "merge" {
-		runMergeCommand(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "report" {
-		runReportCommand(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "pull" {
-		runPullCommand(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "config" {
-		runConfigCommand(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "onboard" {
-		runOnboardCommand(os.Args[2:])
-		return
-	}
-	if len(os.Args) > 1 && os.Args[1] == "expired" {
-		runExpiredCommand(os.Args[2:])
+	// Subcommands own their flag sets, so dispatch before parsing global flags.
+	if handler, args, ok := lookupSubcommand(os.Args[1:]); ok {
+		handler(args)
 		return
 	}
 
@@ -560,6 +543,12 @@ func main() {
 
 		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
 		entities.EnrichTaxonomy(ent.Definitions)
+		if includeMITRE {
+			entities.EnrichMITRE(ent.Definitions)
+		}
+		if includeCVSS {
+			entities.EnrichCVSS(&ent)
+		}
 
 		// Optional redaction pass
 		if strings.TrimSpace(redactOpts) != "" {

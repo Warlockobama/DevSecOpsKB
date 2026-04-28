@@ -284,6 +284,9 @@ func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile 
 				if bd.Taxonomy.CWEID == 0 && nd.Taxonomy.CWEID != 0 {
 					bd.Taxonomy.CWEID = nd.Taxonomy.CWEID
 				}
+				if bd.Taxonomy.CWEName == "" && nd.Taxonomy.CWEName != "" {
+					bd.Taxonomy.CWEName = nd.Taxonomy.CWEName
+				}
 				if bd.Taxonomy.CWEURI == "" && nd.Taxonomy.CWEURI != "" {
 					bd.Taxonomy.CWEURI = nd.Taxonomy.CWEURI
 				}
@@ -292,8 +295,14 @@ func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile 
 					copy(cp, nd.Taxonomy.CAPECIDs)
 					bd.Taxonomy.CAPECIDs = cp
 				}
+				for _, ref := range nd.Taxonomy.CAPEC {
+					upsertTaxonomyRef(&bd.Taxonomy.CAPEC, ref)
+				}
 				if len(bd.Taxonomy.ATTACK) == 0 && len(nd.Taxonomy.ATTACK) > 0 {
 					bd.Taxonomy.ATTACK = append([]string(nil), nd.Taxonomy.ATTACK...)
+				}
+				for _, ref := range nd.Taxonomy.ATTACKTechniques {
+					upsertTaxonomyRef(&bd.Taxonomy.ATTACKTechniques, ref)
 				}
 				if len(bd.Taxonomy.OWASPTop10) == 0 && len(nd.Taxonomy.OWASPTop10) > 0 {
 					bd.Taxonomy.OWASPTop10 = append([]string(nil), nd.Taxonomy.OWASPTop10...)
@@ -302,6 +311,16 @@ func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile 
 					bd.Taxonomy.NIST80053 = append([]string(nil), nd.Taxonomy.NIST80053...)
 				}
 				bd.Taxonomy.Tags = unionStrings(bd.Taxonomy.Tags, nd.Taxonomy.Tags)
+				if bd.Taxonomy.MappingConfidence == "" && nd.Taxonomy.MappingConfidence != "" {
+					bd.Taxonomy.MappingConfidence = nd.Taxonomy.MappingConfidence
+				}
+				for _, src := range nd.Taxonomy.Sources {
+					addTaxonomySource(bd.Taxonomy, src)
+				}
+			}
+			if bd.CVSS == nil && nd.CVSS != nil {
+				cvss := *nd.CVSS
+				bd.CVSS = &cvss
 			}
 			// Fill remediation if missing
 			if bd.Remediation == nil && nd.Remediation != nil {

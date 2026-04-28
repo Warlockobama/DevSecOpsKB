@@ -142,13 +142,7 @@ func buildEpicDescription(def *entities.Definition, ev epicEvidence) adfDoc {
 		nodes = append(nodes, para(textNode(desc)))
 	}
 
-	if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
-		cweURL := fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", def.Taxonomy.CWEID)
-		nodes = append(nodes, para(
-			textNode("CWE: "),
-			linkNode(fmt.Sprintf("CWE-%d", def.Taxonomy.CWEID), cweURL),
-		))
-	}
+	nodes = append(nodes, buildSecurityClassificationNodes(def)...)
 
 	if def.Detection != nil && strings.TrimSpace(def.Detection.DocsURL) != "" {
 		nodes = append(nodes, para(

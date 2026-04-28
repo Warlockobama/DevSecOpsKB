@@ -29,7 +29,8 @@ Definition
 - pluginId
 - origin: `tool|custom`
 - alert, name, wascid
-- taxonomy: { cweid, cweUri, capecIds[], attack[], owaspTop10[], nist80053[], tags[] }
+- taxonomy: { cweid, cweName, cweUri, capecIds[], capec[], attack[], attackTechniques[], owaspTop10[], nist80053[], tags[], mappingConfidence, sources[] }
+- cvss (optional): { version, vector, baseScore, baseSeverity, source, rationale }
 - remediation: { summary, references[], guidance[], exampleFixes[], falsePositiveConditions[] }
 - detection (optional): { logicType, pluginRef, ruleSource, docsUrl, sourceUrl, matchReason, summary, signals[], defaults{threshold,strength} }
 - epicRef (optional): Jira Epic key grouping all findings for this detection; set by Jira export when `-jira-detection-epic` is enabled.
@@ -82,7 +83,14 @@ Large payloads
 - By default, store only hashes and sizes for bodies; snippets are opt-in with future flags and redaction.
 
 Enrichment
-- A future enrichment step populates taxonomy mappings and expands remediation guidance.
+- Taxonomy enrichment is default-on and deterministic. It fills missing CWE from
+  known ZAP metadata, derives OWASP/CAPEC where known, and expands existing
+  CWE/CAPEC/ATT&CK IDs with curated MITRE titles, canonical URLs, source
+  attribution, and mapping confidence.
+- CVSS enrichment is default-on and estimated when no CVSS already exists. The
+  estimate uses the highest observed scanner risk for the definition, records
+  `source=devsecopskb-estimated`, and keeps a rationale because scanner alerts
+  are weakness-based rather than CVE-based.
 - Optional detection enrichment can link a rule to its implementation and docs:
   - logicType: passive|active|unknown (inferred from rule path)
   - ruleSource: repo-like path in zap-extensions or `custom` for project-owned detection logic

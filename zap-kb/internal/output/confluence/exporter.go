@@ -2227,9 +2227,20 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 	if def.WASCID > 0 {
 		props = append(props, [2]string{"WASC", fmt.Sprintf("WASC-%d", def.WASCID)})
 	}
+	if def.CVSS != nil {
+		if def.CVSS.BaseScore > 0 && strings.TrimSpace(def.CVSS.BaseSeverity) != "" {
+			props = append(props, [2]string{"CVSS", fmt.Sprintf("%.1f %s", def.CVSS.BaseScore, escapeHTML(def.CVSS.BaseSeverity))})
+		} else if strings.TrimSpace(def.CVSS.BaseSeverity) != "" {
+			props = append(props, [2]string{"CVSS", escapeHTML(def.CVSS.BaseSeverity)})
+		}
+	}
 	// 4. CWE
 	if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
-		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
+		label := fmt.Sprintf("CWE-%d", def.Taxonomy.CWEID)
+		if strings.TrimSpace(def.Taxonomy.CWEName) != "" {
+			label += ": " + def.Taxonomy.CWEName
+		}
+		link := fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(def.Taxonomy.CWEURI), escapeHTML(label))
 		props = append(props, [2]string{"CWE", link})
 	}
 	// 5. OWASP — linked
@@ -2237,10 +2248,29 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 		props = append(props, [2]string{"OWASP Top 10", owaspTop10Links(def.Taxonomy.OWASPTop10)})
 	}
 	// 6. CAPEC
-	if def.Taxonomy != nil && len(def.Taxonomy.CAPECIDs) > 0 {
-		capecStrs := make([]string, len(def.Taxonomy.CAPECIDs))
-		for i, id := range def.Taxonomy.CAPECIDs {
-			capecStrs[i] = fmt.Sprintf(`<a href="https://capec.mitre.org/data/definitions/%d.html">CAPEC-%d</a>`, id, id)
+	if def.Taxonomy != nil && (len(def.Taxonomy.CAPEC) > 0 || len(def.Taxonomy.CAPECIDs) > 0) {
+		capecStrs := make([]string, 0, len(def.Taxonomy.CAPEC)+len(def.Taxonomy.CAPECIDs))
+		for _, ref := range def.Taxonomy.CAPEC {
+			label := strings.TrimSpace(ref.ID)
+			if strings.TrimSpace(ref.Name) != "" {
+				if label != "" {
+					label += ": "
+				}
+				label += strings.TrimSpace(ref.Name)
+			}
+			if label == "" {
+				label = strings.TrimSpace(ref.URL)
+			}
+			if strings.TrimSpace(ref.URL) != "" {
+				capecStrs = append(capecStrs, fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(ref.URL), escapeHTML(label)))
+			} else if label != "" {
+				capecStrs = append(capecStrs, escapeHTML(label))
+			}
+		}
+		if len(capecStrs) == 0 {
+			for _, id := range def.Taxonomy.CAPECIDs {
+				capecStrs = append(capecStrs, fmt.Sprintf(`<a href="https://capec.mitre.org/data/definitions/%d.html">CAPEC-%d</a>`, id, id))
+			}
 		}
 		props = append(props, [2]string{"CAPEC", strings.Join(capecStrs, ", ")})
 	}
@@ -2265,7 +2295,27 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 		props = append(props, [2]string{"Source", `<a href="` + escapeAttr(src) + `">` + escapeHTML(src) + `</a>`})
 	}
 	if def.Taxonomy != nil {
-		if len(def.Taxonomy.ATTACK) > 0 {
+		if len(def.Taxonomy.ATTACKTechniques) > 0 {
+			attackStrs := make([]string, 0, len(def.Taxonomy.ATTACKTechniques))
+			for _, ref := range def.Taxonomy.ATTACKTechniques {
+				label := strings.TrimSpace(ref.ID)
+				if strings.TrimSpace(ref.Name) != "" {
+					if label != "" {
+						label += ": "
+					}
+					label += strings.TrimSpace(ref.Name)
+				}
+				if label == "" {
+					label = strings.TrimSpace(ref.URL)
+				}
+				if strings.TrimSpace(ref.URL) != "" {
+					attackStrs = append(attackStrs, fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(ref.URL), escapeHTML(label)))
+				} else if label != "" {
+					attackStrs = append(attackStrs, escapeHTML(label))
+				}
+			}
+			props = append(props, [2]string{"ATT&CK", strings.Join(attackStrs, ", ")})
+		} else if len(def.Taxonomy.ATTACK) > 0 {
 			props = append(props, [2]string{"ATT&CK", escapeHTML(strings.Join(def.Taxonomy.ATTACK, ", "))})
 		}
 		if len(def.Taxonomy.NIST80053) > 0 {

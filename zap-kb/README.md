@@ -5,7 +5,7 @@ zap-kb is the ZAP-focused module of the broader DevSecOps KB project. It fetches
 The module can:
 - Fetch alerts from a running ZAP instance or read from a file.
 - Normalize data into a stable entities schema for analysis and versioning.
-- Enrich definitions with detection references from ZAP docs/GitHub.
+- Enrich definitions with MITRE taxonomy references, estimated CVSS, and optional detection references from ZAP docs/GitHub.
 - Publish an Obsidian vault with findings, occurrences, and definitions.
 
 ## Quick Start
@@ -30,6 +30,8 @@ Key flags:
 - `-plugins`: Comma/space list of plugin IDs to seed/update definitions.
 - `-all-plugins`: Discover all plugin IDs and seed/update definitions.
 - `-include-detection`: Enrich definitions with detection links.
+- `-include-mitre`: Enrich taxonomy with curated MITRE CWE/CAPEC/ATT&CK metadata (default `true`).
+- `-include-cvss`: Estimate definition CVSS from scanner risk when official CVSS is unavailable (default `true`).
 - `-detection-details`: `links|summary` (adds brief detection summary when `summary`).
 - `-include-traffic`: Attach first/all HTTP request/response snippets.
 - `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size.
@@ -80,6 +82,8 @@ Examples:
 - Finding/definition page property order: finding pages lead with Severity → Confidence → Definition (linked) → CWE → OWASP Top 10 → URL → Method → Occurrences; supplementary fields (WASC, Domain, Last/First Seen, Owner, Analyst Cases, Jira Status, Tags, Source Tool, Scans) follow. Definition pages add an `Open Findings` row and render the Detection row as a human-readable phrase ("Passive scan" rather than "passive"). Finding ID is intentionally not rendered.
 - Auth Context on occurrences: Confluence occurrence pages now render an `Auth Context` property (Authenticated/Unauthenticated) derived from captured request headers (Cookie, Authorization Bearer/Basic/Token, X-Csrf/Xsrf/Auth, X-Api-Key). Empty when no headers were captured — never guessed.
 - FP guidance on high-volume rules: CDM (10098), CSP (10038), and CDJSF (10017) each carry 4 documented benign scenarios plus an explicit "true positive when…" clause, auto-populated onto Definition pages via `zapmeta.LookupFalsePositiveGuidance` during enrichment.
+- MITRE taxonomy and CVSS enrichment are default-on and offline. CWE IDs are expanded to MITRE CWE titles/URLs, CAPEC/ATT&CK IDs are expanded when present, and source attribution is written to the entity. CVSS is marked `devsecopskb-estimated` and derived from the highest scanner risk observed for the definition; existing CVSS values are preserved.
+- Enrichment strategy details live in `docs/enrichment-strategy.md`.
 
 ## Scripts
 PowerShell helper `scripts/kb.ps1` wraps common flows:
@@ -186,6 +190,14 @@ Notes:
 GitHub Actions workflow `zap-kb-run.yml` is included for manual runs with secrets:
 - Set repo secrets: `ZAP_URL`, `ZAP_API_KEY`.
 - Run the workflow from the Actions tab; it uploads the Obsidian vault and `entities.json` as artifacts.
+
+Additional automation:
+- `zap-kb-smoke.yml` runs a reproducible offline pipeline smoke test from
+  `testdata/alerts_smoke.json`; it can optionally hit a live ZAP API when
+  `run_live_zap=true` and `ZAP_URL` is configured.
+- `zap-kb-release.yml` builds release archives for Linux, macOS, and Windows.
+  Push a `v*` tag to publish a GitHub release; run it manually to produce
+  workflow artifacts without publishing a release.
 
 ## License
 - Code: Apache-2.0 (see repository root `LICENSE`).

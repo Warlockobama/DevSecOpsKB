@@ -312,14 +312,23 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			if d.Taxonomy.CWEID > 0 {
 				kv["cweId"] = fmt.Sprintf("%d", d.Taxonomy.CWEID)
 			}
+			if strings.TrimSpace(d.Taxonomy.CWEName) != "" {
+				kv["cweName"] = d.Taxonomy.CWEName
+			}
 			if strings.TrimSpace(d.Taxonomy.CWEURI) != "" {
 				kv["cweUri"] = d.Taxonomy.CWEURI
 			}
 			if len(d.Taxonomy.CAPECIDs) > 0 {
 				kv["capecIds"] = intsToStrings(d.Taxonomy.CAPECIDs)
 			}
+			if vals := taxonomyRefsToStrings(d.Taxonomy.CAPEC); len(vals) > 0 {
+				kv["capec"] = vals
+			}
 			if vals := trimStrings(d.Taxonomy.ATTACK); len(vals) > 0 {
 				kv["attack"] = vals
+			}
+			if vals := taxonomyRefsToStrings(d.Taxonomy.ATTACKTechniques); len(vals) > 0 {
+				kv["attackTechniques"] = vals
 			}
 			if vals := trimStrings(d.Taxonomy.OWASPTop10); len(vals) > 0 {
 				kv["owaspTop10"] = vals
@@ -329,6 +338,27 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			if vals := trimStrings(d.Taxonomy.Tags); len(vals) > 0 {
 				kv["tags"] = vals
+			}
+			if strings.TrimSpace(d.Taxonomy.MappingConfidence) != "" {
+				kv["mappingConfidence"] = d.Taxonomy.MappingConfidence
+			}
+			if vals := taxonomySourcesToStrings(d.Taxonomy.Sources); len(vals) > 0 {
+				kv["taxonomySources"] = vals
+			}
+		}
+		if d.CVSS != nil {
+			if strings.TrimSpace(d.CVSS.Version) != "" {
+				kv["cvss.version"] = d.CVSS.Version
+			}
+			if strings.TrimSpace(d.CVSS.Vector) != "" {
+				kv["cvss.vector"] = d.CVSS.Vector
+			}
+			kv["cvss.baseScore"] = fmt.Sprintf("%.1f", d.CVSS.BaseScore)
+			if strings.TrimSpace(d.CVSS.BaseSeverity) != "" {
+				kv["cvss.baseSeverity"] = d.CVSS.BaseSeverity
+			}
+			if strings.TrimSpace(d.CVSS.Source) != "" {
+				kv["cvss.source"] = d.CVSS.Source
 			}
 		}
 		// definition rollup
@@ -360,16 +390,45 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
+		if d.CVSS != nil {
+			b.WriteString("## CVSS\n\n")
+			if strings.TrimSpace(d.CVSS.BaseSeverity) != "" {
+				if d.CVSS.BaseScore > 0 {
+					fmt.Fprintf(&b, "- Base score: %.1f (%s)\n", d.CVSS.BaseScore, d.CVSS.BaseSeverity)
+				} else {
+					fmt.Fprintf(&b, "- Base severity: %s\n", d.CVSS.BaseSeverity)
+				}
+			}
+			if strings.TrimSpace(d.CVSS.Vector) != "" {
+				fmt.Fprintf(&b, "- Vector: `%s`\n", d.CVSS.Vector)
+			}
+			if strings.TrimSpace(d.CVSS.Source) != "" {
+				fmt.Fprintf(&b, "- Source: %s\n", d.CVSS.Source)
+			}
+			if strings.TrimSpace(d.CVSS.Rationale) != "" {
+				fmt.Fprintf(&b, "- Rationale: %s\n", d.CVSS.Rationale)
+			}
+			b.WriteString("\n")
+		}
+
 		// Taxonomy and governance tags for quick reporting/triage
 		if d.Taxonomy != nil {
 			lines := []string{}
 			if d.Taxonomy.CWEID > 0 {
-				lines = append(lines, fmt.Sprintf("CWE-%d", d.Taxonomy.CWEID))
+				cweLine := fmt.Sprintf("CWE-%d", d.Taxonomy.CWEID)
+				if strings.TrimSpace(d.Taxonomy.CWEName) != "" {
+					cweLine += ": " + d.Taxonomy.CWEName
+				}
+				lines = append(lines, cweLine)
 			}
-			if len(d.Taxonomy.CAPECIDs) > 0 {
+			if vals := taxonomyRefsToStrings(d.Taxonomy.CAPEC); len(vals) > 0 {
+				lines = append(lines, "CAPEC: "+strings.Join(vals, ", "))
+			} else if len(d.Taxonomy.CAPECIDs) > 0 {
 				lines = append(lines, fmt.Sprintf("CAPEC: %s", strings.Join(intsToStrings(d.Taxonomy.CAPECIDs), ", ")))
 			}
-			if vals := trimStrings(d.Taxonomy.ATTACK); len(vals) > 0 {
+			if vals := taxonomyRefsToStrings(d.Taxonomy.ATTACKTechniques); len(vals) > 0 {
+				lines = append(lines, "ATT&CK: "+strings.Join(vals, ", "))
+			} else if vals := trimStrings(d.Taxonomy.ATTACK); len(vals) > 0 {
 				lines = append(lines, "ATT&CK: "+strings.Join(vals, ", "))
 			}
 			if vals := trimStrings(d.Taxonomy.OWASPTop10); len(vals) > 0 {
@@ -380,6 +439,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			if vals := trimStrings(d.Taxonomy.Tags); len(vals) > 0 {
 				lines = append(lines, "Tags: "+strings.Join(vals, ", "))
+			}
+			if strings.TrimSpace(d.Taxonomy.MappingConfidence) != "" {
+				lines = append(lines, "Mapping confidence: "+d.Taxonomy.MappingConfidence)
+			}
+			if vals := taxonomySourcesToStrings(d.Taxonomy.Sources); len(vals) > 0 {
+				lines = append(lines, "Sources: "+strings.Join(vals, ", "))
 			}
 			if len(lines) > 0 {
 				b.WriteString("## Taxonomy\n\n")
@@ -3255,6 +3320,63 @@ func intsToStrings(nums []int) []string {
 	out := make([]string, 0, len(nums))
 	for _, n := range nums {
 		out = append(out, fmt.Sprintf("%d", n))
+	}
+	return out
+}
+
+func taxonomyRefsToStrings(refs []entities.TaxonomyRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		id := strings.TrimSpace(ref.ID)
+		name := strings.TrimSpace(ref.Name)
+		url := strings.TrimSpace(ref.URL)
+		if id == "" && name == "" && url == "" {
+			continue
+		}
+		label := ""
+		if id != "" && name != "" {
+			label = id + ": " + name
+		}
+		if id != "" && name == "" {
+			label = id
+		}
+		if id == "" && name != "" {
+			label = name
+		}
+		if label == "" {
+			label = url
+		}
+		if url != "" {
+			label = label + " (" + url + ")"
+		}
+		out = append(out, label)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func taxonomySourcesToStrings(sources []entities.TaxonomySource) []string {
+	out := make([]string, 0, len(sources))
+	for _, src := range sources {
+		name := strings.TrimSpace(src.Name)
+		url := strings.TrimSpace(src.URL)
+		version := strings.TrimSpace(src.Version)
+		if name == "" && url == "" {
+			continue
+		}
+		label := firstNonEmpty(name, url)
+		if version != "" {
+			label += " " + version
+		}
+		if url != "" && url != label {
+			label += " (" + url + ")"
+		}
+		out = append(out, label)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

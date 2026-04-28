@@ -1,0 +1,84 @@
+name: zap-kb-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_live_zap:
+        description: "Also run a live ZAP API smoke test using ZAP_URL/ZAP_API_KEY secrets"
+        required: false
+        default: "false"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zap-kb
+    env:
+      ZAP_URL: ${{ secrets.ZAP_URL }}
+      ZAP_API_KEY: ${{ secrets.ZAP_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Offline pipeline smoke
+        run: |
+          set -euo pipefail
+          rm -rf out/smoke
+          mkdir -p out/smoke
+          go run ./cmd/zap-kb \
+            -in testdata/alerts_smoke.json \
+            -format entities \
+            -out out/smoke/entities.json \
+            -scan-label smoke-offline \
+            -generated-at 2026-01-01T00:00:00Z \
+            -include-detection \
+            -detection-details links \
+            -run-out out/smoke/run.json \
+            -zip-out out/smoke/run.zip
+          go run ./cmd/zap-kb \
+            -run-in out/smoke/run.json \
+            -format obsidian \
+            -obsidian-dir out/smoke/vault \
+            -report-out reports/smoke.md \
+            -report-since 2026-01-01 \
+            -report-until 2026-01-02 \
+            -report-scan smoke-offline
+          test -s out/smoke/entities.json
+          test -s out/smoke/run.json
+          test -s out/smoke/run.zip
+          test -s out/smoke/vault/INDEX.md
+          test -s out/smoke/vault/reports/smoke.md
+          grep -q "Occurrences: 2" out/smoke/vault/reports/smoke.md
+
+      - name: Live ZAP API smoke
+        if: github.event.inputs.run_live_zap == 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${ZAP_URL}" ]; then
+            echo "ZAP_URL secret is required when run_live_zap=true" >&2
+            exit 1
+          fi
+          go run ./cmd/zap-kb \
+            -format entities \
+            -out out/smoke/live-zap-entities.json \
+            -zap-url "$ZAP_URL" \
+            -api-key "$ZAP_API_KEY" \
+            -count 10 \
+            -scan-label smoke-live-zap \
+            -generated-at 2026-01-01T00:00:00Z
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-kb-smoke-${{ github.run_id }}
+          path: zap-kb/out/smoke
+          if-no-files-found: error

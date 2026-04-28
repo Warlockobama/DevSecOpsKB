@@ -145,13 +145,30 @@ type RecurrenceInfo struct {
 }
 
 type Taxonomy struct {
-	CWEID      int      `json:"cweid,omitempty"`
-	CWEURI     string   `json:"cweUri,omitempty"`
-	CAPECIDs   []int    `json:"capecIds,omitempty"`
-	ATTACK     []string `json:"attack,omitempty"`
-	OWASPTop10 []string `json:"owaspTop10,omitempty"`
-	NIST80053  []string `json:"nist80053,omitempty"`
-	Tags       []string `json:"tags,omitempty"`
+	CWEID             int              `json:"cweid,omitempty"`
+	CWEName           string           `json:"cweName,omitempty"`
+	CWEURI            string           `json:"cweUri,omitempty"`
+	CAPECIDs          []int            `json:"capecIds,omitempty"`
+	CAPEC             []TaxonomyRef    `json:"capec,omitempty"`
+	ATTACK            []string         `json:"attack,omitempty"`
+	ATTACKTechniques  []TaxonomyRef    `json:"attackTechniques,omitempty"`
+	OWASPTop10        []string         `json:"owaspTop10,omitempty"`
+	NIST80053         []string         `json:"nist80053,omitempty"`
+	Tags              []string         `json:"tags,omitempty"`
+	MappingConfidence string           `json:"mappingConfidence,omitempty"`
+	Sources           []TaxonomySource `json:"sources,omitempty"`
+}
+
+type TaxonomyRef struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url,omitempty"`
+}
+
+type TaxonomySource struct {
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 type Remediation struct {
@@ -181,6 +198,15 @@ type DetectionDefaults struct {
 	Strength  string `json:"strength,omitempty"`  // AttackStrength e.g., MEDIUM
 }
 
+type CVSS struct {
+	Version      string  `json:"version,omitempty"`
+	Vector       string  `json:"vector,omitempty"`
+	BaseScore    float64 `json:"baseScore"`
+	BaseSeverity string  `json:"baseSeverity,omitempty"`
+	Source       string  `json:"source,omitempty"`
+	Rationale    string  `json:"rationale,omitempty"`
+}
+
 const (
 	DefinitionOriginTool   = "tool"
 	DefinitionOriginCustom = "custom"
@@ -195,6 +221,7 @@ type Definition struct {
 	Description  string       `json:"description,omitempty"` // human-readable "what is this vulnerability" from the scanner
 	WASCID       int          `json:"wascid,omitempty"`
 	Taxonomy     *Taxonomy    `json:"taxonomy,omitempty"`
+	CVSS         *CVSS        `json:"cvss,omitempty"`
 	Remediation  *Remediation `json:"remediation,omitempty"`
 	Detection    *Detection   `json:"detection,omitempty"`
 	// EpicRef is the Jira Epic issue key (e.g. "SEC-12") that groups all
