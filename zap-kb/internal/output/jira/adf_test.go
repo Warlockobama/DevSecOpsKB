@@ -49,7 +49,25 @@ func TestBuildDescription_WithDefinition(t *testing.T) {
 		Risk:      "medium",
 	}
 	def := &entities.Definition{
-		Taxonomy: &entities.Taxonomy{CWEID: 79},
+		Taxonomy: &entities.Taxonomy{
+			CWEID:   79,
+			CWEName: "Improper Neutralization of Input During Web Page Generation",
+			CAPEC: []entities.TaxonomyRef{
+				{ID: "CAPEC-86", Name: "Cross-site Scripting", URL: "https://capec.mitre.org/data/definitions/86.html"},
+			},
+			ATTACKTechniques: []entities.TaxonomyRef{
+				{ID: "T1190", Name: "Exploit Public-Facing Application", URL: "https://attack.mitre.org/techniques/T1190/"},
+			},
+			OWASPTop10:        []string{"A03:2021"},
+			MappingConfidence: "curated",
+		},
+		CVSS: &entities.CVSS{
+			Version:      "3.1",
+			Vector:       "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+			BaseScore:    6.1,
+			BaseSeverity: "MEDIUM",
+			Source:       "devsecopskb-estimated",
+		},
 		Remediation: &entities.Remediation{
 			Summary: "Encode all user input before rendering.",
 		},
@@ -63,7 +81,16 @@ func TestBuildDescription_WithDefinition(t *testing.T) {
 
 	for _, want := range []string{
 		"CWE-79",
+		"Improper Neutralization",
 		"cwe.mitre.org",
+		"CVSS:3.1",
+		"6.1 MEDIUM",
+		"CAPEC-86",
+		"Cross-site Scripting",
+		"T1190",
+		"Exploit Public-Facing Application",
+		"A03:2021",
+		"curated",
 		"Encode all user input",
 		"zaproxy.org/docs/alerts/10016",
 	} {

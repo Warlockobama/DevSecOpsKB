@@ -50,9 +50,23 @@ func TestBuildEpicDescription_ContainsKeyParts(t *testing.T) {
 		PluginID:     "10020",
 		Alert:        "X-Frame-Options Header Not Set",
 		Description:  "Missing header allows clickjacking.",
-		Taxonomy:     &entities.Taxonomy{CWEID: 1021},
-		Remediation:  &entities.Remediation{Summary: "Set X-Frame-Options: DENY."},
-		Detection:    &entities.Detection{DocsURL: "https://www.zaproxy.org/docs/alerts/10020/"},
+		Taxonomy: &entities.Taxonomy{
+			CWEID:   1021,
+			CWEName: "Improper Restriction of Rendered UI Layers or Frames",
+			CAPEC: []entities.TaxonomyRef{
+				{ID: "CAPEC-103", Name: "Clickjacking", URL: "https://capec.mitre.org/data/definitions/103.html"},
+			},
+			MappingConfidence: "scanner-cwe",
+		},
+		CVSS: &entities.CVSS{
+			Version:      "3.1",
+			Vector:       "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N",
+			BaseScore:    3.1,
+			BaseSeverity: "LOW",
+			Source:       "devsecopskb-estimated",
+		},
+		Remediation: &entities.Remediation{Summary: "Set X-Frame-Options: DENY."},
+		Detection:   &entities.Detection{DocsURL: "https://www.zaproxy.org/docs/alerts/10020/"},
 	}
 	doc := buildEpicDescription(def, epicEvidence{})
 	data, err := json.Marshal(doc)
@@ -63,7 +77,13 @@ func TestBuildEpicDescription_ContainsKeyParts(t *testing.T) {
 	for _, want := range []string{
 		"Missing header allows clickjacking.",
 		"CWE-1021",
+		"Improper Restriction",
 		"cwe.mitre.org/data/definitions/1021",
+		"CVSS:3.1",
+		"3.1 LOW",
+		"CAPEC-103",
+		"Clickjacking",
+		"scanner-cwe",
 		"zaproxy.org/docs/alerts/10020",
 		"Set X-Frame-Options: DENY.",
 		"Child issues",

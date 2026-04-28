@@ -47,8 +47,22 @@ func WritePretty(path string, v any) error {
 	// Atomic rename — on POSIX this is guaranteed atomic; on Windows NTFS it is
 	// effectively atomic (os.Rename uses MoveFileEx with REPLACE_EXISTING).
 	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("jsondump: rename: %w", err)
+		if fallbackErr := writePrettyFallback(tmpName, path); fallbackErr != nil {
+			return fmt.Errorf("jsondump: rename: %w; fallback write: %v", err, fallbackErr)
+		}
+		_ = os.Remove(tmpName)
 	}
 	success = true
+	return nil
+}
+
+func writePrettyFallback(tmpName, path string) error {
+	b, err := os.ReadFile(tmpName)
+	if err != nil {
+		return fmt.Errorf("read temp: %w", err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		return fmt.Errorf("write target: %w", err)
+	}
 	return nil
 }

@@ -1,0 +1,42 @@
+[
+  {
+    "pluginId": "10021",
+    "alert": "X-Content-Type-Options Header Missing",
+    "name": "X-Content-Type-Options Header Missing",
+    "risk": "Low",
+    "riskcode": "1",
+    "confidence": "Medium",
+    "url": "https://example.test/login",
+    "method": "GET",
+    "param": "",
+    "attack": "",
+    "evidence": "",
+    "desc": "The Anti-MIME-Sniffing header X-Content-Type-Options was not set to nosniff.",
+    "solution": "Set the X-Content-Type-Options header to nosniff.",
+    "reference": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options",
+    "cweid": "693",
+    "wascid": "15",
+    "sourceid": "1"
+  },
+  {
+    "pluginId": "10038",
+    "alert": "Content Security Policy (CSP) Header Not Set",
+    "name": "Content Security Policy (CSP) Header Not Set",
+    "risk": "Medium",
+    "riskcode": "2",
+    "confidence": "High",
+    "url": "https://example.test/admin",
+    "method": "GET",
+    "param": "",
+    "attack": "",
+    "evidence": "",
+    "desc": "Content Security Policy is an added layer of security.",
+    "solution": "Configure a Content-Security-Policy response header.",
+    "reference": "https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP",
+    "cweid": "693",
+    "wascid": "15",
+    "sourceid": "1",
+    "requestHeader": "GET /admin HTTP/1.1\r\nHost: example.test\r\nCookie: session=redact-me\r\n\r\n",
+    "responseHeader": "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"
+  }
+]

@@ -126,14 +126,7 @@ func buildDescription(f entities.Finding, def *entities.Definition, occ *entitie
 			))
 		}
 
-		// CWE link
-		if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
-			cweURL := fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", def.Taxonomy.CWEID)
-			nodes = append(nodes, para(
-				textNode("CWE: "),
-				linkNode(fmt.Sprintf("CWE-%d", def.Taxonomy.CWEID), cweURL),
-			))
-		}
+		nodes = append(nodes, buildSecurityClassificationNodes(def)...)
 
 		// ZAP docs link
 		if def.Detection != nil && strings.TrimSpace(def.Detection.DocsURL) != "" {

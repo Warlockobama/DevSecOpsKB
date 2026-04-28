@@ -38,3 +38,4 @@ docs/data/*.json
 # Artifacts
 dist/
 coverage.out
+tmp/

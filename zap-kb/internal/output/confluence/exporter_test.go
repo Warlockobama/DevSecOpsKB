@@ -2516,9 +2516,20 @@ func TestPrependDefProperties_TaxonomyWritten(t *testing.T) {
 		PluginID:     "nuclei-sqli",
 		Alert:        "SQL Injection",
 		Taxonomy: &entities.Taxonomy{
-			CWEID:      89,
-			CWEURI:     "https://cwe.mitre.org/data/definitions/89.html",
+			CWEID:   89,
+			CWEName: "Improper Neutralization of Special Elements used in an SQL Command",
+			CWEURI:  "https://cwe.mitre.org/data/definitions/89.html",
+			CAPEC: []entities.TaxonomyRef{
+				{ID: "CAPEC-66", Name: "SQL Injection", URL: "https://capec.mitre.org/data/definitions/66.html"},
+			},
+			ATTACKTechniques: []entities.TaxonomyRef{
+				{ID: "T1190", Name: "Exploit Public-Facing Application", URL: "https://attack.mitre.org/techniques/T1190/"},
+			},
 			OWASPTop10: []string{"A03:2021"},
+		},
+		CVSS: &entities.CVSS{
+			BaseScore:    6.1,
+			BaseSeverity: "MEDIUM",
 		},
 	}
 
@@ -2529,6 +2540,11 @@ func TestPrependDefProperties_TaxonomyWritten(t *testing.T) {
 	}
 	if !strings.Contains(out, "A03") {
 		t.Errorf("def properties should contain OWASP category 'A03', got: %.500s", out)
+	}
+	for _, want := range []string{"6.1 MEDIUM", "Improper Neutralization", "CAPEC-66", "SQL Injection", "T1190", "Exploit Public-Facing Application"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("def properties should contain %q, got: %.500s", want, out)
+		}
 	}
 	if !strings.Contains(out, "BODY") {
 		t.Error("original storage body should be preserved after prepending properties")

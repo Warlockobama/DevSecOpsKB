@@ -394,6 +394,65 @@ func TestWriteVault_HappyPath(t *testing.T) {
 	}
 }
 
+func TestWriteVault_DefinitionRendersCVSSAndMITRETaxonomy(t *testing.T) {
+	root := t.TempDir()
+	ef := minimalEF("occ-taxonomy")
+	ef.Definitions[0].Taxonomy = &entities.Taxonomy{
+		CWEID:   89,
+		CWEName: "Improper Neutralization of Special Elements used in an SQL Command",
+		CWEURI:  "https://cwe.mitre.org/data/definitions/89.html",
+		CAPEC: []entities.TaxonomyRef{
+			{ID: "CAPEC-66", Name: "SQL Injection", URL: "https://capec.mitre.org/data/definitions/66.html"},
+		},
+		ATTACKTechniques: []entities.TaxonomyRef{
+			{ID: "T1190", Name: "Exploit Public-Facing Application", URL: "https://attack.mitre.org/techniques/T1190/"},
+		},
+		OWASPTop10:        []string{"A03:2021"},
+		MappingConfidence: "curated-cwe-derived",
+		Sources: []entities.TaxonomySource{
+			{Name: "MITRE CWE", URL: "https://cwe.mitre.org/data/definitions/89.html"},
+		},
+	}
+	ef.Definitions[0].CVSS = &entities.CVSS{
+		Version:      "3.1",
+		Vector:       "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+		BaseScore:    6.1,
+		BaseSeverity: "MEDIUM",
+		Source:       "devsecopskb-estimated",
+		Rationale:    "Estimated from scanner risk.",
+	}
+
+	if err := WriteVault(root, ef, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "definitions"))
+	if err != nil {
+		t.Fatalf("ReadDir definitions: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected definition page")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "definitions", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile definition: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{
+		"cvss.baseScore: \"6.1\"",
+		"## CVSS",
+		"Base score: 6.1 (MEDIUM)",
+		"CWE-89: Improper Neutralization",
+		"CAPEC-66: SQL Injection",
+		"T1190: Exploit Public-Facing Application",
+		"Mapping confidence: curated-cwe-derived",
+		"MITRE CWE",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("definition page missing %q:\n%s", want, body)
+		}
+	}
+}
+
 // --- Story: TriageGuidanceFn injection ---
 
 // TestWriteVault_TriageGuidanceFn_InjectsSection verifies that when

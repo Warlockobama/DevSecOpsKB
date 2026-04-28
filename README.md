@@ -17,6 +17,15 @@ Doc map:
 ## Getting Started (zap-kb)
 See `zap-kb/README.md` for usage, flags, and examples. A GitHub Actions workflow is provided to build/vet the module on pushes and PRs.
 
+## Automation
+- `.github/workflows/zap-kb.yml`: build, format, vet, unit tests, tagged e2e test, and package build on push/PR.
+- `.github/workflows/zap-kb-run.yml`: manual ZAP-to-KB artifact generation using repository secrets.
+- `.github/workflows/zap-kb-smoke.yml`: manual offline pipeline smoke test, with optional live ZAP API smoke when `ZAP_URL` is available.
+- `.github/workflows/zap-kb-release.yml`: tagged/manual release build for Linux, macOS, and Windows binaries with checksums.
+
+## Current Scope
+`zap-kb` is the active source module. Additional adapters for tools such as Burp, SAST, SBOM, dependency scanners, or cloud findings are intentionally deferred until a shared importer contract is designed.
+
 ## Contributing
 - Keep modules self-contained under their own directory.
 - Prefer normalized exchange formats (entities) and deterministic outputs to support versioning and diffs.

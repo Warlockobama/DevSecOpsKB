@@ -11,9 +11,19 @@ Thumbs.db
 # Claude Code settings (may contain API keys)
 .claude/
 
+# Codex local workspace state
+.codex/
+
+# Local linked worktrees / external project mounts
+_ext_*/
+
 # Local archives of old folders
 archive/
 
 # Generated/example content
 examples/
 out/
+zap-kb/tmp/
+
+# Local walkthrough exports
+devsecops kb walkthrough.pdf
