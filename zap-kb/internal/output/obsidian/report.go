@@ -38,6 +38,7 @@ func GenerateReport(root string, opts ReportOptions) error {
 	if !filepath.IsAbs(outPath) {
 		outPath = filepath.Join(root, outPath)
 	}
+	opts.Until = normalizeReportUntil(opts.Until)
 
 	occs, err := loadReportOccurrences(filepath.Join(root, "occurrences"), opts)
 	if err != nil {
@@ -50,6 +51,7 @@ func GenerateReport(root string, opts ReportOptions) error {
 }
 
 func loadReportOccurrences(occDir string, opts ReportOptions) ([]reportOccurrence, error) {
+	until := normalizeReportUntil(opts.Until)
 	entries, err := os.ReadDir(occDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -75,7 +77,7 @@ func loadReportOccurrences(occDir string, opts ReportOptions) ([]reportOccurrenc
 		if !opts.Since.IsZero() && observed.Before(opts.Since) {
 			continue
 		}
-		if !opts.Until.IsZero() && observed.After(opts.Until) {
+		if !until.IsZero() && observed.After(until) {
 			continue
 		}
 		scan := strings.TrimSpace(y["scan.label"])
@@ -105,6 +107,17 @@ func loadReportOccurrences(occDir string, opts ReportOptions) ([]reportOccurrenc
 		return occs[i].ObservedAt.After(occs[j].ObservedAt)
 	})
 	return occs, nil
+}
+
+func normalizeReportUntil(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	t = t.UTC()
+	if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 && t.Nanosecond() == 0 {
+		return t.Add(24*time.Hour - time.Nanosecond)
+	}
+	return t
 }
 
 func renderReport(opts ReportOptions, occs []reportOccurrence) string {

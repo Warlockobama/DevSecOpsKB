@@ -62,6 +62,20 @@ func TestExport_CreateNewPage(t *testing.T) {
 	}
 }
 
+func TestPrependDefProperties_CWEURLFallsBackWhenMissingURI(t *testing.T) {
+	def := &entities.Definition{
+		DefinitionID: "def-cwe-only",
+		PluginID:     "10001",
+		Alert:        "CWE Only",
+		Taxonomy:     &entities.Taxonomy{CWEID: 89},
+	}
+	out := prependDefProperties("BODY", def, "", 0)
+	want := `href="https://cwe.mitre.org/data/definitions/89.html"`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected fallback CWE URL %q, got: %.500s", want, out)
+	}
+}
+
 func TestExport_UpdateExistingPage(t *testing.T) {
 	// Search returns one existing page; PUT updates it with bumped version.
 	var gotPUT bool

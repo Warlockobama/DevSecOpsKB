@@ -2240,7 +2240,7 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 		if strings.TrimSpace(def.Taxonomy.CWEName) != "" {
 			label += ": " + def.Taxonomy.CWEName
 		}
-		link := fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(def.Taxonomy.CWEURI), escapeHTML(label))
+		link := fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(cweURL(def.Taxonomy)), escapeHTML(label))
 		props = append(props, [2]string{"CWE", link})
 	}
 	// 5. OWASP — linked
@@ -2379,7 +2379,7 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 
 	// 4. CWE
 	if def != nil && def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
-		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
+		link := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(cweURL(def.Taxonomy)), def.Taxonomy.CWEID)
 		props = append(props, [2]string{"CWE", link})
 	}
 
@@ -3404,7 +3404,7 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		}
 		if def.Taxonomy != nil {
 			if def.Taxonomy.CWEID > 0 {
-				cweLink := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(def.Taxonomy.CWEURI), def.Taxonomy.CWEID)
+				cweLink := fmt.Sprintf(`<a href="%s">CWE-%d</a>`, escapeAttr(cweURL(def.Taxonomy)), def.Taxonomy.CWEID)
 				infoProps = append(infoProps, [2]string{"CWE", cweLink})
 			}
 			if len(def.Taxonomy.OWASPTop10) > 0 {
@@ -3561,6 +3561,16 @@ func applyLabels(ctx context.Context, client httpDoer, auth, base, pageID string
 }
 
 // --- Label builders ---
+
+func cweURL(t *entities.Taxonomy) string {
+	if t == nil || t.CWEID <= 0 {
+		return ""
+	}
+	if url := strings.TrimSpace(t.CWEURI); url != "" {
+		return url
+	}
+	return fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", t.CWEID)
+}
 
 func defLabels(def *entities.Definition) []string {
 	if def == nil {
