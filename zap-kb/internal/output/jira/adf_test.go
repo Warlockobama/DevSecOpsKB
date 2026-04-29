@@ -41,6 +41,16 @@ func TestBuildDescription_BasicFinding(t *testing.T) {
 	}
 }
 
+func TestCVSSLineSeverityOnlyOmitsZeroScore(t *testing.T) {
+	got := cvssLine(&entities.CVSS{BaseSeverity: "NONE"})
+	if got != "NONE" {
+		t.Fatalf("cvssLine severity-only = %q, want NONE", got)
+	}
+	if strings.Contains(got, "0.0") {
+		t.Fatalf("cvssLine should not render a zero score for severity-only CVSS: %q", got)
+	}
+}
+
 func TestBuildDescription_WithDefinition(t *testing.T) {
 	f := entities.Finding{
 		FindingID: "fin-xyz",

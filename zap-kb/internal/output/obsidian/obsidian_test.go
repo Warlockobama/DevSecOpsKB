@@ -35,6 +35,16 @@ func minimalEF(occurrenceID string) entities.EntitiesFile {
 	}
 }
 
+func TestTaxonomyRefsToStringsURLOnlyDoesNotDuplicateURL(t *testing.T) {
+	got := taxonomyRefsToStrings([]entities.TaxonomyRef{{URL: "https://example.test/ref"}})
+	if len(got) != 1 {
+		t.Fatalf("expected one taxonomy ref string, got %v", got)
+	}
+	if got[0] != "https://example.test/ref" {
+		t.Fatalf("URL-only taxonomy ref should not duplicate URL, got %q", got[0])
+	}
+}
+
 // TestWriteVault_loadOccurrenceMeta_preservesAnalystStatus verifies that
 // analyst.status written in a first vault pass is preserved after a second
 // WriteVault call (confirming loadOccurrenceMeta runs before RemoveAll).

@@ -3346,7 +3346,7 @@ func taxonomyRefsToStrings(refs []entities.TaxonomyRef) []string {
 		if label == "" {
 			label = url
 		}
-		if url != "" {
+		if url != "" && url != label {
 			label = label + " (" + url + ")"
 		}
 		out = append(out, label)

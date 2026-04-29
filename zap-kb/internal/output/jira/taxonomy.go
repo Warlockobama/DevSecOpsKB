@@ -51,12 +51,15 @@ func cvssLine(cvss *entities.CVSS) string {
 		return ""
 	}
 	parts := []string{}
-	if cvss.BaseScore > 0 || strings.TrimSpace(cvss.BaseSeverity) != "" {
+	severity := strings.TrimSpace(cvss.BaseSeverity)
+	if cvss.BaseScore > 0 {
 		score := fmt.Sprintf("%.1f", cvss.BaseScore)
-		if strings.TrimSpace(cvss.BaseSeverity) != "" {
-			score += " " + strings.TrimSpace(cvss.BaseSeverity)
+		if severity != "" {
+			score += " " + severity
 		}
 		parts = append(parts, score)
+	} else if severity != "" {
+		parts = append(parts, severity)
 	}
 	if strings.TrimSpace(cvss.Vector) != "" {
 		parts = append(parts, strings.TrimSpace(cvss.Vector))

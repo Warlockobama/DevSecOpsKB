@@ -61,3 +61,40 @@ url: "https://example.test/` + name + `"
 		t.Fatalf("report included filtered occurrence:\n%s", got)
 	}
 }
+
+func TestGenerateReportTreatsDateOnlyUntilAsEndOfDay(t *testing.T) {
+	root := t.TempDir()
+	occDir := filepath.Join(root, "occurrences")
+	if err := os.MkdirAll(occDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `---
+observedAt: "2026-01-03T23:30:00Z"
+occurrenceId: "occ-end-day"
+findingId: "fin-end-day"
+risk: "Medium"
+---
+`
+	if err := os.WriteFile(filepath.Join(occDir, "end-day.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := GenerateReport(root, ReportOptions{
+		OutPath: "reports/window.md",
+		Since:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Until:   time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(root, "reports", "window.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "fin-end-day") {
+		t.Fatalf("date-only until should include the full until day:\n%s", b)
+	}
+	if !strings.Contains(string(b), "- Window: 2026-01-01T00:00:00Z to 2026-01-03T23:59:59Z") {
+		t.Fatalf("displayed window should match normalized until:\n%s", b)
+	}
+}
