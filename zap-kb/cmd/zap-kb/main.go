@@ -112,7 +112,7 @@ func main() {
 	flag.BoolVar(&allPlugins, "all-plugins", false, "Discover all ZAP plugins from docs and update their definitions (enrich-only capable)")
 	flag.StringVar(&genAt, "generated-at", "", "Optional RFC3339 timestamp to set in entities output for stable diffs")
 	flag.BoolVar(&includeTraffic, "include-traffic", false, "Enrich with first-occurrence HTTP request/response snippets")
-	flag.IntVar(&trafficMax, "traffic-max-bytes", 2048, "Max bytes to capture for request/response snippets")
+	flag.IntVar(&trafficMax, "traffic-max-bytes", 2048, "Max bytes to capture for request/response snippets (minimum 1024; high/critical responses kept in full)")
 	flag.StringVar(&trafficScope, "traffic-scope", "first", "Traffic enrichment scope: first|all")
 	flag.IntVar(&trafficMaxPerIssue, "traffic-max-per-issue", 1, "Max occurrences per issue to enrich with traffic (applies to first scope)")
 	flag.IntVar(&trafficTotalMax, "traffic-total-max", 0, "Global cap on number of occurrences to enrich with traffic (0 = unlimited)")
