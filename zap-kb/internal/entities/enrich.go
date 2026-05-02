@@ -11,6 +11,8 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
+const minTrafficSnippetBytes = 1024
+
 // EnrichFirstTraffic populates Request/Response snippets for the first occurrence per Finding.
 // It uses ZAP's core/view/message with the occurrence SourceID (history id).
 // maxBody controls the max bytes captured into BodySnippet.
@@ -47,7 +49,7 @@ func EnrichFirstTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFi
 		ef.Occurrences[i].Request = &HTTPRequest{
 			Headers:        reqHeaders,
 			BodyBytes:      len(reqBody),
-			BodySnippet:    truncateUTF8(reqBody, maxBody),
+			BodySnippet:    trafficRequestSnippet(reqBody, maxBody),
 			RawHeader:      msg.RequestHeader,
 			RawHeaderBytes: len(msg.RequestHeader),
 		}
@@ -58,7 +60,7 @@ func EnrichFirstTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFi
 			StatusCode:     status,
 			Headers:        respHeaders,
 			BodyBytes:      len(respBody),
-			BodySnippet:    truncateUTF8(respBody, maxBody),
+			BodySnippet:    trafficResponseSnippet(respBody, o.Risk, maxBody),
 			RawHeader:      msg.ResponseHeader,
 			RawHeaderBytes: len(msg.ResponseHeader),
 		}
@@ -87,7 +89,7 @@ func EnrichAllTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFile
 		ef.Occurrences[i].Request = &HTTPRequest{
 			Headers:        reqHeaders,
 			BodyBytes:      len(reqBody),
-			BodySnippet:    truncateUTF8(reqBody, maxBody),
+			BodySnippet:    trafficRequestSnippet(reqBody, maxBody),
 			RawHeader:      msg.RequestHeader,
 			RawHeaderBytes: len(msg.RequestHeader),
 		}
@@ -98,7 +100,7 @@ func EnrichAllTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFile
 			StatusCode:     status,
 			Headers:        respHeaders,
 			BodyBytes:      len(respBody),
-			BodySnippet:    truncateUTF8(respBody, maxBody),
+			BodySnippet:    trafficResponseSnippet(respBody, o.Risk, maxBody),
 			RawHeader:      msg.ResponseHeader,
 			RawHeaderBytes: len(msg.ResponseHeader),
 		}
@@ -156,7 +158,7 @@ func EnrichTrafficSelective(ctx context.Context, c *zapclient.Client, ef *Entiti
 		ef.Occurrences[i].Request = &HTTPRequest{
 			Headers:        reqHeaders,
 			BodyBytes:      len(reqBody),
-			BodySnippet:    truncateUTF8(reqBody, maxBody),
+			BodySnippet:    trafficRequestSnippet(reqBody, maxBody),
 			RawHeader:      msg.RequestHeader,
 			RawHeaderBytes: len(msg.RequestHeader),
 		}
@@ -167,7 +169,7 @@ func EnrichTrafficSelective(ctx context.Context, c *zapclient.Client, ef *Entiti
 			StatusCode:     status,
 			Headers:        respHeaders,
 			BodyBytes:      len(respBody),
-			BodySnippet:    truncateUTF8(respBody, maxBody),
+			BodySnippet:    trafficResponseSnippet(respBody, o.Risk, maxBody),
 			RawHeader:      msg.ResponseHeader,
 			RawHeaderBytes: len(msg.ResponseHeader),
 		}
@@ -181,17 +183,40 @@ func EnrichTrafficSelective(ctx context.Context, c *zapclient.Client, ef *Entiti
 // Unknown values default to lowest (info).
 func severityCode(r string) int {
 	switch strings.ToLower(strings.TrimSpace(r)) {
-	case "high":
+	case "critical", "4":
+		return 4
+	case "high", "3":
 		return 3
-	case "medium":
+	case "medium", "2":
 		return 2
-	case "low":
+	case "low", "1":
 		return 1
-	case "info", "informational", "information":
+	case "info", "informational", "information", "0":
 		return 0
 	default:
 		return 0
 	}
+}
+
+func trafficRequestSnippet(body string, max int) string {
+	return truncateUTF8(body, trafficSnippetLimit(max))
+}
+
+func trafficResponseSnippet(body, risk string, max int) string {
+	if severityCode(risk) >= severityCode("high") {
+		return body
+	}
+	return truncateUTF8(body, trafficSnippetLimit(max))
+}
+
+func trafficSnippetLimit(max int) int {
+	if max <= 0 {
+		return max
+	}
+	if max < minTrafficSnippetBytes {
+		return minTrafficSnippetBytes
+	}
+	return max
 }
 
 func parseRawHeaders(raw string) []Header {

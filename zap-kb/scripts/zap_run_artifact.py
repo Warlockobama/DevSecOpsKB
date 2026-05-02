@@ -348,6 +348,9 @@ def _finding_key(alert: Dict[str, Any]) -> str:
     )
 
 
+MIN_TRAFFIC_SNIPPET_BYTES = 1024
+
+
 def _truncate_utf8(text: str, limit: int) -> str:
     if limit <= 0:
         return text
@@ -361,6 +364,22 @@ def _truncate_utf8(text: str, limit: int) -> str:
         except UnicodeDecodeError as exc:
             clipped = clipped[:exc.start]
     return ""
+
+
+def _traffic_snippet_limit(limit: int) -> int:
+    if limit <= 0:
+        return limit
+    return max(limit, MIN_TRAFFIC_SNIPPET_BYTES)
+
+
+def _traffic_request_snippet(body: str, max_bytes: int) -> str:
+    return _truncate_utf8(body, _traffic_snippet_limit(max_bytes))
+
+
+def _traffic_response_snippet(body: str, risk: str, max_bytes: int) -> str:
+    if _severity_code(risk) >= _severity_code("high"):
+        return body
+    return _truncate_utf8(body, _traffic_snippet_limit(max_bytes))
 
 
 def _parse_raw_headers(raw: str) -> List[Dict[str, str]]:
@@ -394,7 +413,20 @@ def _parse_response_headers(raw: str) -> Tuple[List[Dict[str, str]], int]:
 
 
 def _severity_code(value: str) -> int:
-    mapping = {"high": 3, "medium": 2, "low": 1, "info": 0, "informational": 0, "information": 0}
+    mapping = {
+        "critical": 4,
+        "4": 4,
+        "high": 3,
+        "3": 3,
+        "medium": 2,
+        "2": 2,
+        "low": 1,
+        "1": 1,
+        "info": 0,
+        "informational": 0,
+        "information": 0,
+        "0": 0,
+    }
     return mapping.get(str(value or "").strip().lower(), 0)
 
 
@@ -787,7 +819,7 @@ def enrich_traffic(
         entities["occurrences"][idx]["request"] = {
             "headers": req_headers,
             "bodyBytes": len(request_body.encode("utf-8")),
-            "bodySnippet": _truncate_utf8(request_body, max_bytes),
+            "bodySnippet": _traffic_request_snippet(request_body, max_bytes),
             "rawHeader": request_header,
             "rawHeaderBytes": len(request_header.encode("utf-8")),
         }
@@ -795,7 +827,7 @@ def enrich_traffic(
             "statusCode": status,
             "headers": resp_headers,
             "bodyBytes": len(response_body.encode("utf-8")),
-            "bodySnippet": _truncate_utf8(response_body, max_bytes),
+            "bodySnippet": _traffic_response_snippet(response_body, occ.get("risk", ""), max_bytes),
             "rawHeader": response_header,
             "rawHeaderBytes": len(response_header.encode("utf-8")),
         }
@@ -940,10 +972,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Traffic capture tuning
     parser.add_argument("--include-traffic", action="store_true", help="Fetch HTTP request/response snippets from ZAP.")
     parser.add_argument("--traffic-scope", choices=["first", "all"], default="first", help="Capture only selected occurrences per finding (first) or every occurrence (all).")
-    parser.add_argument("--traffic-max-bytes", type=int, default=2048, help="Truncate request/response bodies to this many bytes (default: 2048).")
+    parser.add_argument("--traffic-max-bytes", type=int, default=2048, help="Truncate request/response bodies to this many bytes (0 = unlimited; values 1-1023 are raised to 1024; high/critical responses are kept in full).")
     parser.add_argument("--traffic-max-per-issue", type=int, default=1, help="When scope=first, capture up to this many occurrences per finding (default: 1).")
     parser.add_argument("--traffic-total-max", type=int, default=0, help="Global cap on enriched occurrences (0 = unlimited).")
-    parser.add_argument("--traffic-min-risk", choices=["info", "low", "medium", "high"], default="info", help="Only capture traffic for occurrences at or above this risk level.")
+    parser.add_argument("--traffic-min-risk", choices=["info", "low", "medium", "high", "critical"], default="info", help="Only capture traffic for occurrences at or above this risk level.")
 
     parser.add_argument("--timeout", type=int, default=60, help="HTTP timeout for ZAP API requests (seconds).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print progress messages to stderr.")

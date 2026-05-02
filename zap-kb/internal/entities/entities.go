@@ -561,7 +561,7 @@ func attachInlineTrafficFromAlert(o *Occurrence, a zapclient.Alert) {
 		o.Request = &HTTPRequest{
 			Headers:        parseRawHeaders(a.RequestHeader),
 			BodyBytes:      len(reqBody),
-			BodySnippet:    truncateUTF8(reqBody, inlineTrafficSnippetLimit),
+			BodySnippet:    trafficRequestSnippet(reqBody, inlineTrafficSnippetLimit),
 			RawHeader:      a.RequestHeader,
 			RawHeaderBytes: len(a.RequestHeader),
 		}
@@ -575,7 +575,7 @@ func attachInlineTrafficFromAlert(o *Occurrence, a zapclient.Alert) {
 			StatusCode:     status,
 			Headers:        headers,
 			BodyBytes:      len(respBody),
-			BodySnippet:    truncateUTF8(respBody, inlineTrafficSnippetLimit),
+			BodySnippet:    trafficResponseSnippet(respBody, a.Risk, inlineTrafficSnippetLimit),
 			RawHeader:      a.ResponseHeader,
 			RawHeaderBytes: len(a.ResponseHeader),
 		}

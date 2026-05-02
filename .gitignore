@@ -14,6 +14,9 @@ Thumbs.db
 # Codex local workspace state
 .codex/
 
+# Local Go build caches
+.gocache*/
+
 # Local linked worktrees / external project mounts
 _ext_*/
 
