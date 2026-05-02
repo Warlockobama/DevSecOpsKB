@@ -34,9 +34,9 @@ Key flags:
 - `-include-cvss`: Estimate definition CVSS from scanner risk when official CVSS is unavailable (default `true`).
 - `-detection-details`: `links|summary` (adds brief detection summary when `summary`).
 - `-include-traffic`: Attach first/all HTTP request/response snippets.
-- `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size. Values below 1024 are raised to 1024; High/Critical response bodies are kept in full so analyst evidence is not cut off.
+- `-traffic-scope`: `first|all` and `-traffic-max-bytes` to limit snippet size. `0` means unlimited; values 1–1023 are raised to 1024; High/Critical response bodies are kept in full so analyst evidence is not cut off.
 - `-traffic-max-per-issue`: When using `-traffic-scope=first`, enrich up to N occurrences per issue (default 1).
-- `-traffic-min-risk`: Only enrich traffic for occurrences at or above this risk (`info|low|medium|high`; default `info`).
+- `-traffic-min-risk`: Only enrich traffic for occurrences at or above this risk (`info|low|medium|high|critical`; default `info`).
 - `-traffic-total-max`: Global cap on the number of occurrences to enrich with traffic (default 0 = unlimited).
 - `-obsidian-dir`: Output directory when `-format=obsidian` (default `docs/obsidian`).
 - `-generated-at`: Override timestamp for stable diffs.

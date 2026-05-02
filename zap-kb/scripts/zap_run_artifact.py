@@ -972,10 +972,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Traffic capture tuning
     parser.add_argument("--include-traffic", action="store_true", help="Fetch HTTP request/response snippets from ZAP.")
     parser.add_argument("--traffic-scope", choices=["first", "all"], default="first", help="Capture only selected occurrences per finding (first) or every occurrence (all).")
-    parser.add_argument("--traffic-max-bytes", type=int, default=2048, help="Truncate request/response bodies to this many bytes (minimum: 1024; high/critical responses are kept in full).")
+    parser.add_argument("--traffic-max-bytes", type=int, default=2048, help="Truncate request/response bodies to this many bytes (0 = unlimited; values 1-1023 are raised to 1024; high/critical responses are kept in full).")
     parser.add_argument("--traffic-max-per-issue", type=int, default=1, help="When scope=first, capture up to this many occurrences per finding (default: 1).")
     parser.add_argument("--traffic-total-max", type=int, default=0, help="Global cap on enriched occurrences (0 = unlimited).")
-    parser.add_argument("--traffic-min-risk", choices=["info", "low", "medium", "high"], default="info", help="Only capture traffic for occurrences at or above this risk level.")
+    parser.add_argument("--traffic-min-risk", choices=["info", "low", "medium", "high", "critical"], default="info", help="Only capture traffic for occurrences at or above this risk level.")
 
     parser.add_argument("--timeout", type=int, default=60, help="HTTP timeout for ZAP API requests (seconds).")
     parser.add_argument("-v", "--verbose", action="store_true", help="Print progress messages to stderr.")
