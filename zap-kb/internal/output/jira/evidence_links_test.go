@@ -66,3 +66,41 @@ func TestSyncFindingEvidenceLinks_SkipsExistingRemoteLink(t *testing.T) {
 		t.Fatalf("expected no POST when link already exists, got %d", postCount)
 	}
 }
+
+func TestSyncFindingEvidenceLinkRefs_LinksAllRefsForPublishedFinding(t *testing.T) {
+	var postCount int64
+	seenGets := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && (r.URL.Path == "/rest/api/3/issue/SEC-1/remotelink" || r.URL.Path == "/rest/api/3/issue/SEC-2/remotelink"):
+			seenGets[r.URL.Path] = true
+			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPost && (r.URL.Path == "/rest/api/3/issue/SEC-1/remotelink" || r.URL.Path == "/rest/api/3/issue/SEC-2/remotelink"):
+			atomic.AddInt64(&postCount, 1)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	sum, err := SyncFindingEvidenceLinkRefs(
+		context.Background(),
+		map[string][]string{"fin-1": {"SEC-1", "https://example.atlassian.net/browse/SEC-2", "SEC-1"}},
+		map[string]string{"fin-1": "https://example/wiki/spaces/KB/pages/123"},
+		Options{BaseURL: srv.URL, Username: "u", APIToken: "t"},
+	)
+	if err != nil {
+		t.Fatalf("SyncFindingEvidenceLinkRefs: %v", err)
+	}
+	if sum.Added != 2 || sum.Skipped != 0 || sum.Errors != 0 {
+		t.Fatalf("unexpected summary: %#v", sum)
+	}
+	if !seenGets["/rest/api/3/issue/SEC-1/remotelink"] || !seenGets["/rest/api/3/issue/SEC-2/remotelink"] {
+		t.Fatalf("expected GETs for both refs, got %#v", seenGets)
+	}
+	if atomic.LoadInt64(&postCount) != 2 {
+		t.Fatalf("expected two POSTs, got %d", postCount)
+	}
+}

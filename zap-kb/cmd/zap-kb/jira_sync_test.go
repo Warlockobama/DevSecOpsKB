@@ -47,6 +47,26 @@ func TestMergeFindingTicketKeys_DedupesAndCountsAdds(t *testing.T) {
 	}
 }
 
+func TestCollectFindingTicketRefs_DedupesByFinding(t *testing.T) {
+	ent := testEntitiesFile()
+	ent.Findings[0].Analyst = &entities.Analyst{TicketRefs: []string{"SEC-1", " SEC-1 ", "https://example.atlassian.net/browse/SEC-2", ""}}
+	ent.Findings = append(ent.Findings, entities.Finding{
+		FindingID: "fin-2",
+		Analyst:   &entities.Analyst{TicketRefs: []string{"SEC-3"}},
+	})
+
+	got := collectFindingTicketRefs(ent)
+	if len(got) != 2 {
+		t.Fatalf("expected refs for 2 findings, got %#v", got)
+	}
+	if strings.Join(got["fin-1"], ",") != "SEC-1,https://example.atlassian.net/browse/SEC-2" {
+		t.Fatalf("unexpected fin-1 refs: %#v", got["fin-1"])
+	}
+	if strings.Join(got["fin-2"], ",") != "SEC-3" {
+		t.Fatalf("unexpected fin-2 refs: %#v", got["fin-2"])
+	}
+}
+
 func TestMergeDefinitionEpicRefs_SetsAndSkipsExisting(t *testing.T) {
 	ent := testEntitiesFile()
 	ent.Definitions = []entities.Definition{

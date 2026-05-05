@@ -287,6 +287,50 @@ func TestPullStatus_OwnerWriteBackFillsEmptyOwner(t *testing.T) {
 	}
 }
 
+func TestPullStatus_ReadOnlyReturnsRawFieldsWithoutWriteBack(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fields": map[string]any{
+				"status":   map[string]string{"name": "Done"},
+				"assignee": map[string]string{"displayName": "Alice Example"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ef := makeEntities(entities.Finding{
+		FindingID: "fin-readonly",
+		Name:      "Read Only",
+		Analyst: &entities.Analyst{
+			Status:     "open",
+			Owner:      "",
+			TicketRefs: []string{"KAN-7"},
+		},
+	})
+	res, err := PullStatus(context.Background(), ef, PullOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		Token:    "token",
+		ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := res.Updated.Findings[0].Analyst.Status; got != "open" {
+		t.Errorf("status should not be written back in read-only mode; got %q", got)
+	}
+	if got := res.Updated.Findings[0].Analyst.Owner; got != "" {
+		t.Errorf("owner should not be written back in read-only mode; got %q", got)
+	}
+	if got := res.RawStatuses["KAN-7"]; got != "Done" {
+		t.Errorf("RawStatuses[KAN-7] = %q, want Done", got)
+	}
+	if got := res.RawAssignees["KAN-7"]; got != "Alice Example" {
+		t.Errorf("RawAssignees[KAN-7] = %q, want Alice Example", got)
+	}
+}
+
 func TestPullStatus_OwnerWriteBackFillsEmptyOwnerWithUnmappedStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
