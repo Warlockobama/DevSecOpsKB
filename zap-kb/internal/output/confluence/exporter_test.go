@@ -2040,9 +2040,14 @@ func TestAppendJiraOverviewSection_RendersLinkedCases(t *testing.T) {
 	}
 	ei := buildEntityIndex(ef)
 	out := appendJiraOverviewSection("Triage Board", "<h1>Triage board</h1>", &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, "2026-04-08T21:00:00Z")
-	for _, want := range []string{"Linked Jira Cases", "browse/SEC-42", "In Review</ac:parameter>", "TRIAGED</ac:parameter>", "HIGH</ac:parameter>", "Last Jira sync: 2026-04-08T21:00:00Z"} {
+	for _, want := range []string{"Jira References", "workflow is managed in Jira", "browse/SEC-42", "HIGH</ac:parameter>", "Last Jira reference check: 2026-04-08T21:00:00Z"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("appendJiraOverviewSection missing %q:\n%s", want, out)
+		}
+	}
+	for _, notWant := range []string{"In Review</ac:parameter>", "TRIAGED</ac:parameter>", "<th>Jira Status</th>", "<th>KB Status</th>"} {
+		if strings.Contains(out, notWant) {
+			t.Fatalf("appendJiraOverviewSection should not render cached workflow status %q:\n%s", notWant, out)
 		}
 	}
 }

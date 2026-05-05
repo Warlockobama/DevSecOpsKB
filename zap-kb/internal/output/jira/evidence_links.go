@@ -20,10 +20,20 @@ type EvidenceLinkSummary struct {
 }
 
 func SyncFindingEvidenceLinks(ctx context.Context, ticketKeys, findingLinks map[string]string, opts Options) (EvidenceLinkSummary, error) {
+	ticketRefs := make(map[string][]string, len(ticketKeys))
+	for findingID, issueKey := range ticketKeys {
+		if strings.TrimSpace(issueKey) != "" {
+			ticketRefs[findingID] = []string{issueKey}
+		}
+	}
+	return SyncFindingEvidenceLinkRefs(ctx, ticketRefs, findingLinks, opts)
+}
+
+func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]string, findingLinks map[string]string, opts Options) (EvidenceLinkSummary, error) {
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.APIToken) == "" {
 		return EvidenceLinkSummary{}, fmt.Errorf("jira evidence link sync: missing required fields (base URL, username, api token)")
 	}
-	if len(ticketKeys) == 0 || len(findingLinks) == 0 {
+	if len(ticketRefs) == 0 || len(findingLinks) == 0 {
 		return EvidenceLinkSummary{}, nil
 	}
 
@@ -51,13 +61,23 @@ func SyncFindingEvidenceLinks(ctx context.Context, ticketKeys, findingLinks map[
 		url      string
 	}
 	var candidates []candidate
-	for findingID, issueKey := range ticketKeys {
-		issueKey = strings.TrimSpace(issueKey)
+	for findingID, refs := range ticketRefs {
 		link := strings.TrimSpace(findingLinks[findingID])
-		if issueKey == "" || link == "" {
+		if link == "" {
 			continue
 		}
-		candidates = append(candidates, candidate{issueKey: issueKey, url: link})
+		seen := map[string]struct{}{}
+		for _, ref := range refs {
+			issueKey := extractTicketKey(ref)
+			if issueKey == "" {
+				continue
+			}
+			if _, ok := seen[issueKey]; ok {
+				continue
+			}
+			seen[issueKey] = struct{}{}
+			candidates = append(candidates, candidate{issueKey: issueKey, url: link})
+		}
 	}
 	if len(candidates) == 0 {
 		return EvidenceLinkSummary{}, nil

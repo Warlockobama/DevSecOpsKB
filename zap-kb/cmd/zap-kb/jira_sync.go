@@ -88,6 +88,29 @@ func mergeFindingTicketKeys(ent *entities.EntitiesFile, ticketKeys map[string]st
 	return added
 }
 
+func collectFindingTicketRefs(ent entities.EntitiesFile) map[string][]string {
+	out := make(map[string][]string)
+	for _, finding := range ent.Findings {
+		findingID := strings.TrimSpace(finding.FindingID)
+		if findingID == "" || finding.Analyst == nil {
+			continue
+		}
+		for _, ref := range finding.Analyst.TicketRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" {
+				continue
+			}
+			if !containsString(out[findingID], ref) {
+				out[findingID] = append(out[findingID], ref)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func persistJiraEntities(ctx jiraSyncContext, ent entities.EntitiesFile) (string, error) {
 	switch strings.TrimSpace(ctx.Format) {
 	case "entities":

@@ -3016,25 +3016,13 @@ func jiraOverviewSection(ei *entityIndex, jiraBaseURL string, jiraStatusByKey ma
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(`<h2>Linked Jira Cases</h2>`)
-	b.WriteString(`<p><em>Analyst workflow is managed in Jira. These links resolve to Jira smart cards; statuses reflect the last publish sync.</em></p>`)
+	b.WriteString(`<h2>Jira References</h2>`)
+	b.WriteString(`<p><em>Analyst workflow is managed in Jira. Use the live Jira queue for current status; this KB keeps evidence links only.</em></p>`)
 	b.WriteString(`<table><tbody>`)
-	b.WriteString(`<tr><th>Case</th><th>Jira Status</th><th>KB Status</th><th>Severity</th><th>Issue</th></tr>`)
+	b.WriteString(`<tr><th>Case</th><th>Severity</th><th>Issue</th></tr>`)
 	for _, row := range rows {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(jiraSmartLink(row.BrowseURL, row.IssueKey, "inline"))
-		b.WriteString(`</td><td>`)
-		if row.JiraStatus != "" {
-			b.WriteString(jiraStatusMacro(row.JiraStatus))
-		} else {
-			b.WriteString(`-`)
-		}
-		b.WriteString(`</td><td>`)
-		if row.KBStatus != "" {
-			b.WriteString(triageStatusMacro(row.KBStatus))
-		} else {
-			b.WriteString(`-`)
-		}
 		b.WriteString(`</td><td>`)
 		if row.Severity != "" {
 			b.WriteString(riskStatusMacro(row.Severity))
@@ -3047,7 +3035,7 @@ func jiraOverviewSection(ei *entityIndex, jiraBaseURL string, jiraStatusByKey ma
 	}
 	b.WriteString(`</tbody></table>`)
 	if strings.TrimSpace(jiraStatusSynced) != "" {
-		b.WriteString(`<p><small>Last Jira sync: `)
+		b.WriteString(`<p><small>Last Jira reference check: `)
 		b.WriteString(escapeHTML(strings.TrimSpace(jiraStatusSynced)))
 		b.WriteString(`</small></p>`)
 	}

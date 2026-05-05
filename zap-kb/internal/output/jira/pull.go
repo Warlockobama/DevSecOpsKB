@@ -19,6 +19,7 @@ type PullOptions struct {
 	BaseURL  string
 	Username string
 	Token    string
+	ReadOnly bool
 }
 
 // PullResult reports what the pull operation did.
@@ -39,8 +40,10 @@ type PullStatusResult struct {
 }
 
 // PullStatus fetches the current Jira ticket status for every finding and
-// occurrence that has a TicketRef, and merges the mapped status back into
-// Analyst.Status. Jira wins on status; all other analyst fields are preserved.
+// occurrence that has a TicketRef. By default it also merges the mapped status
+// back into Analyst.Status and fills empty owners from Jira assignees. When
+// opts.ReadOnly is true it only returns RawStatuses/RawAssignees for rendering
+// and leaves the KB entity state unchanged.
 //
 // Status mapping (case-insensitive):
 //
@@ -169,7 +172,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 		// the KB side is empty and Jira reports an assignee. This MUST run
 		// before the r.status == "" early-continue so the write-back fires
 		// even for tickets with custom/unmapped Jira workflow states.
-		if assignee := strings.TrimSpace(r.assignee); assignee != "" {
+		if assignee := strings.TrimSpace(r.assignee); assignee != "" && !opts.ReadOnly {
 			switch r.ref.kind {
 			case "finding":
 				f := &ef.Findings[r.ref.idx]
@@ -192,6 +195,10 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 
 		if r.status == "" {
 			res.NotFound++
+			continue
+		}
+		if opts.ReadOnly {
+			res.Unchanged++
 			continue
 		}
 

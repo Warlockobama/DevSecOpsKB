@@ -94,6 +94,7 @@ func main() {
 		jiraDetectionEpic  bool
 		jiraEpicIssueType  string
 		jiraEpicComponent  string
+		jiraSyncKBStatus   bool
 		allowAgentPublish  bool
 		allowCustomPublish bool
 	)
@@ -167,6 +168,7 @@ func main() {
 	flag.BoolVar(&jiraDetectionEpic, "jira-detection-epic", false, "Create/reuse a parent Epic per detection (definition); findings link via parent.")
 	flag.StringVar(&jiraEpicIssueType, "jira-epic-issue-type", "Epic", "Issue type for detection Epics (default: Epic; override for projects that use Initiative).")
 	flag.StringVar(&jiraEpicComponent, "jira-epic-component", "", "Optional Jira component name applied to detection Epics.")
+	flag.BoolVar(&jiraSyncKBStatus, "jira-sync-kb-status", false, "Legacy mode: write mapped Jira workflow status and assignee back into KB analyst fields. By default Jira remains the workflow source of truth and KB state is not mutated.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	// Subcommands own their flag sets, so dispatch before parsing global flags.
@@ -193,6 +195,8 @@ func main() {
 	envFallback(&confToken, "CONFLUENCE_TOKEN")
 	envFallback(&jiraUser, "JIRA_USER")
 	envFallback(&jiraToken, "JIRA_API_TOKEN")
+	envFallback(&jiraServerID, "JIRA_SERVER_ID")
+	envFallback(&jiraServerName, "JIRA_SERVER_NAME")
 
 	// Load operator-tunable triage policy once at startup. This drives the
 	// auto-reopen gate, auto-suppression cadence, and rule-tune-scan tagging
@@ -698,19 +702,27 @@ func main() {
 				BaseURL:  jiraURL,
 				Username: jiraUser,
 				Token:    jiraToken,
+				ReadOnly: !jiraSyncKBStatus,
 			})
 			if pullErr != nil {
 				log.Printf("warning: jira status pull failed: %v", pullErr)
 			} else {
-				ent = pullRes.Updated
+				if jiraSyncKBStatus {
+					ent = pullRes.Updated
+				}
 				jiraStatusByKey = pullRes.RawStatuses
 				jiraAssigneeByKey = pullRes.RawAssignees
 				jiraStatusSynced = pullRes.SyncedAt
-				fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d errors=%d\n",
-					pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+				if jiraSyncKBStatus {
+					fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d errors=%d\n",
+						pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+				} else {
+					fmt.Printf("Jira pull: fetched=%d notfound=%d errors=%d (KB status write-back disabled)\n",
+						pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+				}
 			}
 		}
-		if !jiraDryRun && (addedTicketKeys > 0 || hasFindingTicketRefs(ent)) {
+		if !jiraDryRun && (addedTicketKeys > 0 || (jiraSyncKBStatus && hasFindingTicketRefs(ent))) {
 			var artPtr *runartifact.Artifact
 			if runInIsArtifact {
 				artPtr = &runInArtifact
@@ -759,19 +771,22 @@ func main() {
 			if err != nil {
 				log.Fatalf("%v", err)
 			}
-			if !jiraDryRun && len(sum.TicketKeys) > 0 && len(confSum.FindingLinks) > 0 {
-				linkCtx, linkCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer linkCancel()
-				linkSum, lerr := jira.SyncFindingEvidenceLinks(linkCtx, sum.TicketKeys, confSum.FindingLinks, jira.Options{
-					BaseURL:     jiraURL,
-					Username:    jiraUser,
-					APIToken:    jiraToken,
-					Concurrency: jiraConcurrency,
-				})
-				if lerr != nil {
-					log.Printf("warning: jira evidence link sync failed: %v", lerr)
-				} else {
-					fmt.Printf("Jira evidence links: added=%d skipped=%d errors=%d\n", linkSum.Added, linkSum.Skipped, linkSum.Errors)
+			if !jiraDryRun && len(confSum.FindingLinks) > 0 {
+				ticketRefs := collectFindingTicketRefs(ent)
+				if len(ticketRefs) > 0 {
+					linkCtx, linkCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					defer linkCancel()
+					linkSum, lerr := jira.SyncFindingEvidenceLinkRefs(linkCtx, ticketRefs, confSum.FindingLinks, jira.Options{
+						BaseURL:     jiraURL,
+						Username:    jiraUser,
+						APIToken:    jiraToken,
+						Concurrency: jiraConcurrency,
+					})
+					if lerr != nil {
+						log.Printf("warning: jira evidence link sync failed: %v", lerr)
+					} else {
+						fmt.Printf("Jira evidence links: added=%d skipped=%d errors=%d\n", linkSum.Added, linkSum.Skipped, linkSum.Errors)
+					}
 				}
 			}
 		}
