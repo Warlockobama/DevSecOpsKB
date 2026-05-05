@@ -139,7 +139,7 @@ func TestFetchCWECacheFromZip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cache, err := fetchCWECache(srv.URL + "/cwe.zip")
+	cache, err := fetchCWECache(srv.URL + "/download")
 	if err != nil {
 		t.Fatalf("fetchCWECache: %v", err)
 	}
@@ -148,6 +148,33 @@ func TestFetchCWECacheFromZip(t *testing.T) {
 	}
 	if len(cache.Weaknesses) != 1 || cache.Weaknesses[0].ID != 79 {
 		t.Fatalf("bad weaknesses: %+v", cache.Weaknesses)
+	}
+}
+
+func TestIsZipPayload(t *testing.T) {
+	if !isZipPayload([]byte{'P', 'K', 0x03, 0x04, 'x'}) {
+		t.Fatal("expected ZIP magic header to be detected")
+	}
+	if !isZipPayload([]byte{'P', 'K', 0x05, 0x06}) {
+		t.Fatal("expected empty ZIP archive signature to be detected")
+	}
+	if isZipPayload([]byte("<xml></xml>")) {
+		t.Fatal("did not expect XML to be detected as ZIP")
+	}
+}
+
+func TestFetchURLBytesErrorsWhenLimitExceeded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("123456"))
+	}))
+	defer srv.Close()
+
+	_, err := fetchURLBytes(srv.URL, "text/plain", 5)
+	if err == nil {
+		t.Fatal("expected size limit error")
+	}
+	if got := err.Error(); got != "GET "+srv.URL+": response exceeded size limit of 5 bytes" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
