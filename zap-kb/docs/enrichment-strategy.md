@@ -16,6 +16,9 @@ Default-on enrichments run after normalization and merge:
   scanner risk when no CVSS is already present.
 
 These can be disabled with `-include-mitre=false` or `-include-cvss=false`.
+Official catalog caches can be supplied with `-mitre-cwe-cache`,
+`-mitre-capec-cache`, and `-mitre-attack-cache`; when absent, the built-in
+curated metadata tables remain the fallback.
 
 ## CVSS Policy
 
@@ -60,6 +63,18 @@ and related weakness IDs. The CAPEC update command reads MITRE's current CAPEC
 XML and records attack pattern IDs, names, URLs, status, and related CWE IDs.
 `suggest-capec` reports candidate mappings from official CAPEC related-CWE data.
 Mapping decisions should remain explicit and testable on top of these caches.
+Runtime enrichment can consume reviewed local caches without network access:
+
+```powershell
+go run ./cmd/zap-kb -entities-in docs/data/entities.json -out docs/data/entities.enriched.json `
+  -mitre-cwe-cache docs/data/cwe-cache.json `
+  -mitre-capec-cache docs/data/capec-cache.json `
+  -mitre-attack-cache docs/data/attack-techniques.json
+```
+
+Cache-backed enrichment only expands metadata for identifiers already present
+or derived by curated mappings. It does not infer ATT&CK techniques from CWE or
+CAPEC relationships.
 
 Stored taxonomy keeps both compatibility and rich fields:
 

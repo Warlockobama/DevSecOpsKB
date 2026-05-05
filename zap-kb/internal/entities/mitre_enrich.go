@@ -11,6 +11,13 @@ import (
 // MITRE-maintained titles, canonical URLs, source attribution, and mapping
 // confidence. It is offline and best-effort; it never overwrites analyst data.
 func EnrichMITRE(defs []Definition) {
+	EnrichMITREWithCatalogs(defs, nil)
+}
+
+// EnrichMITREWithCatalogs expands existing CWE, CAPEC, and ATT&CK identifiers
+// using local official-catalog caches when provided, then falls back to the
+// built-in curated metadata tables.
+func EnrichMITREWithCatalogs(defs []Definition, catalogs *MITRECatalogs) {
 	for i := range defs {
 		d := &defs[i]
 		if d.Taxonomy == nil {
@@ -19,28 +26,28 @@ func EnrichMITRE(defs []Definition) {
 		t := d.Taxonomy
 
 		if t.CWEID > 0 {
-			if ref := zapmeta.LookupCWEInfo(t.CWEID); ref != nil {
+			if ref := lookupCWERef(catalogs, t.CWEID); ref != nil {
 				if strings.TrimSpace(t.CWEName) == "" {
 					t.CWEName = ref.Name
 				}
 				if strings.TrimSpace(t.CWEURI) == "" {
 					t.CWEURI = ref.URL
 				}
-				addTaxonomySource(t, TaxonomySource{Name: ref.Source, URL: ref.URL})
+				addMITRECatalogSource(t, ref)
 			}
 		}
 
 		for _, id := range t.CAPECIDs {
-			if ref := zapmeta.LookupCAPECInfo(id); ref != nil {
+			if ref := lookupCAPECRef(catalogs, id); ref != nil {
 				upsertTaxonomyRef(&t.CAPEC, TaxonomyRef{ID: ref.ID, Name: ref.Name, URL: ref.URL})
-				addTaxonomySource(t, TaxonomySource{Name: ref.Source, URL: ref.URL})
+				addMITRECatalogSource(t, ref)
 			}
 		}
 
 		for _, id := range t.ATTACK {
-			if ref := zapmeta.LookupATTACKInfo(id); ref != nil {
+			if ref := lookupATTACKRef(catalogs, id); ref != nil {
 				upsertTaxonomyRef(&t.ATTACKTechniques, TaxonomyRef{ID: ref.ID, Name: ref.Name, URL: ref.URL})
-				addTaxonomySource(t, TaxonomySource{Name: ref.Source, URL: ref.URL})
+				addMITRECatalogSource(t, ref)
 			}
 		}
 
@@ -55,6 +62,55 @@ func EnrichMITRE(defs []Definition) {
 			}
 		}
 	}
+}
+
+func lookupCWERef(catalogs *MITRECatalogs, id int) *mitreCatalogRef {
+	if catalogs != nil && catalogs.cwe != nil {
+		if ref, ok := catalogs.cwe[id]; ok {
+			return &ref
+		}
+	}
+	return catalogRefFromZapmeta(zapmeta.LookupCWEInfo(id), "")
+}
+
+func lookupCAPECRef(catalogs *MITRECatalogs, id int) *mitreCatalogRef {
+	if catalogs != nil && catalogs.capec != nil {
+		if ref, ok := catalogs.capec[id]; ok {
+			return &ref
+		}
+	}
+	return catalogRefFromZapmeta(zapmeta.LookupCAPECInfo(id), "")
+}
+
+func lookupATTACKRef(catalogs *MITRECatalogs, id string) *mitreCatalogRef {
+	id = strings.ToUpper(strings.TrimSpace(id))
+	if catalogs != nil && catalogs.attack != nil {
+		if ref, ok := catalogs.attack[id]; ok {
+			return &ref
+		}
+	}
+	return catalogRefFromZapmeta(zapmeta.LookupATTACKInfo(id), "")
+}
+
+func catalogRefFromZapmeta(ref *zapmeta.MITRERef, version string) *mitreCatalogRef {
+	if ref == nil {
+		return nil
+	}
+	return &mitreCatalogRef{
+		ID:        ref.ID,
+		Name:      ref.Name,
+		URL:       ref.URL,
+		Source:    ref.Source,
+		SourceURL: ref.URL,
+		Version:   strings.TrimSpace(version),
+	}
+}
+
+func addMITRECatalogSource(t *Taxonomy, ref *mitreCatalogRef) {
+	if ref == nil {
+		return
+	}
+	addTaxonomySource(t, TaxonomySource{Name: ref.Source, URL: firstNonEmptyString(ref.SourceURL, ref.URL), Version: ref.Version})
 }
 
 // EnrichCVSS estimates definition-level CVSS when no official score is present.
@@ -123,9 +179,12 @@ func addTaxonomySource(t *Taxonomy, src TaxonomySource) {
 	src.Name = strings.TrimSpace(src.Name)
 	src.URL = strings.TrimSpace(src.URL)
 	src.Version = strings.TrimSpace(src.Version)
-	for _, existing := range t.Sources {
-		if strings.EqualFold(strings.TrimSpace(existing.Name), src.Name) &&
-			strings.EqualFold(strings.TrimSpace(existing.URL), src.URL) {
+	for i := range t.Sources {
+		if strings.EqualFold(strings.TrimSpace(t.Sources[i].Name), src.Name) &&
+			strings.EqualFold(strings.TrimSpace(t.Sources[i].URL), src.URL) {
+			if strings.TrimSpace(t.Sources[i].Version) == "" && src.Version != "" {
+				t.Sources[i].Version = src.Version
+			}
 			return
 		}
 	}
