@@ -15,6 +15,19 @@ func TestLookupSubcommand(t *testing.T) {
 	}
 }
 
+func TestLookupSubcommandTaxonomy(t *testing.T) {
+	handler, args, ok := lookupSubcommand([]string{"taxonomy", "audit", "-entities-in", "entities.json"})
+	if !ok {
+		t.Fatal("expected taxonomy to resolve as a subcommand")
+	}
+	if handler == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	if len(args) != 3 || args[0] != "audit" {
+		t.Fatalf("unexpected remaining args: %#v", args)
+	}
+}
+
 func TestLookupSubcommandUnknown(t *testing.T) {
 	handler, args, ok := lookupSubcommand([]string{"unknown", "-flag"})
 	if ok {
