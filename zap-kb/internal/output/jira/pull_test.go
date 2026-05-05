@@ -365,6 +365,41 @@ func TestPullStatus_OwnerWriteBackFillsEmptyOwnerWithUnmappedStatus(t *testing.T
 	if got := res.Updated.Findings[0].Analyst.Owner; got != "Alice Example" {
 		t.Errorf("expected owner='Alice Example' for unmapped status; got %q", got)
 	}
+	if res.Result.Unmapped != 1 || res.Result.NotFound != 0 {
+		t.Errorf("expected unmapped=1 notFound=0, got unmapped=%d notFound=%d", res.Result.Unmapped, res.Result.NotFound)
+	}
+}
+
+func TestPullStatus_UnmappedStatusCountsSeparatelyFromNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(issueStatusResponse("Custom Workflow State"))
+	}))
+	defer srv.Close()
+
+	ef := makeEntities(entities.Finding{
+		FindingID: "fin-unmapped",
+		Name:      "Unmapped",
+		Analyst: &entities.Analyst{
+			Status:     "open",
+			TicketRefs: []string{"KAN-10"},
+		},
+	})
+	res, err := PullStatus(context.Background(), ef, PullOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		Token:    "token",
+		ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Result.Unmapped != 1 || res.Result.NotFound != 0 {
+		t.Fatalf("expected unmapped=1 notFound=0, got unmapped=%d notFound=%d", res.Result.Unmapped, res.Result.NotFound)
+	}
+	if got := res.RawStatuses["KAN-10"]; got != "Custom Workflow State" {
+		t.Fatalf("RawStatuses[KAN-10] = %q, want Custom Workflow State", got)
+	}
 }
 
 func TestPullStatus_OwnerWriteBackPreservesExistingOwner(t *testing.T) {

@@ -27,6 +27,7 @@ type PullResult struct {
 	Updated   int
 	Unchanged int
 	NotFound  int
+	Unmapped  int
 	Errors    int
 }
 
@@ -194,7 +195,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 		}
 
 		if r.status == "" {
-			res.NotFound++
+			res.Unmapped++
 			continue
 		}
 		if opts.ReadOnly {

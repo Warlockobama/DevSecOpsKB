@@ -111,6 +111,10 @@ func collectFindingTicketRefs(ent entities.EntitiesFile) map[string][]string {
 	return out
 }
 
+func shouldPersistJiraEntities(addedTicketKeys, updatedEpicRefs int, jiraSyncKBStatus bool, ent entities.EntitiesFile) bool {
+	return addedTicketKeys > 0 || updatedEpicRefs > 0 || (jiraSyncKBStatus && hasFindingTicketRefs(ent))
+}
+
 func persistJiraEntities(ctx jiraSyncContext, ent entities.EntitiesFile) (string, error) {
 	switch strings.TrimSpace(ctx.Format) {
 	case "entities":
