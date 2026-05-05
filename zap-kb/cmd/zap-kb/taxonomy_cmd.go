@@ -258,7 +258,7 @@ func runTaxonomyUpdate(args []string) {
 	var source string
 	var out string
 	var sourceURL string
-	fs.StringVar(&source, "source", "attack", "Source to update: attack")
+	fs.StringVar(&source, "source", "attack", "Source to update: attack|cwe|capec")
 	fs.StringVar(&out, "out", "", "Output cache JSON path")
 	fs.StringVar(&sourceURL, "url", "", "Source URL for the selected catalog")
 	if err := fs.Parse(args); err != nil {
@@ -454,7 +454,7 @@ func fetchCWECache(sourceURL string) (cweCache, error) {
 		return cweCache{}, err
 	}
 	xmlData := raw
-	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(sourceURL)), ".zip") {
+	if isZipPayload(raw) {
 		xmlData, err = firstXMLFromZip(raw)
 		if err != nil {
 			return cweCache{}, err
@@ -480,7 +480,7 @@ func fetchCAPECCache(sourceURL string) (capecCache, error) {
 		return capecCache{}, err
 	}
 	xmlData := raw
-	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(sourceURL)), ".zip") {
+	if isZipPayload(raw) {
 		xmlData, err = firstXMLFromZip(raw)
 		if err != nil {
 			return capecCache{}, err
@@ -521,7 +521,18 @@ func fetchURLBytes(sourceURL, accept string, limit int64) ([]byte, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("GET %s: status=%d body=%s", sourceURL, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("GET %s: response exceeded size limit of %d bytes", sourceURL, limit)
+	}
+	return raw, nil
+}
+
+func isZipPayload(raw []byte) bool {
+	return len(raw) >= 2 && raw[0] == 'P' && raw[1] == 'K'
 }
 
 func firstXMLFromZip(raw []byte) ([]byte, error) {
