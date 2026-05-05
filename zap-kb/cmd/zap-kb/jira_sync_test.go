@@ -67,6 +67,20 @@ func TestCollectFindingTicketRefs_DedupesByFinding(t *testing.T) {
 	}
 }
 
+func TestShouldPersistJiraEntities_IncludesEpicRefUpdates(t *testing.T) {
+	ent := testEntitiesFile()
+	if !shouldPersistJiraEntities(0, 1, false, ent) {
+		t.Fatal("expected definition Epic ref updates to require persistence")
+	}
+	if shouldPersistJiraEntities(0, 0, false, ent) {
+		t.Fatal("did not expect persistence with no Jira state changes")
+	}
+	ent.Findings[0].Analyst = &entities.Analyst{TicketRefs: []string{"SEC-42"}}
+	if !shouldPersistJiraEntities(0, 0, true, ent) {
+		t.Fatal("expected legacy KB status sync mode with ticket refs to require persistence")
+	}
+}
+
 func TestMergeDefinitionEpicRefs_SetsAndSkipsExisting(t *testing.T) {
 	ent := testEntitiesFile()
 	ent.Definitions = []entities.Definition{

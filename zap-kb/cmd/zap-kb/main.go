@@ -684,6 +684,7 @@ func main() {
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
 
 		addedTicketKeys := 0
+		updatedEpicRefs := 0
 		jiraStatusByKey := map[string]string(nil)
 		jiraAssigneeByKey := map[string]string(nil)
 		jiraStatusSynced := ""
@@ -692,6 +693,7 @@ func main() {
 		}
 		if !jiraDryRun && len(sum.EpicKeys) > 0 {
 			if n := mergeDefinitionEpicRefs(&ent, sum.EpicKeys); n > 0 {
+				updatedEpicRefs = n
 				fmt.Printf("Jira: recorded %d detection epic reference(s)\n", n)
 			}
 		}
@@ -714,15 +716,15 @@ func main() {
 				jiraAssigneeByKey = pullRes.RawAssignees
 				jiraStatusSynced = pullRes.SyncedAt
 				if jiraSyncKBStatus {
-					fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d errors=%d\n",
-						pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+					fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d unmapped=%d errors=%d\n",
+						pullRes.Result.Updated, pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Unmapped, pullRes.Result.Errors)
 				} else {
-					fmt.Printf("Jira pull: fetched=%d notfound=%d errors=%d (KB status write-back disabled)\n",
-						pullRes.Result.Unchanged, pullRes.Result.NotFound, pullRes.Result.Errors)
+					fmt.Printf("Jira pull: fetched=%d notfound=%d unmapped=%d errors=%d (KB status write-back disabled)\n",
+						pullRes.Result.Unchanged+pullRes.Result.Unmapped, pullRes.Result.NotFound, pullRes.Result.Unmapped, pullRes.Result.Errors)
 				}
 			}
 		}
-		if !jiraDryRun && (addedTicketKeys > 0 || (jiraSyncKBStatus && hasFindingTicketRefs(ent))) {
+		if !jiraDryRun && shouldPersistJiraEntities(addedTicketKeys, updatedEpicRefs, jiraSyncKBStatus, ent) {
 			var artPtr *runartifact.Artifact
 			if runInIsArtifact {
 				artPtr = &runInArtifact
@@ -1134,8 +1136,8 @@ func runPullCommand(args []string) {
 			os.Exit(1)
 		}
 		ef = jRes.Updated
-		fmt.Printf("Jira pull: %d updated, %d unchanged, %d not found, %d errors\n",
-			jRes.Result.Updated, jRes.Result.Unchanged, jRes.Result.NotFound, jRes.Result.Errors)
+		fmt.Printf("Jira pull: %d updated, %d unchanged, %d not found, %d unmapped, %d errors\n",
+			jRes.Result.Updated, jRes.Result.Unchanged, jRes.Result.NotFound, jRes.Result.Unmapped, jRes.Result.Errors)
 	}
 
 	// Confluence workflow pull (optional).
