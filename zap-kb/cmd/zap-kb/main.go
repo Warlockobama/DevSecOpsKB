@@ -50,6 +50,9 @@ func main() {
 		trafficMinRisk     string
 		includeDetect      bool
 		includeMITRE       bool
+		mitreCWECache      string
+		mitreCAPECCache    string
+		mitreATTACKCache   string
 		includeCVSS        bool
 		detectDetails      string
 		initMode           bool
@@ -123,6 +126,9 @@ func main() {
 	flag.StringVar(&zapBase, "zap-base-url", "", "Optional ZAP base URL to link back to messages in Obsidian")
 	flag.BoolVar(&includeDetect, "include-detection", false, "Enrich with detection logic links from ZAP docs/GitHub")
 	flag.BoolVar(&includeMITRE, "include-mitre", true, "Enrich taxonomy with curated MITRE CWE/CAPEC/ATT&CK metadata")
+	flag.StringVar(&mitreCWECache, "mitre-cwe-cache", "", "Optional local CWE cache JSON from `zap-kb taxonomy update -source cwe`")
+	flag.StringVar(&mitreCAPECCache, "mitre-capec-cache", "", "Optional local CAPEC cache JSON from `zap-kb taxonomy update -source capec`")
+	flag.StringVar(&mitreATTACKCache, "mitre-attack-cache", "", "Optional local ATT&CK cache JSON from `zap-kb taxonomy update -source attack`")
 	flag.BoolVar(&includeCVSS, "include-cvss", true, "Estimate definition CVSS from scanner risk when official CVSS is unavailable")
 	flag.StringVar(&detectDetails, "detection-details", "links", "Detection enrichment detail: links|summary")
 	flag.BoolVar(&initMode, "init", false, "Init KB without run data: seed/update definitions only (no alert fetch)")
@@ -548,7 +554,15 @@ func main() {
 		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
 		entities.EnrichTaxonomy(ent.Definitions)
 		if includeMITRE {
-			entities.EnrichMITRE(ent.Definitions)
+			mitreCatalogs, err := entities.LoadMITRECatalogs(entities.MITRECachePaths{
+				CWE:    mitreCWECache,
+				CAPEC:  mitreCAPECCache,
+				ATTACK: mitreATTACKCache,
+			})
+			if err != nil {
+				log.Fatalf("load MITRE caches: %v", err)
+			}
+			entities.EnrichMITREWithCatalogs(ent.Definitions, mitreCatalogs)
 		}
 		if includeCVSS {
 			entities.EnrichCVSS(&ent)
