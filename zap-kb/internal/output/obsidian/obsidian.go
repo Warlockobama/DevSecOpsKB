@@ -820,7 +820,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
 					statusLabel = strings.TrimSpace(o.Analyst.Status)
 				}
-				decorations := []string{titleASCII(sev2), "status:" + statusLabel}
+				decorations := []string{titleASCII(sev2), "kb-status:" + statusLabel}
 				if strings.TrimSpace(o.ObservedAt) != "" {
 					decorations = append(decorations, "seen:"+formatShortDate(o.ObservedAt))
 				}
@@ -860,8 +860,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 		}
 
-		// Issue-level workflow keeps finding-level triage authoritative while
-		// preserving occurrence-derived history and counts.
+		// Issue-level workflow keeps legacy analyst metadata available for
+		// history, while Jira remains the visible source of workflow status.
 		workflowStatus := primaryStatus
 		owners := collectAnalystSet(occs, func(a *entities.Analyst) []string {
 			if strings.TrimSpace(a.Owner) == "" {
@@ -888,18 +888,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		tuningCandidate, tuningScans := recurringFalsePositiveTuningCandidate(workflowStatus, occs)
 
 		b.WriteString("## Workflow\n\n")
-		fmt.Fprintf(&b, "- Status: %s (%s)\n", titleASCII(workflowStatus), statusSummary)
-		fmt.Fprintf(&b, "- Owners: %s\n", formatListOrPlaceholder(owners, "_None recorded_"))
+		fmt.Fprintf(&b, "- Jira status: %s\n", jiraWorkflowBucket(tickets, opts.JiraStatusByKey))
+		fmt.Fprintf(&b, "- Jira assignee: %s\n", formatListOrPlaceholder(lookupJiraAssignees(tickets, opts.JiraAssigneeByKey), "_None recorded_"))
 		fmt.Fprintf(&b, "- Tags: %s\n", formatListOrPlaceholder(tags, "_None_"))
 		fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(tickets, opts.JiraBaseURL, "_None_"))
-		if raw := primaryJiraStatus(tickets, opts.JiraStatusByKey); raw != "" {
-			fmt.Fprintf(&b, "- Jira status: %s\n", raw)
-		}
 		if len(tickets) > 0 {
 			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
 			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
 				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
 			}
+		}
+		fmt.Fprintf(&b, "- KB lifecycle snapshot: %s (%s)\n", titleASCII(workflowStatus), statusSummary)
+		if len(owners) > 0 {
+			fmt.Fprintf(&b, "- KB owners: %s\n", formatListOrPlaceholder(owners, "_None recorded_"))
 		}
 		fmt.Fprintf(&b, "- Updated: %s\n", fallbackString(updated, "_Not recorded_"))
 		if tuningCandidate {
@@ -956,7 +957,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- Add `case-ticket` to `analyst.tags` to export low/info findings to the analyst Jira project\n")
 		b.WriteString("- Add ticket IDs under `analyst.ticketRefs` (YAML list)\n")
 		b.WriteString("- Add `tune-scan` to `analyst.tags` when a recurring false positive needs detection tuning follow-up\n")
-		b.WriteString("- Assign `analyst.owner` and `analyst.tags` to drive queues\n\n")
+		b.WriteString("- Assign Jira cases in Jira; `analyst.owner` is retained only as a KB snapshot field\n\n")
 
 		b.WriteString("### Analyst notebook\n\n")
 		b.WriteString("- Notes:\n")
@@ -1232,18 +1233,21 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			scanLabelForWorkflow = "unlabeled"
 		}
 		fmt.Fprintf(&b, "- Scan: %s\n", scanLabelForWorkflow)
-		fmt.Fprintf(&b, "- Status: %s\n", fallbackString(aStatus, "open"))
+		fmt.Fprintf(&b, "- Jira status: %s\n", jiraWorkflowBucket(aTickets, opts.JiraStatusByKey))
+		if assignees := lookupJiraAssignees(aTickets, opts.JiraAssigneeByKey); len(assignees) > 0 {
+			fmt.Fprintf(&b, "- Jira assignee: %s\n", formatListOrPlaceholder(assignees, "_None recorded_"))
+		}
+		if aStatus != "" {
+			fmt.Fprintf(&b, "- KB lifecycle snapshot: %s\n", titleASCII(aStatus))
+		}
 		if aOwner != "" {
-			fmt.Fprintf(&b, "- Owner: %s\n", aOwner)
+			fmt.Fprintf(&b, "- KB owner: %s\n", aOwner)
 		}
 		if len(aTags) > 0 {
 			fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(aTags, ", "))
 		}
 		if len(aTickets) > 0 {
 			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(aTickets, opts.JiraBaseURL, "_None_"))
-			if raw := primaryJiraStatus(aTickets, opts.JiraStatusByKey); raw != "" {
-				fmt.Fprintf(&b, "- Jira status: %s\n", raw)
-			}
 			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
 			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
 				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
@@ -1302,26 +1306,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				}
 				return items[i].Alias < items[j].Alias
 			})
-		}
-
-		statusOrder := []struct {
-			Label string
-			Key   string
-		}{
-			{"Open", "open"},
-			{"Triaged", "triaged"},
-			{"False positive", "fp"},
-			{"Accepted", "accepted"},
-			{"Fixed", "fixed"},
-		}
-
-		issueStatusCounts := map[string]int{}
-		for _, is := range issueSummaries {
-			st := strings.TrimSpace(is.PrimaryStatus)
-			if st == "" {
-				st = "open"
-			}
-			issueStatusCounts[st]++
 		}
 
 		// domain label for header
@@ -1386,27 +1370,20 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- [Executive Summary](EXECUTIVE-SUMMARY.md)\n")
 		b.WriteString("\n")
 
-		triageSection.WriteString("## Triage board\n\n")
-		triageSection.WriteString("| Status | Issues | Occurrences |\n| --- | --- | --- |\n")
-		for _, entry := range statusOrder {
-			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", entry.Label, issueStatusCounts[entry.Key], statusCounts[entry.Key])
+		jiraIssueCounts := map[string]int{}
+		for _, is := range issueSummaries {
+			jiraIssueCounts[jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey)]++
 		}
-		// Emit an "Other" row for any non-canonical status values so totals always add up.
-		canonicalStatuses := map[string]struct{}{"open": {}, "triaged": {}, "fp": {}, "accepted": {}, "fixed": {}}
-		otherOccCount := 0
-		otherIssueCount := 0
-		for k, v := range statusCounts {
-			if _, known := canonicalStatuses[k]; !known {
-				otherOccCount += v
-			}
+		jiraOccurrenceCounts := map[string]int{}
+		for _, o := range ef.Occurrences {
+			jiraOccurrenceCounts[jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)]++
 		}
-		for k, v := range issueStatusCounts {
-			if _, known := canonicalStatuses[k]; !known {
-				otherIssueCount += v
-			}
-		}
-		if otherOccCount > 0 || otherIssueCount > 0 {
-			fmt.Fprintf(&triageSection, "| Other | %d | %d |\n", otherIssueCount, otherOccCount)
+
+		triageSection.WriteString("## Jira workflow\n\n")
+		triageSection.WriteString("Analyst workflow status comes from Jira. KB lifecycle status is kept as a historical snapshot only.\n\n")
+		triageSection.WriteString("| Jira status | Issues | Occurrences |\n| --- | --- | --- |\n")
+		for _, bucket := range sortedWorkflowBuckets(jiraIssueCounts, jiraOccurrenceCounts) {
+			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", bucket, jiraIssueCounts[bucket], jiraOccurrenceCounts[bucket])
 		}
 		triageSection.WriteString("\n")
 		b.WriteString(triageSection.String())
@@ -1443,7 +1420,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					rule = "Rule"
 				}
 				endpoint := fmt.Sprintf("%s %s", strings.TrimSpace(is.Method), neuterURL(is.URL))
-				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, titleASCII(fallbackString(is.PrimaryStatus, "open")))
+				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Jira: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey))
 				fmt.Fprintf(&b, "  Rule: %s\n", rule)
 			}
 			b.WriteString("\n")
@@ -1464,22 +1441,18 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if len(issueSummaries) > 0 {
 			b.WriteString("## Issues\n")
 			b.WriteString("Sorted by severity, then endpoint.\n\n")
-			b.WriteString("| Severity | Issue | Endpoint | Status | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
+			b.WriteString("| Severity | Issue | Endpoint | Jira Status | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
 				if isOperational(is) {
 					continue
 				}
-				status := "Open"
-				if s := strings.TrimSpace(is.PrimaryStatus); s != "" {
-					status = titleASCII(s)
-				}
 				rule := fallbackString(is.RuleTitle, "Rule")
 				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | `%s` | %d | %s |\n",
 					titleASCII(is.Severity), is.Alias, is.Link,
 					strings.TrimSpace(is.Method), strings.TrimSpace(is.URL),
-					status,
+					jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey),
 					is.Occurrences,
 					rule,
 				)
@@ -1514,7 +1487,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Occurrence table
 		if totalOcc > 0 {
 			b.WriteString("## Occurrences\n\n")
-			b.WriteString("| Occurrence | Endpoint | Param | Severity | Status | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
+			b.WriteString("| Occurrence | Endpoint | Param | Severity | Jira Status | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
 			tmpOccs := make([]entities.Occurrence, len(ef.Occurrences))
 			copy(tmpOccs, ef.Occurrences)
 			sort.Slice(tmpOccs, func(i, j int) bool {
@@ -1536,15 +1509,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			for _, o := range tmpOccs {
 				sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
 				alias := occAliasUltraCompact(o, "")
-				status := "Open"
-				if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
-					status = titleASCII(o.Analyst.Status)
-				}
 				param := strings.TrimSpace(o.Param)
 				if param == "" {
 					param = "(none)"
 				}
 				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
+				status := jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)
 				fmt.Fprintf(&b, "| [%s](%s) | %s %s | %s | %s | %s | [%s](%s) |\n",
 					alias,
 					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
@@ -1912,17 +1882,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			var spot strings.Builder
 			spot.WriteString("# Latest scan spotlight\n\n")
 			spot.WriteString(fmt.Sprintf("Scan: %s\n\n", latestScanLabel))
-			spot.WriteString("| Occurrence | Endpoint | Severity | Status | Issue |\n| --- | --- | --- | --- | --- |\n")
+			spot.WriteString("| Occurrence | Endpoint | Severity | Jira Status | Issue |\n| --- | --- | --- | --- | --- |\n")
 			for _, o := range newestOccs {
 				key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
 				if !seenByKey[key] {
 					continue
 				}
 				sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
-				status := "Open"
-				if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
-					status = titleASCII(o.Analyst.Status)
-				}
+				status := jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)
 				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
 				fmt.Fprintf(&spot, "| [%s](%s) | %s %s | %s | %s | [%s](%s) |\n",
 					occAliasUltraCompact(o, ""),
@@ -3078,6 +3045,88 @@ func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
 		}
 	}
 	return ""
+}
+
+func jiraWorkflowBucket(refs []string, statusByKey map[string]string) string {
+	cleanRefs := trimStrings(refs)
+	if len(cleanRefs) == 0 {
+		return "No Jira case"
+	}
+	if raw := primaryJiraStatus(cleanRefs, statusByKey); raw != "" {
+		return raw
+	}
+	return "Jira status unavailable"
+}
+
+func occurrenceTicketRefs(o entities.Occurrence, findings map[string]entities.Finding) []string {
+	var refs []string
+	if f, ok := findings[o.FindingID]; ok && f.Analyst != nil {
+		refs = append(refs, f.Analyst.TicketRefs...)
+	}
+	if o.Analyst != nil {
+		refs = append(refs, o.Analyst.TicketRefs...)
+	}
+	return trimStrings(refs)
+}
+
+func lookupJiraAssignees(refs []string, assigneeByKey map[string]string) []string {
+	if len(refs) == 0 || len(assigneeByKey) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	for _, ref := range trimStrings(refs) {
+		key := strings.TrimSpace(ref)
+		if isHTTPURL(key) {
+			parts := strings.Split(strings.TrimRight(key, "/"), "/")
+			key = parts[len(parts)-1]
+		}
+		name := strings.TrimSpace(assigneeByKey[key])
+		if name == "" {
+			continue
+		}
+		seenKey := strings.ToLower(name)
+		if _, ok := seen[seenKey]; ok {
+			continue
+		}
+		seen[seenKey] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func sortedWorkflowBuckets(countMaps ...map[string]int) []string {
+	seen := map[string]struct{}{}
+	for _, counts := range countMaps {
+		for bucket, count := range counts {
+			if count > 0 {
+				seen[bucket] = struct{}{}
+			}
+		}
+	}
+	var buckets []string
+	for bucket := range seen {
+		buckets = append(buckets, bucket)
+	}
+	sort.Slice(buckets, func(i, j int) bool {
+		ri, rj := workflowBucketRank(buckets[i]), workflowBucketRank(buckets[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return buckets[i] < buckets[j]
+	})
+	return buckets
+}
+
+func workflowBucketRank(bucket string) int {
+	switch strings.ToLower(strings.TrimSpace(bucket)) {
+	case "jira status unavailable":
+		return 90
+	case "no jira case":
+		return 100
+	default:
+		return 10
+	}
 }
 
 func writeHTTPRequestBlock(b *strings.Builder, method, rawURL string, req *entities.HTTPRequest) {

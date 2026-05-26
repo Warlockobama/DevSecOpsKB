@@ -685,7 +685,7 @@ func TestFindingLabels(t *testing.T) {
 		}
 	})
 
-	t.Run("with_analyst_status", func(t *testing.T) {
+	t.Run("with_analyst_status_no_status_label", func(t *testing.T) {
 		f := &entities.Finding{
 			FindingID: "fin-x",
 			PluginID:  "10038",
@@ -693,8 +693,10 @@ func TestFindingLabels(t *testing.T) {
 			Analyst:   &entities.Analyst{Status: "triaged"},
 		}
 		labels := findingLabels(f)
-		if !contains(labels, "status-triaged") {
-			t.Errorf("expected status label from finding analyst, got %v", labels)
+		for _, l := range labels {
+			if strings.HasPrefix(l, "status-") {
+				t.Errorf("unexpected status label from finding analyst, got %v", labels)
+			}
 		}
 	})
 }
@@ -733,15 +735,17 @@ func TestOccurrenceLabels(t *testing.T) {
 		}
 	})
 
-	t.Run("with_analyst_status", func(t *testing.T) {
+	t.Run("with_analyst_status_no_status_label", func(t *testing.T) {
 		o := &entities.Occurrence{
 			OccurrenceID: "occ-11223344",
 			Risk:         "High",
 			Analyst:      &entities.Analyst{Status: "triaged"},
 		}
 		labels := occurrenceLabels(o)
-		if !contains(labels, "status-triaged") {
-			t.Errorf("expected 'status-triaged' label, got %v", labels)
+		for _, l := range labels {
+			if strings.HasPrefix(l, "status-") {
+				t.Errorf("unexpected status label from occurrence analyst, got %v", labels)
+			}
 		}
 	})
 
@@ -987,8 +991,11 @@ func TestBuildPostureStorageBody(t *testing.T) {
 	if !strings.Contains(body, "Risk Summary") {
 		t.Error("body should contain Risk Summary heading")
 	}
-	if !strings.Contains(body, "Triage Status") {
-		t.Error("body should contain Triage Status heading")
+	if strings.Contains(body, "Triage Status") {
+		t.Error("body should not render local KB status as workflow status")
+	}
+	if !strings.Contains(body, "Current analyst status is owned by Jira") {
+		t.Error("body should direct workflow status to Jira")
 	}
 	// Risk lozenge for High should appear
 	if !strings.Contains(body, `name="status"`) {
@@ -2783,7 +2790,10 @@ func TestPrependOccurrenceProperties_JiraWorkflowGuidance(t *testing.T) {
 	if strings.Contains(out, "run <code>zap-kb pull</code>") {
 		t.Fatalf("expected legacy pull guidance to be removed, got: %.400s", out)
 	}
-	if !strings.Contains(out, "<th>Status</th><td>triaged</td>") {
+	if !strings.Contains(out, "<th>Jira Status</th><td>No Jira case</td>") {
+		t.Fatalf("expected missing Jira case to be explicit, got: %.400s", out)
+	}
+	if !strings.Contains(out, "<th>KB Lifecycle Snapshot</th><td>triaged</td>") {
 		t.Fatalf("expected legacy confirm status to be canonicalized, got: %.400s", out)
 	}
 }

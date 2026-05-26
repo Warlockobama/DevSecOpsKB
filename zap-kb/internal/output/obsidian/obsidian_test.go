@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -619,23 +618,15 @@ func TestWriteVault_TriageBoardCounts(t *testing.T) {
 	}
 	tb := string(tbData)
 
-	// The triage board table rows are "| Label | issueCount | occCount |"
-	// Check that "open" and count 5 appear on the same line.
-	checkCountInBoard := func(label string, count int) {
-		t.Helper()
-		needle := strconv.Itoa(count)
-		for _, line := range strings.Split(tb, "\n") {
-			lower := strings.ToLower(line)
-			if strings.Contains(lower, strings.ToLower(label)) && strings.Contains(line, needle) {
-				return
-			}
-		}
-		t.Errorf("triage-board.md: expected a line containing %q and %d\nboard content:\n%s", label, count, tb)
+	if !strings.Contains(tb, "## Jira workflow") {
+		t.Fatalf("triage-board.md missing Jira workflow section:\n%s", tb)
 	}
-
-	checkCountInBoard("open", 5)
-	checkCountInBoard("triaged", 3)
-	checkCountInBoard("false positive", 2) // statusOrder uses "False positive" label for "fp"
+	if !strings.Contains(tb, "| No Jira case | 1 | 10 |") {
+		t.Errorf("triage-board.md should bucket unticketed issues/occurrences without using KB status:\n%s", tb)
+	}
+	if strings.Contains(strings.ToLower(tb), "false positive") || strings.Contains(strings.ToLower(tb), "| open |") || strings.Contains(strings.ToLower(tb), "triaged") {
+		t.Errorf("triage-board.md should not expose local analyst status as workflow state:\n%s", tb)
+	}
 }
 
 // TestWriteVault_DefinitionPage_FalsePositiveConditions verifies that a definition
@@ -1116,11 +1107,11 @@ func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"- Status: Triaged (open:1)",
-		"- Owners: James",
+		"- Jira status: In Review",
+		"- KB lifecycle snapshot: Triaged (open:1)",
+		"- KB owners: James",
 		"- Tags: internet-facing, case-ticket",
 		"- Analyst cases: [SEC-42](https://example.atlassian.net/jira/software/projects/KAN/browse/SEC-42), [LEGACY-1](https://example.atlassian.net/jira/software/projects/KAN/browse/LEGACY-1)",
-		"- Jira status: In Review",
 		"- Workflow source: Jira analyst case (synced at publish time)",
 		"- Jira sync: 2026-04-08T21:00:00Z",
 		"Use Jira as the workflow source of truth.",
@@ -1204,11 +1195,11 @@ func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 		t.Fatalf("ReadFile triage-board.md: %v", err)
 	}
 	board := string(boardData)
-	if !strings.Contains(board, "| Triaged | 1 | 0 |") {
-		t.Errorf("triage-board should count the issue as triaged:\n%s", board)
+	if !strings.Contains(board, "| No Jira case | 1 | 1 |") {
+		t.Errorf("triage-board should count workflow buckets from Jira case coverage:\n%s", board)
 	}
-	if !strings.Contains(board, "| Open | 0 | 1 |") {
-		t.Errorf("triage-board should keep the occurrence history open:\n%s", board)
+	if strings.Contains(board, "| Triaged |") || strings.Contains(board, "| Open |") {
+		t.Errorf("triage-board should not use local KB status as workflow state:\n%s", board)
 	}
 }
 
