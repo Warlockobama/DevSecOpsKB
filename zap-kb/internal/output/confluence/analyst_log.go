@@ -102,11 +102,10 @@ type logSummary struct {
 	PublishedAt string // RFC3339; from the new or latest log entry
 	Risk        string
 	JiraCase    string
-	JiraStatus  string
 }
 
 // findingStateSig returns a compact state fingerprint for a finding.
-// Format: "occ=N|risk=X|lastSeen=Y|jira=Z|status=S|owner=O"
+// Format: "occ=N|risk=X|lastSeen=Y|status=S|owner=O"
 // This string is stored as a Confluence page property. On the next publish,
 // the current sig is compared to the stored one; a mismatch triggers a new
 // analyst-log entry and (via parseStateSig + buildChangelogSection) the
@@ -122,18 +121,16 @@ func findingStateSig(f *entities.Finding, jiraStatus string) string {
 	if f.LastSeen != "" {
 		lastSeen = f.LastSeen
 	}
-	jiraStatus = strings.TrimSpace(jiraStatus)
 	status := ""
 	owner := ""
 	if f.Analyst != nil {
 		status = strings.TrimSpace(entities.CanonicalAnalystStatus(f.Analyst.Status))
 		owner = strings.TrimSpace(f.Analyst.Owner)
 	}
-	return fmt.Sprintf("occ=%d|risk=%s|lastSeen=%s|jira=%s|status=%s|owner=%s",
+	return fmt.Sprintf("occ=%d|risk=%s|lastSeen=%s|status=%s|owner=%s",
 		f.Occurrences,
 		strings.TrimSpace(f.Risk),
 		lastSeen,
-		jiraStatus,
 		status,
 		owner,
 	)
@@ -171,7 +168,6 @@ func buildChangelogSection(prev, curr map[string]string, publishedAt string) str
 		{"status", "Status"},
 		{"owner", "Owner"},
 		{"risk", "Risk"},
-		{"jira", "Jira status"},
 		{"lastSeen", "Last seen"},
 	}
 	placeholder := func(s string) string {
@@ -311,12 +307,11 @@ func buildLogEntry(f *entities.Finding, ei *entityIndex, jiraBaseURL string, jir
 		}
 	}
 
-	// Jira: pick primary ticket + status
+	// Jira: pick primary ticket only. Jira owns workflow state; do not stamp
+	// copied statuses into the analyst log.
 	jiraCase := ""
-	jiraStatus := ""
 	if f.Analyst != nil {
 		refs := f.Analyst.TicketRefs
-		jiraStatus = primaryJiraStatus(refs, jiraStatusByKey)
 		_, jiraCase = firstJiraBrowseURL(refs, jiraBaseURL)
 		if jiraCase == "" && len(refs) > 0 {
 			jiraCase = strings.TrimSpace(refs[0])
@@ -364,9 +359,6 @@ func buildLogEntry(f *entities.Finding, ei *entityIndex, jiraBaseURL string, jir
 		jiraCellVal := escapeHTML(jiraCase)
 		if browseURL, _ := jiraIssueBrowseURL(jiraCase, jiraBaseURL); browseURL != "" {
 			jiraCellVal = jiraSmartLink(browseURL, jiraCase, "inline")
-		}
-		if jiraStatus != "" {
-			jiraCellVal += " " + jiraStatusMacro(jiraStatus)
 		}
 		writeRow("Jira case", jiraCellVal)
 	}
@@ -543,7 +535,7 @@ func buildAnalystHistorySection(summaries []logSummary, jiraBaseURL string) stri
 	var b strings.Builder
 	b.WriteString(`<h2>Analyst History</h2>`)
 	b.WriteString(`<table><tbody>`)
-	b.WriteString(`<tr><th>Finding</th><th>Last entry</th><th>Risk</th><th>Jira case</th><th>Status</th></tr>`)
+	b.WriteString(`<tr><th>Finding</th><th>Last entry</th><th>Risk</th><th>Jira case</th></tr>`)
 	for _, s := range summaries {
 		// Finding link
 		findingCell := escapeHTML(s.FindingID)
@@ -568,8 +560,7 @@ func buildAnalystHistorySection(summaries []logSummary, jiraBaseURL string) stri
 		b.WriteString(`<tr><td>` + findingCell + `</td>`)
 		b.WriteString(`<td>` + escapeHTML(publishedShort) + `</td>`)
 		b.WriteString(`<td>` + riskStatusMacro(s.Risk) + `</td>`)
-		b.WriteString(`<td>` + jiraCaseCell + `</td>`)
-		b.WriteString(`<td>` + jiraStatusMacro(s.JiraStatus) + `</td></tr>`)
+		b.WriteString(`<td>` + jiraCaseCell + `</td></tr>`)
 	}
 	b.WriteString(`</tbody></table>`)
 	return b.String()
@@ -627,9 +618,7 @@ func buildLogSummaryForFinding(f *entities.Finding, jiraBaseURL string, jiraStat
 		return logSummary{}
 	}
 	jiraCase := ""
-	jiraStatus := ""
 	if f.Analyst != nil {
-		jiraStatus = primaryJiraStatus(f.Analyst.TicketRefs, jiraStatusByKey)
 		_, jiraCase = firstJiraBrowseURL(f.Analyst.TicketRefs, jiraBaseURL)
 		if jiraCase == "" && len(f.Analyst.TicketRefs) > 0 {
 			jiraCase = strings.TrimSpace(f.Analyst.TicketRefs[0])
@@ -640,6 +629,5 @@ func buildLogSummaryForFinding(f *entities.Finding, jiraBaseURL string, jiraStat
 		PublishedAt: publishedAt,
 		Risk:        strings.TrimSpace(f.Risk),
 		JiraCase:    jiraCase,
-		JiraStatus:  jiraStatus,
 	}
 }

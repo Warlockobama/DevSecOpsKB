@@ -308,27 +308,46 @@ func defID(pluginID string) string {
 
 func DefinitionOriginValue(origin, pluginID string, det *Detection) string {
 	origin = strings.ToLower(strings.TrimSpace(origin))
-	switch origin {
-	case DefinitionOriginCustom:
+	pluginID = strings.TrimSpace(pluginID)
+	if origin == DefinitionOriginCustom {
 		return DefinitionOriginCustom
-	case DefinitionOriginTool:
+	}
+	if det != nil && strings.EqualFold(strings.TrimSpace(det.RuleSource), "custom") {
+		return DefinitionOriginCustom
+	}
+	if isProjectSpecificPluginID(pluginID) {
+		return DefinitionOriginCustom
+	}
+	if origin == DefinitionOriginTool {
 		return DefinitionOriginTool
 	}
-	pluginID = strings.TrimSpace(pluginID)
-	if strings.HasPrefix(pluginID, "zap-") {
-		return DefinitionOriginCustom
-	}
-	if det != nil && strings.TrimSpace(det.RuleSource) == "custom" {
-		return DefinitionOriginCustom
-	}
 	if det == nil {
-		for _, r := range pluginID {
-			if r < '0' || r > '9' {
-				return DefinitionOriginCustom
-			}
+		if pluginID != "" && !isNumericPluginID(pluginID) {
+			return DefinitionOriginCustom
 		}
 	}
 	return DefinitionOriginTool
+}
+
+func isProjectSpecificPluginID(pluginID string) bool {
+	id := strings.ToLower(strings.TrimSpace(pluginID))
+	if !strings.HasPrefix(id, "zap-") {
+		return false
+	}
+	suffix := strings.TrimPrefix(id, "zap-")
+	return suffix != "" && !isNumericPluginID(suffix)
+}
+
+func isNumericPluginID(pluginID string) bool {
+	if strings.TrimSpace(pluginID) == "" {
+		return false
+	}
+	for _, r := range strings.TrimSpace(pluginID) {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func IsCustomDefinition(def *Definition) bool {
@@ -349,7 +368,6 @@ func NormalizeDefinitionOrigins(ef *EntitiesFile) {
 			switch source {
 			case DefinitionOriginTool, "zap", "nuclei", "multi", "burp":
 				def.Origin = DefinitionOriginTool
-				continue
 			}
 		}
 		def.Origin = DefinitionOriginValue(def.Origin, def.PluginID, def.Detection)

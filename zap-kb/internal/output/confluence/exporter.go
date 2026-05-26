@@ -1962,7 +1962,7 @@ func findingPageTitle(f *entities.Finding, ei *entityIndex) string {
 }
 
 // occurrencePageTitle returns a human-readable Confluence page title for an occurrence:
-// "Occurrence: [Rule Name] - [URL path] - [short hash]"
+// "Occurrence: [Rule Name] - [URL path] - [finding hash] - [occurrence hash]"
 func occurrencePageTitle(o *entities.Occurrence, ei *entityIndex) string {
 	if o == nil {
 		return ""
@@ -1977,6 +1977,9 @@ func occurrencePageTitle(o *entities.Occurrence, ei *entityIndex) string {
 	parts := []string{ruleName}
 	if p := urlPathSegment(o.URL); p != "" {
 		parts = append(parts, p)
+	}
+	if h := tailChars(o.FindingID, 4); h != "" {
+		parts = append(parts, h)
 	}
 	if h := tailChars(o.OccurrenceID, 4); h != "" {
 		parts = append(parts, h)
@@ -2333,7 +2336,7 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 // prependFindingProperties adds a Page Properties macro to finding pages.
 // Canonical primary field order (#19): Severity, Confidence, Definition (linked),
 // CWE, OWASP Top 10, URL, Method, Occurrences. Supplementary fields (WASC, Domain,
-// Last/First Seen, Owner, Analyst Cases, Jira Status, Tags, Updated, Notes,
+// Last/First Seen, Owner, Analyst Cases, Tags, Updated, Notes,
 // Source Tool, Scans) follow. Status is intentionally omitted — Jira owns the
 // workflow state and is shown in the Jira workflow section below.
 func prependFindingProperties(storageBody string, f *entities.Finding, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string, analystLogSection string, changelogSection string) string {
@@ -2405,20 +2408,12 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 		}
 	}
 	if f.Analyst != nil {
-		// Prefer the live Jira assignee when a ticket is linked. Falls back to
-		// the analyst.owner field on the Finding when no Jira assignee is known.
 		owner := strings.TrimSpace(f.Analyst.Owner)
-		if assignee := primaryJiraAssignee(f.Analyst.TicketRefs, jiraAssigneeByKey); assignee != "" {
-			owner = assignee
-		}
 		if owner != "" {
 			props = append(props, [2]string{"Owner", escapeHTML(owner)})
 		}
 		if len(f.Analyst.TicketRefs) > 0 {
 			props = append(props, [2]string{"Analyst Cases", ticketRefsPropertyValue(f.Analyst.TicketRefs, jiraBaseURL)})
-			if raw := primaryJiraStatus(f.Analyst.TicketRefs, jiraStatusByKey); raw != "" {
-				props = append(props, [2]string{"Jira Status", jiraStatusMacro(raw)})
-			}
 		}
 		if len(f.Analyst.Tags) > 0 {
 			props = append(props, [2]string{"Tags", escapeHTML(strings.Join(f.Analyst.Tags, ", "))})
@@ -2651,13 +2646,6 @@ func buildDefContextSection(def *entities.Definition) string {
 	return b.String()
 }
 
-func jiraWorkflowSource(synced string) string {
-	if strings.TrimSpace(synced) == "" {
-		return "Jira analyst case (synced at publish time)"
-	}
-	return "Jira analyst case (synced " + strings.TrimSpace(synced) + ")"
-}
-
 func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
 	if len(refs) == 0 || len(statusByKey) == 0 {
 		return ""
@@ -2714,7 +2702,7 @@ func jiraWorkflowSection(refs []string, jiraBaseURL string, jiraStatusByKey map[
 	}
 	var b strings.Builder
 	b.WriteString(`<h2>Jira Workflow</h2>`)
-	b.WriteString(`<p><em>Live analyst workflow is managed in Jira. The cards below resolve against the linked analyst case; the page properties table reflects the last publish sync.</em></p>`)
+	b.WriteString(`<p><em>Live analyst workflow is managed in Jira. The cards below resolve against the linked analyst case and provide the current workflow state.</em></p>`)
 	for _, ref := range refs {
 		browseURL, label := jiraIssueBrowseURL(ref, jiraBaseURL)
 		if browseURL == "" {
@@ -2730,24 +2718,12 @@ func jiraWorkflowSection(refs []string, jiraBaseURL string, jiraStatusByKey map[
 		b.WriteString(jiraSmartLink(browseURL, label, "block"))
 		b.WriteString(`</p>`)
 	}
-	if raw := primaryJiraStatus(refs, jiraStatusByKey); raw != "" {
-		b.WriteString(`<p>Last synced Jira status: `)
-		b.WriteString(jiraStatusMacro(raw))
-		b.WriteString(`</p>`)
-	}
-	if strings.TrimSpace(jiraStatusSynced) != "" {
-		b.WriteString(`<p><small>Last Jira sync: `)
-		b.WriteString(escapeHTML(strings.TrimSpace(jiraStatusSynced)))
-		b.WriteString(`</small></p>`)
-	}
 	return b.String()
 }
 
 type jiraCaseOverviewRow struct {
 	IssueKey     string
 	BrowseURL    string
-	JiraStatus   string
-	KBStatus     string
 	Severity     string
 	FindingTitle string
 }
@@ -3025,11 +3001,6 @@ func jiraOverviewSection(ei *entityIndex, jiraBaseURL string, jiraStatusByKey ma
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</tbody></table>`)
-	if strings.TrimSpace(jiraStatusSynced) != "" {
-		b.WriteString(`<p><small>Last Jira reference check: `)
-		b.WriteString(escapeHTML(strings.TrimSpace(jiraStatusSynced)))
-		b.WriteString(`</small></p>`)
-	}
 	return b.String()
 }
 
@@ -3051,17 +3022,9 @@ func collectJiraOverviewRows(ei *entityIndex, jiraBaseURL string, jiraStatusByKe
 			continue
 		}
 		seen[issueKey] = struct{}{}
-		kbStatus := ""
-		if strings.TrimSpace(f.Analyst.Status) != "" {
-			kbStatus = entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status))
-		} else if rolled, ok := ei.findingTriageStatus[f.FindingID]; ok {
-			kbStatus = rolled
-		}
 		rows = append(rows, jiraCaseOverviewRow{
 			IssueKey:     issueKey,
 			BrowseURL:    browseURL,
-			JiraStatus:   strings.TrimSpace(jiraStatusByKey[issueKey]),
-			KBStatus:     kbStatus,
 			Severity:     strings.TrimSpace(f.Risk),
 			FindingTitle: findingPageTitle(f, ei),
 		})
@@ -3069,9 +3032,6 @@ func collectJiraOverviewRows(ei *entityIndex, jiraBaseURL string, jiraStatusByKe
 	sort.Slice(rows, func(i, j int) bool {
 		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
 			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
-		}
-		if rows[i].JiraStatus != rows[j].JiraStatus {
-			return rows[i].JiraStatus < rows[j].JiraStatus
 		}
 		return rows[i].IssueKey < rows[j].IssueKey
 	})
@@ -3313,8 +3273,8 @@ func occurrenceAuthContext(o *entities.Occurrence) string {
 }
 
 // prependOccurrenceProperties adds structured metadata to occurrence pages.
-// Jira workflow fields come first when present. Legacy KB lifecycle fields are
-// retained only as snapshots so Confluence does not claim workflow ownership.
+// Jira links come first when present. Legacy KB lifecycle fields are retained
+// only as snapshots so Confluence does not claim workflow ownership.
 // NOTE: The Confluence page-properties macro ("Error loading the extension!") is
 // intentionally NOT used — it fails to render in Confluence Cloud via REST API.
 func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei *entityIndex, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced, occNoteSection string) string {
@@ -3333,10 +3293,6 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		kbOwner = strings.TrimSpace(o.Analyst.Owner)
 	}
 
-	// Prefer the live Jira status/assignee when the occurrence is linked to a
-	// Jira case. The KB caches these at publish time, but Jira is the source of
-	// truth; rendering the live values keeps the occurrence page in sync with
-	// analyst workflow without requiring re-export on every transition.
 	var ticketRefs []string
 	if ei != nil {
 		if finding := ei.finds[o.FindingID]; finding != nil && finding.Analyst != nil {
@@ -3347,27 +3303,16 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 		ticketRefs = append(ticketRefs, o.Analyst.TicketRefs...)
 	}
 	refs := trimUniqueStrings(ticketRefs)
-	rawJiraStatus := primaryJiraStatus(refs, jiraStatusByKey)
-	jiraAssignee := primaryJiraAssignee(refs, jiraAssigneeByKey)
 
 	// Workflow note — Jira owns analyst workflow; Confluence is the evidence surface.
-	editInstruction := `<p><em>Workflow is managed in Jira. Use this page as evidence and context; keep ticket links, notes, and tags aligned with the analyst case. Confluence pull-based workflow writeback is legacy-only.</em></p>`
+	editInstruction := `<p><em>Workflow is managed in Jira. Use this page as evidence and context; keep ticket links, notes, and tags aligned with the analyst case.</em></p>`
 
 	// --- Single plain table: workflow fields first, then informational ---
 	var infoProps [][2]string
 	if len(refs) > 0 {
 		infoProps = append(infoProps, [2]string{"Analyst Cases", ticketRefsPropertyValue(refs, jiraBaseURL)})
-		if rawJiraStatus != "" {
-			infoProps = append(infoProps, [2]string{"Jira Status", jiraStatusMacro(rawJiraStatus)})
-		} else {
-			infoProps = append(infoProps, [2]string{"Jira Status", escapeHTML("Unavailable at last publish")})
-		}
-		if jiraAssignee != "" {
-			infoProps = append(infoProps, [2]string{"Jira Assignee", escapeHTML(jiraAssignee)})
-		}
-		infoProps = append(infoProps, [2]string{"Workflow Source", escapeHTML(jiraWorkflowSource(jiraStatusSynced))})
 	} else {
-		infoProps = append(infoProps, [2]string{"Jira Status", escapeHTML("No Jira case")})
+		infoProps = append(infoProps, [2]string{"Analyst Cases", escapeHTML("No Jira case")})
 	}
 	if kbStatus != "" {
 		infoProps = append(infoProps, [2]string{"KB Lifecycle Snapshot", escapeHTML(kbStatus)})

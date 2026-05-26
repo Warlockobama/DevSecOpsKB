@@ -888,15 +888,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		tuningCandidate, tuningScans := recurringFalsePositiveTuningCandidate(workflowStatus, occs)
 
 		b.WriteString("## Workflow\n\n")
-		fmt.Fprintf(&b, "- Jira status: %s\n", jiraWorkflowBucket(tickets, opts.JiraStatusByKey))
-		fmt.Fprintf(&b, "- Jira assignee: %s\n", formatListOrPlaceholder(lookupJiraAssignees(tickets, opts.JiraAssigneeByKey), "_None recorded_"))
 		fmt.Fprintf(&b, "- Tags: %s\n", formatListOrPlaceholder(tags, "_None_"))
 		fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(tickets, opts.JiraBaseURL, "_None_"))
 		if len(tickets) > 0 {
-			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
-			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
-				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
-			}
+			b.WriteString("- Workflow source: Jira analyst case\n")
 		}
 		fmt.Fprintf(&b, "- KB lifecycle snapshot: %s (%s)\n", titleASCII(workflowStatus), statusSummary)
 		if len(owners) > 0 {
@@ -1068,6 +1063,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			aUpdated = strings.TrimSpace(o.Analyst.UpdatedAt)
 		}
+		workflowTickets := occurrenceTicketRefs(o, findByID)
 
 		dom := computeDomainLabel(o.URL, opts.SiteLabel)
 		_, rid := deriveSeverity(o.Risk, o.RiskCode)
@@ -1233,10 +1229,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			scanLabelForWorkflow = "unlabeled"
 		}
 		fmt.Fprintf(&b, "- Scan: %s\n", scanLabelForWorkflow)
-		fmt.Fprintf(&b, "- Jira status: %s\n", jiraWorkflowBucket(aTickets, opts.JiraStatusByKey))
-		if assignees := lookupJiraAssignees(aTickets, opts.JiraAssigneeByKey); len(assignees) > 0 {
-			fmt.Fprintf(&b, "- Jira assignee: %s\n", formatListOrPlaceholder(assignees, "_None recorded_"))
-		}
 		if aStatus != "" {
 			fmt.Fprintf(&b, "- KB lifecycle snapshot: %s\n", titleASCII(aStatus))
 		}
@@ -1246,12 +1238,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if len(aTags) > 0 {
 			fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(aTags, ", "))
 		}
-		if len(aTickets) > 0 {
-			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(aTickets, opts.JiraBaseURL, "_None_"))
-			b.WriteString("- Workflow source: Jira analyst case (synced at publish time)\n")
-			if strings.TrimSpace(opts.JiraStatusSynced) != "" {
-				fmt.Fprintf(&b, "- Jira sync: %s\n", opts.JiraStatusSynced)
-			}
+		if len(workflowTickets) > 0 {
+			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(workflowTickets, opts.JiraBaseURL, "_None_"))
+			b.WriteString("- Workflow source: Jira analyst case\n")
 		}
 		if aUpdated != "" {
 			fmt.Fprintf(&b, "- Updated: %s\n", aUpdated)
@@ -1379,9 +1368,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			jiraOccurrenceCounts[jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)]++
 		}
 
-		triageSection.WriteString("## Jira workflow\n\n")
-		triageSection.WriteString("Analyst workflow status comes from Jira. KB lifecycle status is kept as a historical snapshot only.\n\n")
-		triageSection.WriteString("| Jira status | Issues | Occurrences |\n| --- | --- | --- |\n")
+		triageSection.WriteString("## Jira references\n\n")
+		triageSection.WriteString("Analyst workflow status comes from Jira. The KB lists linked analyst cases and keeps lifecycle status as a historical snapshot only.\n\n")
+		triageSection.WriteString("| Analyst cases | Issues | Occurrences |\n| --- | --- | --- |\n")
 		for _, bucket := range sortedWorkflowBuckets(jiraIssueCounts, jiraOccurrenceCounts) {
 			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", bucket, jiraIssueCounts[bucket], jiraOccurrenceCounts[bucket])
 		}
@@ -1420,7 +1409,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					rule = "Rule"
 				}
 				endpoint := fmt.Sprintf("%s %s", strings.TrimSpace(is.Method), neuterURL(is.URL))
-				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Jira: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey))
+				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Cases: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey))
 				fmt.Fprintf(&b, "  Rule: %s\n", rule)
 			}
 			b.WriteString("\n")
@@ -1441,7 +1430,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if len(issueSummaries) > 0 {
 			b.WriteString("## Issues\n")
 			b.WriteString("Sorted by severity, then endpoint.\n\n")
-			b.WriteString("| Severity | Issue | Endpoint | Jira Status | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
+			b.WriteString("| Severity | Issue | Endpoint | Analyst Cases | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
@@ -1487,7 +1476,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Occurrence table
 		if totalOcc > 0 {
 			b.WriteString("## Occurrences\n\n")
-			b.WriteString("| Occurrence | Endpoint | Param | Severity | Jira Status | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
+			b.WriteString("| Occurrence | Endpoint | Param | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
 			tmpOccs := make([]entities.Occurrence, len(ef.Occurrences))
 			copy(tmpOccs, ef.Occurrences)
 			sort.Slice(tmpOccs, func(i, j int) bool {
@@ -1882,7 +1871,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			var spot strings.Builder
 			spot.WriteString("# Latest scan spotlight\n\n")
 			spot.WriteString(fmt.Sprintf("Scan: %s\n\n", latestScanLabel))
-			spot.WriteString("| Occurrence | Endpoint | Severity | Jira Status | Issue |\n| --- | --- | --- | --- | --- |\n")
+			spot.WriteString("| Occurrence | Endpoint | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- |\n")
 			for _, o := range newestOccs {
 				key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
 				if !seenByKey[key] {
@@ -3052,10 +3041,21 @@ func jiraWorkflowBucket(refs []string, statusByKey map[string]string) string {
 	if len(cleanRefs) == 0 {
 		return "No Jira case"
 	}
-	if raw := primaryJiraStatus(cleanRefs, statusByKey); raw != "" {
-		return raw
+	var labels []string
+	for _, ref := range cleanRefs {
+		label := strings.TrimSpace(ref)
+		if isHTTPURL(label) {
+			parts := strings.Split(strings.TrimRight(label, "/"), "/")
+			label = parts[len(parts)-1]
+		}
+		if label != "" {
+			labels = append(labels, label)
+		}
 	}
-	return "Jira status unavailable"
+	if len(labels) == 0 {
+		return "Linked Jira case"
+	}
+	return strings.Join(labels, ", ")
 }
 
 func occurrenceTicketRefs(o entities.Occurrence, findings map[string]entities.Finding) []string {

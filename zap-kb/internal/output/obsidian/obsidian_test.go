@@ -618,8 +618,8 @@ func TestWriteVault_TriageBoardCounts(t *testing.T) {
 	}
 	tb := string(tbData)
 
-	if !strings.Contains(tb, "## Jira workflow") {
-		t.Fatalf("triage-board.md missing Jira workflow section:\n%s", tb)
+	if !strings.Contains(tb, "## Jira references") {
+		t.Fatalf("triage-board.md missing Jira references section:\n%s", tb)
 	}
 	if !strings.Contains(tb, "| No Jira case | 1 | 10 |") {
 		t.Errorf("triage-board.md should bucket unticketed issues/occurrences without using KB status:\n%s", tb)
@@ -1107,17 +1107,20 @@ func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"- Jira status: In Review",
 		"- KB lifecycle snapshot: Triaged (open:1)",
 		"- KB owners: James",
 		"- Tags: internet-facing, case-ticket",
 		"- Analyst cases: [SEC-42](https://example.atlassian.net/jira/software/projects/KAN/browse/SEC-42), [LEGACY-1](https://example.atlassian.net/jira/software/projects/KAN/browse/LEGACY-1)",
-		"- Workflow source: Jira analyst case (synced at publish time)",
-		"- Jira sync: 2026-04-08T21:00:00Z",
+		"- Workflow source: Jira analyst case",
 		"Use Jira as the workflow source of truth.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("finding page missing %q:\n%s", want, body)
+		}
+	}
+	for _, notWant := range []string{"- Jira status:", "- Jira assignee:", "- Jira sync:"} {
+		if strings.Contains(body, notWant) {
+			t.Errorf("finding page should not stamp Jira workflow field %q:\n%s", notWant, body)
 		}
 	}
 }
