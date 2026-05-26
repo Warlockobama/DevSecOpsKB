@@ -1206,6 +1206,71 @@ func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 	}
 }
 
+func TestWriteVault_ByDomainOmitsLocalStatusBuckets(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-domain", PluginID: "10001", Alert: "Domain Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-domain",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/domain",
+		Method:       "GET",
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "triaged"},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-domain",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "open"},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "by-domain.md"))
+	if err != nil {
+		t.Fatalf("ReadFile by-domain.md: %v", err)
+	}
+	page := string(data)
+	if strings.Contains(page, "| Open |") || strings.Contains(page, "| Triaged |") || strings.Contains(page, "| FP |") || strings.Contains(page, "| Accepted |") || strings.Contains(page, "| Fixed |") {
+		t.Fatalf("by-domain should not summarize KB-local analyst.status buckets:\n%s", page)
+	}
+	if !strings.Contains(page, "Workflow status comes from Jira") {
+		t.Fatalf("by-domain should explain Jira-owned workflow:\n%s", page)
+	}
+	if !strings.Contains(page, "| Domain | Occurrences | High | Medium | Low | Info |") {
+		t.Fatalf("by-domain missing exposure summary header:\n%s", page)
+	}
+}
+
+func TestWriteTriageGuideUsesJiraAsWorkflowSource(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTriageGuide(root); err != nil {
+		t.Fatalf("writeTriageGuide: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "TRIAGE-GUIDE.md"))
+	if err != nil {
+		t.Fatalf("ReadFile TRIAGE-GUIDE.md: %v", err)
+	}
+	guide := string(data)
+	if !strings.Contains(guide, "Jira is the source of truth") {
+		t.Fatalf("triage guide should direct analysts to Jira:\n%s", guide)
+	}
+	if strings.Contains(guide, "| open | New, not yet reviewed |") || strings.Contains(guide, "Status values") {
+		t.Fatalf("triage guide should not document generated KB status as the workflow:\n%s", guide)
+	}
+}
+
 func TestWriteVault_RecurringFalsePositiveSurfacesTuningCandidate(t *testing.T) {
 	root := t.TempDir()
 	def := entities.Definition{DefinitionID: "def-tuning", PluginID: "10001", Alert: "Tuning Alert"}

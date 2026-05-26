@@ -111,7 +111,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	// Normalize occurrences up front so all later rollups use the same resolved values.
 	occsByFind := make(map[string][]entities.Occurrence)
 	statusCounts := make(map[string]int)
-	domainCounts := make(map[string]map[string]int) // domain -> status->count
 	domainTotals := make(map[string]int)
 	// New: severity rollups for this run
 	severityCounts := make(map[string]int)                  // severity -> count
@@ -154,10 +153,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		statusCounts[st]++
 		dom := computeDomainLabel(o.URL, opts.SiteLabel)
 		if dom != "" {
-			if _, ok := domainCounts[dom]; !ok {
-				domainCounts[dom] = map[string]int{}
-			}
-			domainCounts[dom][st]++
 			domainTotals[dom]++
 		}
 		sev, _ := deriveSeverity(o.Risk, o.RiskCode)
@@ -1552,18 +1547,17 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Domain table (this run)
 		if len(domainTotals) > 0 {
 			domainSection.WriteString("## By domain\n\n")
-			domainSection.WriteString("| Domain | Occurrences | Open | Triaged | FP | Accepted | Fixed | High | Medium | Low | Info |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+			domainSection.WriteString("Workflow status comes from Jira. This page groups exposure by domain and severity only.\n\n")
+			domainSection.WriteString("| Domain | Occurrences | High | Medium | Low | Info |\n| --- | --- | --- | --- | --- | --- |\n")
 			var doms []string
 			for d := range domainTotals {
 				doms = append(doms, d)
 			}
 			sort.Strings(doms)
 			for _, d := range doms {
-				ds := domainCounts[d]
 				ss := domainSeverityCounts[d]
-				fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d | %d | %d | %d | %d | %d |\n",
+				fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d |\n",
 					d, domainTotals[d],
-					ds["open"], ds["triaged"], ds["fp"], ds["accepted"], ds["fixed"],
 					ss["high"], ss["medium"], ss["low"], ss["info"],
 				)
 			}

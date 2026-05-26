@@ -43,44 +43,38 @@ _D1 and DZ prefixes appear when rule initials conflict or are unregistered — f
 
 const triageGuideContent = `# Triage Workflow Guide
 
-## Status values
+## Workflow source of truth
 
-| Status | Meaning |
-|---|---|
-| open | New, not yet reviewed |
-| triaged | Reviewed, confirmed real |
-| fp | False positive — not a real finding |
-| accepted | Risk accepted, no fix planned |
-| fixed | Remediation verified |
+Jira is the source of truth for analyst workflow state, ownership, and closure.
+The KB is the evidence and reporting surface. It lists linked analyst cases and
+keeps KB lifecycle fields only as historical scan context.
 
 ## How to work the finding
 
 1. Review the finding and occurrence evidence in Confluence.
 2. Work the analyst case in Jira.
-3. Keep linked analyst case refs in ` + "`analyst.ticketRefs`" + `.
+3. Use the Jira status, assignee, comments, and linked work items for triage state.
 4. Use ` + "`case-ticket`" + ` for low/info findings that should still open an analyst case.
 5. Use ` + "`tune-scan`" + ` when a recurring false positive needs scan-tuning follow-up.
+6. Do not close work by editing generated KB-local status fields.
 
 ## Bulk triage
 
 1. Open the definition page (e.g., CDM).
 2. Review the **False Positive Conditions** section.
-3. For each occurrence in the findings list, open and update status.
+3. For each affected finding, open the linked analyst case and update Jira.
 
 ## Escalation
 
 - Use the analyst Jira project for case management and triage.
-- Link the analyst case ID in ` + "`analyst.ticketRefs`" + `.
+- Keep analyst case IDs linked from the finding or occurrence.
 - If remediation is needed, track the downstream team ticket as a linked reference rather than replacing the analyst case.
 
-## Governance fields
+## KB lifecycle fields
 
-Each occurrence page has a **Workflow** section with:
-- **Status** — required; one of the values above
-- **Owner** — person responsible for resolution
-- **False positive reason** — required when status = ` + "`fp`" + `
-- **Acceptance justification** — required when status = ` + "`accepted`" + `
-- **Due at** — target remediation date (UTC)
+Generated pages may show a KB lifecycle snapshot from imported or historical data.
+Treat it as context only unless the deployment is intentionally running a
+Confluence-driven workflow.
 `
 
 // writeLegend writes LEGEND.md (static content — no entities data needed).

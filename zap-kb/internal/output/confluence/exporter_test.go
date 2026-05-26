@@ -1609,6 +1609,19 @@ func TestStripFindingBody_MostRecentTrafficSurvivesAfterAnalystNotebook(t *testi
 	}
 }
 
+func TestStripTopLevelBodyForConfluence_RemovesDuplicateTitleHeadings(t *testing.T) {
+	input := "# Issues\n\n## Issues\n\nSorted by severity.\n\n| Severity | Issue |\n| --- | --- |\n| High | Example |\n"
+
+	out := stripTopLevelBodyForConfluence(input, "Issues")
+
+	if strings.Contains(out, "# Issues") || strings.Contains(out, "## Issues") {
+		t.Fatalf("duplicate title headings should be stripped:\n%s", out)
+	}
+	if !strings.Contains(out, "Sorted by severity.") {
+		t.Fatalf("body content should be preserved:\n%s", out)
+	}
+}
+
 // --- Helper for integration test ---
 
 func pageKeys(m map[string]string) []string {

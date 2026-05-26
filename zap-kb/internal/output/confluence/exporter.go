@@ -296,6 +296,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		if ferr != nil {
 			continue // skip missing files
 		}
+		content = stripTopLevelBodyForConfluence(content, tp.title)
 		storageBody := mdToStorageWithTitles(content, titleMap)
 		storageBody = prependJiraIssuesMacro(tp.title, storageBody, opts.JiraServerID, opts.JiraServerName, opts.JiraProjectKey)
 		storageBody = appendJiraOverviewSection(tp.title, storageBody, &ei, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraStatusSynced)
@@ -1730,6 +1731,43 @@ func (ei *entityIndex) defByID(id string) *entities.Definition {
 }
 
 // --- Confluence-specific content stripping ---
+
+// stripTopLevelBodyForConfluence removes leading headings that duplicate the
+// Confluence page title on top-level Markdown pages.
+func stripTopLevelBodyForConfluence(content, title string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	trimmedTitle := strings.TrimSpace(title)
+	skippedH1 := false
+	skippedH2 := false
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if !skippedH1 && strings.HasPrefix(trimmed, "# ") && headingsMatch(strings.TrimSpace(strings.TrimPrefix(trimmed, "# ")), trimmedTitle) {
+			skippedH1 = true
+			if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "" {
+				i++
+			}
+			continue
+		}
+		if skippedH1 && !skippedH2 && strings.HasPrefix(trimmed, "## ") && headingsMatch(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), trimmedTitle) {
+			skippedH2 = true
+			if i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "" {
+				i++
+			}
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimLeft(strings.Join(out, "\n"), "\n")
+}
+
+func headingsMatch(got, want string) bool {
+	normalize := func(s string) string {
+		return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(s)), " "))
+	}
+	return normalize(got) == normalize(want)
+}
 
 // stripFindingBodyForConfluence removes content from finding pages that is
 // redundant with the Page Properties table or only meaningful in Obsidian.
