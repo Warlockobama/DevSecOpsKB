@@ -197,6 +197,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	var defSummaries []defSummary
 
 	type issueSummary struct {
+		FindingID       string
 		Link            string
 		Alias           string
 		Method          string
@@ -960,6 +961,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 
 		issueSummaries = append(issueSummaries, issueSummary{
+			FindingID:       strings.TrimSpace(f.FindingID),
 			Link:            filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
 			Alias:           alias,
 			Method:          strings.TrimSpace(f.Method),
@@ -1191,6 +1193,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				b.WriteString("### Request\n\n")
 				writeHTTPRequestBlock(&b, o.Method, o.URL, o.Request)
 				b.WriteString("\n")
+			} else if o.Response != nil {
+				b.WriteString("### Request\n\n_Request details were not captured in the source artifact._\n\n")
 			}
 			if o.Response != nil {
 				b.WriteString("### Response\n\n")
@@ -1369,6 +1373,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		for _, bucket := range sortedWorkflowBuckets(jiraIssueCounts, jiraOccurrenceCounts) {
 			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", bucket, jiraIssueCounts[bucket], jiraOccurrenceCounts[bucket])
 		}
+		triageSection.WriteString("\n_No Jira case_ means no linked analyst case was present in `analyst.ticketRefs`. Low and informational findings need the `case-ticket` tag when they should open a Jira case.\n")
 		triageSection.WriteString("\n")
 		b.WriteString(triageSection.String())
 
@@ -1404,7 +1409,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					rule = "Rule"
 				}
 				endpoint := fmt.Sprintf("%s %s", strings.TrimSpace(is.Method), neuterURL(is.URL))
-				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Cases: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey))
+				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Cases: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, formatTicketRefsMarkdown(is.Tickets, opts.JiraBaseURL, "No Jira case"))
 				fmt.Fprintf(&b, "  Rule: %s\n", rule)
 			}
 			b.WriteString("\n")
@@ -1436,7 +1441,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | `%s` | %d | %s |\n",
 					titleASCII(is.Severity), is.Alias, is.Link,
 					strings.TrimSpace(is.Method), strings.TrimSpace(is.URL),
-					jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey),
+					formatTicketRefsMarkdown(is.Tickets, opts.JiraBaseURL, "No Jira case"),
 					is.Occurrences,
 					rule,
 				)
@@ -1465,6 +1470,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					)
 				}
 				b.WriteString("\n")
+			}
+		}
+
+		issueByID := map[string]issueSummary{}
+		for _, is := range issueSummaries {
+			if is.FindingID != "" {
+				issueByID[is.FindingID] = is
 			}
 		}
 
@@ -1498,7 +1510,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					param = "(none)"
 				}
 				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
-				status := jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)
+				issueLabel := strings.TrimSpace(o.FindingID)
+				if is, ok := issueByID[o.FindingID]; ok {
+					issueLabel = fallbackString(is.Alias, issueLabel)
+				}
+				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts.JiraBaseURL, "No Jira case")
 				fmt.Fprintf(&b, "| [%s](%s) | %s %s | %s | %s | %s | [%s](%s) |\n",
 					alias,
 					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
@@ -1506,8 +1522,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					strings.TrimSpace(o.URL),
 					param,
 					titleASCII(sevTxt),
-					status,
-					o.FindingID,
+					analystCases,
+					issueLabel,
 					issueLink,
 				)
 			}
@@ -1872,15 +1888,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					continue
 				}
 				sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
-				status := jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)
+				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts.JiraBaseURL, "No Jira case")
 				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
+				issueLabel := strings.TrimSpace(o.FindingID)
+				if is, ok := issueByID[o.FindingID]; ok {
+					issueLabel = fallbackString(is.Alias, issueLabel)
+				}
 				fmt.Fprintf(&spot, "| [%s](%s) | %s %s | %s | %s | [%s](%s) |\n",
 					occAliasUltraCompact(o, ""),
 					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
 					strings.TrimSpace(o.Method), strings.TrimSpace(o.URL),
 					titleASCII(sevTxt),
-					status,
-					o.FindingID, issueLink)
+					analystCases,
+					issueLabel, issueLink)
 			}
 			if err := os.WriteFile(filepath.Join(root, "latest-scan.md"), []byte(spot.String()), 0o644); err != nil {
 				return err

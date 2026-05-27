@@ -624,8 +624,102 @@ func TestWriteVault_TriageBoardCounts(t *testing.T) {
 	if !strings.Contains(tb, "| No Jira case | 1 | 10 |") {
 		t.Errorf("triage-board.md should bucket unticketed issues/occurrences without using KB status:\n%s", tb)
 	}
+	if !strings.Contains(tb, "_No Jira case_ means no linked analyst case was present") {
+		t.Errorf("triage-board.md should explain unticketed findings:\n%s", tb)
+	}
 	if strings.Contains(strings.ToLower(tb), "false positive") || strings.Contains(strings.ToLower(tb), "| open |") || strings.Contains(strings.ToLower(tb), "triaged") {
 		t.Errorf("triage-board.md should not expose local analyst status as workflow state:\n%s", tb)
+	}
+}
+
+func TestWriteVault_SummaryTablesLinkJiraCasesAndUseIssueAliases(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-nav", PluginID: "10001", Alert: "Navigation Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-nav",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/nav",
+		Method:       "GET",
+		Risk:         "High",
+		Analyst:      &entities.Analyst{TicketRefs: []string{"KAN-123"}},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-nav",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		ObservedAt:   "2026-04-06T14:00:00Z",
+		ScanLabel:    "scan-nav",
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{JiraBaseURL: "https://jira.example.test"}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	jiraLink := "[KAN-123](https://jira.example.test/browse/KAN-123)"
+	for _, name := range []string{"issues.md", "occurrences.md", "latest-scan.md"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("ReadFile %s: %v", name, err)
+		}
+		page := string(data)
+		if !strings.Contains(page, jiraLink) {
+			t.Fatalf("%s should render Jira cases as links:\n%s", name, page)
+		}
+		if strings.Contains(page, "| [find-nav](findings/find-nav.md)") {
+			t.Fatalf("%s should use finding alias labels instead of raw finding ids:\n%s", name, page)
+		}
+	}
+}
+
+func TestWriteVault_OccurrenceTrafficExplainsMissingRequest(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-traffic",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/traffic",
+		Method:       "GET",
+		Risk:         "Medium",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-traffic",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		Response:     &entities.HTTPResponse{StatusCode: 200, BodySnippet: "ok", BodyBytes: 2},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "occurrences", "occ-traffic.md"))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence: %v", err)
+	}
+	page := string(data)
+	if !strings.Contains(page, "Request details were not captured in the source artifact") {
+		t.Fatalf("occurrence traffic should explain missing request capture:\n%s", page)
+	}
+	if !strings.Contains(page, "### Response") {
+		t.Fatalf("occurrence traffic should still render response evidence:\n%s", page)
 	}
 }
 
