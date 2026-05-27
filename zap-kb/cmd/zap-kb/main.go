@@ -100,6 +100,7 @@ func main() {
 		jiraSyncKBStatus   bool
 		allowAgentPublish  bool
 		allowCustomPublish bool
+		zapAlertsOnly      bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
@@ -177,6 +178,7 @@ func main() {
 	flag.BoolVar(&jiraSyncKBStatus, "jira-sync-kb-status", false, "Legacy mode: write mapped Jira workflow status and assignee back into KB analyst fields. By default Jira remains the workflow source of truth and KB state is not mutated.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
+	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
 	// Subcommands own their flag sets, so dispatch before parsing global flags.
 	if handler, args, ok := lookupSubcommand(os.Args[1:]); ok {
 		handler(args)
@@ -400,6 +402,7 @@ func main() {
 		if err := json.Unmarshal(raw, &entIn); err != nil {
 			log.Fatalf("decode -entities-in file: %v", err)
 		}
+		entities.FillDerivedRequests(&entIn)
 	}
 
 	// optional merge (flat alerts only)
@@ -566,6 +569,15 @@ func main() {
 		}
 		if includeCVSS {
 			entities.EnrichCVSS(&ent)
+		}
+		if zapAlertsOnly {
+			beforeDefs, beforeFindings, beforeOccurrences := len(ent.Definitions), len(ent.Findings), len(ent.Occurrences)
+			ent = entities.FilterZAPAlertsOnly(ent)
+			fmt.Printf("Filtered to ZAP scanner alerts: definitions %d->%d findings %d->%d occurrences %d->%d\n",
+				beforeDefs, len(ent.Definitions), beforeFindings, len(ent.Findings), beforeOccurrences, len(ent.Occurrences))
+		}
+		if dropped := entities.DropMismatchedTraffic(&ent); dropped > 0 {
+			fmt.Printf("Dropped mismatched traffic samples: %d\n", dropped)
 		}
 
 		// Optional redaction pass

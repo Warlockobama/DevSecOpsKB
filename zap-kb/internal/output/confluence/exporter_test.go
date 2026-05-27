@@ -685,7 +685,7 @@ func TestFindingLabels(t *testing.T) {
 		}
 	})
 
-	t.Run("with_analyst_status", func(t *testing.T) {
+	t.Run("with_analyst_status_no_status_label", func(t *testing.T) {
 		f := &entities.Finding{
 			FindingID: "fin-x",
 			PluginID:  "10038",
@@ -693,8 +693,10 @@ func TestFindingLabels(t *testing.T) {
 			Analyst:   &entities.Analyst{Status: "triaged"},
 		}
 		labels := findingLabels(f)
-		if !contains(labels, "status-triaged") {
-			t.Errorf("expected status label from finding analyst, got %v", labels)
+		for _, l := range labels {
+			if strings.HasPrefix(l, "status-") {
+				t.Errorf("unexpected status label from finding analyst, got %v", labels)
+			}
 		}
 	})
 }
@@ -733,15 +735,17 @@ func TestOccurrenceLabels(t *testing.T) {
 		}
 	})
 
-	t.Run("with_analyst_status", func(t *testing.T) {
+	t.Run("with_analyst_status_no_status_label", func(t *testing.T) {
 		o := &entities.Occurrence{
 			OccurrenceID: "occ-11223344",
 			Risk:         "High",
 			Analyst:      &entities.Analyst{Status: "triaged"},
 		}
 		labels := occurrenceLabels(o)
-		if !contains(labels, "status-triaged") {
-			t.Errorf("expected 'status-triaged' label, got %v", labels)
+		for _, l := range labels {
+			if strings.HasPrefix(l, "status-") {
+				t.Errorf("unexpected status label from occurrence analyst, got %v", labels)
+			}
 		}
 	})
 
@@ -987,8 +991,11 @@ func TestBuildPostureStorageBody(t *testing.T) {
 	if !strings.Contains(body, "Risk Summary") {
 		t.Error("body should contain Risk Summary heading")
 	}
-	if !strings.Contains(body, "Triage Status") {
-		t.Error("body should contain Triage Status heading")
+	if strings.Contains(body, "Triage Status") {
+		t.Error("body should not render local KB status as workflow status")
+	}
+	if !strings.Contains(body, "Current analyst status is owned by Jira") {
+		t.Error("body should direct workflow status to Jira")
 	}
 	// Risk lozenge for High should appear
 	if !strings.Contains(body, `name="status"`) {
@@ -1248,7 +1255,7 @@ func TestExportVault_HierarchicalNesting(t *testing.T) {
 	}
 
 	// Occurrence page should be nested under the finding page.
-	occurrenceTitle := "Occurrence: CSP Header Not Set - /api/login - 3344"
+	occurrenceTitle := "Occurrence: CSP Header Not Set - /api/login - ccdd - 3344"
 	occurrenceParentID := "pid-" + findingTitle
 	if pageParents[occurrenceTitle] != occurrenceParentID {
 		t.Errorf("occurrence page parent: want %q, got %q", occurrenceParentID, pageParents[occurrenceTitle])
@@ -1424,6 +1431,7 @@ func TestOccurrencePageTitle(t *testing.T) {
 	o := &entities.Occurrence{
 		OccurrenceID: "occ-deadbeef",
 		DefinitionID: "def-10038",
+		FindingID:    "fin-cafebabe",
 		URL:          "https://example.com/main.js",
 	}
 	title := occurrencePageTitle(o, &ei)
@@ -1435,6 +1443,9 @@ func TestOccurrencePageTitle(t *testing.T) {
 	}
 	if !strings.Contains(title, "/main.js") {
 		t.Errorf("title should contain URL path, got: %s", title)
+	}
+	if !strings.Contains(title, "babe") {
+		t.Errorf("title should contain last 4 chars of finding ID when present, got: %s", title)
 	}
 	if !strings.HasSuffix(title, "beef") {
 		t.Errorf("title should end with last 4 chars of occurrence ID, got: %s", title)
@@ -1595,6 +1606,19 @@ func TestStripFindingBody_MostRecentTrafficSurvivesAfterAnalystNotebook(t *testi
 	}
 	if !strings.Contains(out, "```http") {
 		t.Error("body snippet code block should be preserved")
+	}
+}
+
+func TestStripTopLevelBodyForConfluence_RemovesDuplicateTitleHeadings(t *testing.T) {
+	input := "# Issues\n\n## Issues\n\nSorted by severity.\n\n| Severity | Issue |\n| --- | --- |\n| High | Example |\n"
+
+	out := stripTopLevelBodyForConfluence(input, "Issues")
+
+	if strings.Contains(out, "# Issues") || strings.Contains(out, "## Issues") {
+		t.Fatalf("duplicate title headings should be stripped:\n%s", out)
+	}
+	if !strings.Contains(out, "Sorted by severity.") {
+		t.Fatalf("body content should be preserved:\n%s", out)
 	}
 }
 
@@ -2040,7 +2064,7 @@ func TestAppendJiraOverviewSection_RendersLinkedCases(t *testing.T) {
 	}
 	ei := buildEntityIndex(ef)
 	out := appendJiraOverviewSection("Triage Board", "<h1>Triage board</h1>", &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, "2026-04-08T21:00:00Z")
-	for _, want := range []string{"Jira References", "workflow is managed in Jira", "browse/SEC-42", "HIGH</ac:parameter>", "Last Jira reference check: 2026-04-08T21:00:00Z"} {
+	for _, want := range []string{"Jira References", "workflow is managed in Jira", "browse/SEC-42", "HIGH</ac:parameter>"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("appendJiraOverviewSection missing %q:\n%s", want, out)
 		}
@@ -2156,11 +2180,15 @@ func TestPrependFindingProperties_UsesFindingWorkflowFields(t *testing.T) {
 	}
 	ei := buildEntityIndex(ef)
 	out := prependFindingProperties("BODY", ei.finds["fin-workflow"], &ei, "https://example.atlassian.net/jira/software/projects/SEC", map[string]string{"SEC-42": "In Review"}, nil, "2026-04-08T21:00:00Z", "", "")
-	// Status row is intentionally absent — Jira owns workflow state.
-	// Workflow Source row is intentionally absent — removed as noise.
-	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "<th>Jira Status</th><td><ac:structured-macro ac:name=\"status\"", "In Review</ac:parameter>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
+	// Status rows are intentionally absent — Jira owns workflow state.
+	for _, want := range []string{"<th>Owner</th><td>James</td>", "browse/SEC-42", "data-card-appearance=\"inline\"", "<th>Analyst Cases</th>", "data-card-appearance=\"block\"", "<h2>Jira Workflow</h2>", "internet-facing", "Business exception approved.", "2026-04-06T14:00:00Z"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("prependFindingProperties missing %q:\n%s", want, out)
+		}
+	}
+	for _, notWant := range []string{"<th>Jira Status</th>", "In Review</ac:parameter>", "Last synced Jira status", "Last Jira sync"} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("prependFindingProperties should not stamp Jira status %q:\n%s", notWant, out)
 		}
 	}
 }
@@ -2304,6 +2332,9 @@ func TestOccurrencePageTitle_ToolAgnostic(t *testing.T) {
 	// The short ID suffix should come from OccurrenceID tail chars.
 	if !strings.Contains(title, "3344") {
 		t.Errorf("occurrencePageTitle should contain the OccurrenceID suffix '3344', got %q", title)
+	}
+	if !strings.Contains(title, "1122") {
+		t.Errorf("occurrencePageTitle should contain the FindingID suffix '1122', got %q", title)
 	}
 }
 
@@ -2783,7 +2814,10 @@ func TestPrependOccurrenceProperties_JiraWorkflowGuidance(t *testing.T) {
 	if strings.Contains(out, "run <code>zap-kb pull</code>") {
 		t.Fatalf("expected legacy pull guidance to be removed, got: %.400s", out)
 	}
-	if !strings.Contains(out, "<th>Status</th><td>triaged</td>") {
+	if !strings.Contains(out, "<th>Analyst Cases</th><td>No Jira case</td>") {
+		t.Fatalf("expected missing Jira case to be explicit, got: %.400s", out)
+	}
+	if !strings.Contains(out, "<th>KB Lifecycle Snapshot</th><td>triaged</td>") {
 		t.Fatalf("expected legacy confirm status to be canonicalized, got: %.400s", out)
 	}
 }

@@ -63,10 +63,13 @@ func TestBuildScansIndexBody_RendersTable(t *testing.T) {
 		{Label: "prod-20260401", First: "2026-04-01T00:00:00Z", Last: "2026-04-01T08:00:00Z", Occurrences: 11, Findings: 6, Definitions: 4, URLs: 5},
 	}
 	body := buildScansIndexBody(rows)
-	for _, want := range []string{"<h1>Scans</h1>", "prod-20260401", "<th>Scan label</th>", "<td>11</td>", "<td>6</td>"} {
+	for _, want := range []string{"prod-20260401", "<th>Scan label</th>", "<td>11</td>", "<td>6</td>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+	if strings.Contains(body, "<h1>Scans</h1>") {
+		t.Errorf("body should not duplicate the Confluence page title: %s", body)
 	}
 }
 

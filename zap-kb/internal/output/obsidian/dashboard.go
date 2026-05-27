@@ -49,7 +49,6 @@ func GenerateDashboard(root string) error {
 	domainSeverity := map[string]map[string]int{}
 	ruleTotals := map[string]int{} // definitionId -> count
 	ruleSeverity := map[string]map[string]int{}
-	statusTotals := map[string]int{}
 	findingSeverity := map[string]string{} // findingId -> primary severity
 
 	entries, err := os.ReadDir(occDir)
@@ -102,17 +101,11 @@ func GenerateDashboard(root string) error {
 			dom = computeDomainLabel(strings.TrimSpace(y["url"]), "")
 		}
 		did := strings.TrimSpace(y["definitionId"]) // definition id
-		status := strings.TrimSpace(y["analyst.status"])
-		if status == "" {
-			status = "open"
-		}
-
 		scanTotals[scan]++
 		if _, ok := scanSeverity[scan]; !ok {
 			scanSeverity[scan] = map[string]int{}
 		}
 		scanSeverity[scan][sev]++
-		statusTotals[status]++
 		if dom != "" {
 			domainTotals[dom]++
 			if _, ok := domainSeverity[dom]; !ok {
@@ -161,16 +154,6 @@ func GenerateDashboard(root string) error {
 	fmt.Fprintf(&b, "| Low | %d |\n", issueSeverityTotals["low"])
 	fmt.Fprintf(&b, "| Info | %d |\n", issueSeverityTotals["info"])
 	b.WriteString("\n")
-
-	// Status overview
-	if len(statusTotals) > 0 {
-		b.WriteString("## Status\n\n")
-		b.WriteString("| Status | Count |\n| --- | --- |\n")
-		for _, entry := range []string{"open", "triaged", "fp", "accepted", "fixed"} {
-			fmt.Fprintf(&b, "| %s | %d |\n", titleASCII(entry), statusTotals[entry])
-		}
-		b.WriteString("\n")
-	}
 
 	// By Scan with severities
 	if len(scanTotals) > 0 {

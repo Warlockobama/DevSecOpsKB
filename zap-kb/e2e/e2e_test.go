@@ -66,14 +66,16 @@ func TestE2E_IngestVaultConfluenceDryRun(t *testing.T) {
 		}
 	}
 
-	// Step 4: assert triage-board.md open occurrence count == 2.
+	// Step 4: assert triage-board.md uses Jira workflow buckets, not local KB status.
+	// The fixture has no Jira cases, so all generated issues and occurrences are
+	// counted under the explicit coverage bucket.
 	triagePath := filepath.Join(vaultDir, "triage-board.md")
 	triageBytes, err := os.ReadFile(triagePath)
 	if err != nil {
 		t.Fatalf("read triage-board.md: %v", err)
 	}
-	if !triageBoardOpenCount(string(triageBytes), 2) {
-		t.Errorf("triage-board.md: expected Open occurrence count 2\ncontent:\n%s", triageBytes)
+	if !triageBoardWorkflowCount(string(triageBytes), "No Jira case", 3, 5) {
+		t.Errorf("triage-board.md: expected No Jira case counts 3 issues / 5 occurrences\ncontent:\n%s", triageBytes)
 	}
 
 	// Step 5: confluence dry-run.
@@ -101,22 +103,24 @@ func countMD(entries []os.DirEntry) int {
 	return n
 }
 
-// triageBoardOpenCount returns true when triage-board markdown contains an
-// "Open" status row whose occurrence column equals wantOccCount.
+// triageBoardWorkflowCount returns true when triage-board markdown contains a
+// Jira workflow row whose issue and occurrence columns match.
 // Row format written by obsidian.WriteVault:
-// | Open | <issueCount> | <occCount> |
-func triageBoardOpenCount(content string, wantOccCount int) bool {
-	want := fmt.Sprintf("%d", wantOccCount)
+//
+//	| <workflow bucket> | <issueCount> | <occCount> |
+func triageBoardWorkflowCount(content, bucket string, wantIssueCount, wantOccCount int) bool {
+	wantIssues := fmt.Sprintf("%d", wantIssueCount)
+	wantOccs := fmt.Sprintf("%d", wantOccCount)
 	for _, line := range strings.Split(content, "\n") {
 		cols := strings.Split(line, "|")
-		// Split on "|" yields: ["", " Open ", " issueCount ", " occCount ", ""]
+		// Split on "|" yields: ["", " bucket ", " issueCount ", " occCount ", ""]
 		if len(cols) < 4 {
 			continue
 		}
-		if strings.TrimSpace(cols[1]) != "Open" {
+		if strings.TrimSpace(cols[1]) != bucket {
 			continue
 		}
-		if strings.TrimSpace(cols[3]) == want {
+		if strings.TrimSpace(cols[2]) == wantIssues && strings.TrimSpace(cols[3]) == wantOccs {
 			return true
 		}
 	}

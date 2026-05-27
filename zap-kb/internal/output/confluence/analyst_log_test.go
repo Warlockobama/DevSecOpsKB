@@ -29,7 +29,7 @@ func TestFindingStateSig_Basic(t *testing.T) {
 		LastSeen:    "2026-04-03T18:44:31Z",
 	}
 	sig := findingStateSig(f, "To Do")
-	want := "occ=3|risk=Medium|lastSeen=2026-04-03T18:44:31Z|jira=To Do|status=|owner="
+	want := "occ=3|risk=Medium|lastSeen=2026-04-03T18:44:31Z|status=|owner="
 	if sig != want {
 		t.Errorf("got %q, want %q", sig, want)
 	}
@@ -45,8 +45,8 @@ func TestFindingStateSig_EmptyJira(t *testing.T) {
 	if !strings.HasPrefix(sig, "occ=1|risk=High|lastSeen=") {
 		t.Errorf("unexpected sig: %q", sig)
 	}
-	if !strings.Contains(sig, "|jira=|") {
-		t.Errorf("expected empty jira segment in sig: %q", sig)
+	if strings.Contains(sig, "|jira=") {
+		t.Errorf("state signature should not include Jira status: %q", sig)
 	}
 }
 
@@ -332,7 +332,6 @@ func TestBuildAnalystHistorySection_RendersRows(t *testing.T) {
 			PublishedAt: "2026-04-09T10:00:00Z",
 			Risk:        "Medium",
 			JiraCase:    "KAN-189",
-			JiraStatus:  "To Do",
 		},
 	}
 	got := buildAnalystHistorySection(summaries, "https://jira.example.com")
@@ -545,7 +544,6 @@ func TestParseStateSig_RoundTripsFindingStateSig(t *testing.T) {
 		"occ":      "5",
 		"risk":     "Medium",
 		"lastSeen": "2026-04-07T00:00:00Z",
-		"jira":     "In Review",
 		"status":   "triaged",
 		"owner":    "alice",
 	}
@@ -596,11 +594,13 @@ func TestBuildChangelogSection_StatusAndOwnerDiff(t *testing.T) {
 		"Changes since last publish",
 		"<td>Status</td><td>open</td><td>triaged</td>",
 		"<td>Owner</td><td>\u2014</td><td>alice</td>",
-		"<td>Jira status</td><td>To Do</td><td>In Review</td>",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("changelog missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "Jira status") || strings.Contains(got, "In Review") {
+		t.Errorf("changelog should not stamp Jira status:\n%s", got)
 	}
 	if strings.Contains(got, "Occurrences") {
 		t.Errorf("unchanged occurrence count should not appear in changelog:\n%s", got)

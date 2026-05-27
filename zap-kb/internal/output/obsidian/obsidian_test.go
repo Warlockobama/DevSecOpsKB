@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -619,23 +618,158 @@ func TestWriteVault_TriageBoardCounts(t *testing.T) {
 	}
 	tb := string(tbData)
 
-	// The triage board table rows are "| Label | issueCount | occCount |"
-	// Check that "open" and count 5 appear on the same line.
-	checkCountInBoard := func(label string, count int) {
-		t.Helper()
-		needle := strconv.Itoa(count)
-		for _, line := range strings.Split(tb, "\n") {
-			lower := strings.ToLower(line)
-			if strings.Contains(lower, strings.ToLower(label)) && strings.Contains(line, needle) {
-				return
-			}
-		}
-		t.Errorf("triage-board.md: expected a line containing %q and %d\nboard content:\n%s", label, count, tb)
+	if !strings.Contains(tb, "## Jira references") {
+		t.Fatalf("triage-board.md missing Jira references section:\n%s", tb)
+	}
+	if !strings.Contains(tb, "| No Jira case | 1 | 10 |") {
+		t.Errorf("triage-board.md should bucket unticketed issues/occurrences without using KB status:\n%s", tb)
+	}
+	if !strings.Contains(tb, "_No Jira case_ means no linked analyst case was present") {
+		t.Errorf("triage-board.md should explain unticketed findings:\n%s", tb)
+	}
+	if strings.Contains(strings.ToLower(tb), "false positive") || strings.Contains(strings.ToLower(tb), "| open |") || strings.Contains(strings.ToLower(tb), "triaged") {
+		t.Errorf("triage-board.md should not expose local analyst status as workflow state:\n%s", tb)
+	}
+}
+
+func TestWriteVault_SummaryTablesLinkJiraCasesAndUseIssueAliases(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-nav", PluginID: "10001", Alert: "Navigation Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-nav",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/nav",
+		Method:       "GET",
+		Risk:         "High",
+		Analyst:      &entities.Analyst{TicketRefs: []string{"KAN-123"}},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-nav",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		ObservedAt:   "2026-04-06T14:00:00Z",
+		ScanLabel:    "scan-nav",
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{JiraBaseURL: "https://jira.example.test"}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
 	}
 
-	checkCountInBoard("open", 5)
-	checkCountInBoard("triaged", 3)
-	checkCountInBoard("false positive", 2) // statusOrder uses "False positive" label for "fp"
+	jiraLink := "[KAN-123](https://jira.example.test/browse/KAN-123)"
+	for _, name := range []string{"issues.md", "occurrences.md", "latest-scan.md"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("ReadFile %s: %v", name, err)
+		}
+		page := string(data)
+		if !strings.Contains(page, jiraLink) {
+			t.Fatalf("%s should render Jira cases as links:\n%s", name, page)
+		}
+		if name == "issues.md" && strings.Contains(page, "`[KAN-123]") {
+			t.Fatalf("%s should not wrap Jira links in code ticks:\n%s", name, page)
+		}
+		if strings.Contains(page, "| [find-nav](findings/find-nav.md)") {
+			t.Fatalf("%s should use finding alias labels instead of raw finding ids:\n%s", name, page)
+		}
+	}
+}
+
+func TestWriteVault_OccurrenceTrafficExplainsMissingRequest(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-traffic",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/traffic",
+		Method:       "GET",
+		Risk:         "Medium",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-traffic",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		Response:     &entities.HTTPResponse{StatusCode: 200, BodySnippet: "ok", BodyBytes: 2},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "occurrences", "occ-traffic.md"))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence: %v", err)
+	}
+	page := string(data)
+	if !strings.Contains(page, "Request details were not captured in the source artifact") {
+		t.Fatalf("occurrence traffic should explain missing request capture:\n%s", page)
+	}
+	if !strings.Contains(page, "### Response") {
+		t.Fatalf("occurrence traffic should still render response evidence:\n%s", page)
+	}
+}
+
+func TestWriteExecutiveSummaryReportsExposureTotalsNotLocalWorkflow(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-exec", PluginID: "10001", Alert: "Executive Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-exec",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/exec",
+		Method:       "GET",
+		Risk:         "High",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-exec",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "fixed"},
+	}
+	if err := writeExecutiveSummary(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}, "2026-04-06T14:00:00Z"); err != nil {
+		t.Fatalf("writeExecutiveSummary: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "EXECUTIVE-SUMMARY.md"))
+	if err != nil {
+		t.Fatalf("ReadFile EXECUTIVE-SUMMARY.md: %v", err)
+	}
+	page := string(data)
+	if strings.Contains(page, "Open findings") {
+		t.Fatalf("executive summary should not present local workflow as open work:\n%s", page)
+	}
+	if !strings.Contains(page, "| High | 1 | 1 |") {
+		t.Fatalf("executive summary should count evidence totals regardless of local status:\n%s", page)
+	}
+	if !strings.Contains(page, "Jira remains the source of truth") {
+		t.Fatalf("executive summary should clarify workflow authority:\n%s", page)
+	}
 }
 
 // TestWriteVault_DefinitionPage_FalsePositiveConditions verifies that a definition
@@ -695,12 +829,12 @@ func TestWriteVault_DefinitionPage_FalsePositiveConditions(t *testing.T) {
 	}
 }
 
-// --- Issue #39: Triage board open findings queue ---
+// --- Issue #39: Triage board priority evidence queue ---
 
-// TestWriteVault_TriageBoardOpenFindingsQueue verifies that triage-board.md
-// contains a "## Open findings queue" section with severity-ordered finding
-// links for open/untriaged findings.
-func TestWriteVault_TriageBoardOpenFindingsQueue(t *testing.T) {
+// TestWriteVault_TriageBoardPriorityEvidenceQueue verifies that triage-board.md
+// contains a "## Priority evidence queue" section with severity-ordered finding
+// links without presenting KB-local status as workflow truth.
+func TestWriteVault_TriageBoardPriorityEvidenceQueue(t *testing.T) {
 	root := t.TempDir()
 
 	ef := entities.EntitiesFile{
@@ -730,14 +864,20 @@ func TestWriteVault_TriageBoardOpenFindingsQueue(t *testing.T) {
 	}
 	tb := string(tbData)
 
-	if !strings.Contains(tb, "## Open findings queue") {
-		t.Errorf("triage-board.md missing '## Open findings queue' section:\n%s", tb)
+	if strings.Contains(tb, "## Open findings queue") {
+		t.Errorf("triage-board.md should not present KB-local status as open workflow:\n%s", tb)
+	}
+	if !strings.Contains(tb, "## Priority evidence queue") {
+		t.Errorf("triage-board.md missing '## Priority evidence queue' section:\n%s", tb)
+	}
+	if !strings.Contains(tb, "Jira remains the source of truth") {
+		t.Errorf("triage-board.md should clarify Jira-owned workflow:\n%s", tb)
 	}
 	if !strings.Contains(tb, "### High") {
-		t.Errorf("triage-board.md missing '### High' band in open findings queue:\n%s", tb)
+		t.Errorf("triage-board.md missing '### High' band in priority evidence queue:\n%s", tb)
 	}
 	if !strings.Contains(tb, "### Medium") {
-		t.Errorf("triage-board.md missing '### Medium' band in open findings queue:\n%s", tb)
+		t.Errorf("triage-board.md missing '### Medium' band in priority evidence queue:\n%s", tb)
 	}
 
 	// High must appear before Medium.
@@ -1116,17 +1256,20 @@ func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"- Status: Triaged (open:1)",
-		"- Owners: James",
+		"- KB lifecycle snapshot: Triaged",
+		"- KB owners: James",
 		"- Tags: internet-facing, case-ticket",
 		"- Analyst cases: [SEC-42](https://example.atlassian.net/jira/software/projects/KAN/browse/SEC-42), [LEGACY-1](https://example.atlassian.net/jira/software/projects/KAN/browse/LEGACY-1)",
-		"- Jira status: In Review",
-		"- Workflow source: Jira analyst case (synced at publish time)",
-		"- Jira sync: 2026-04-08T21:00:00Z",
+		"- Workflow source: Jira analyst case",
 		"Use Jira as the workflow source of truth.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("finding page missing %q:\n%s", want, body)
+		}
+	}
+	for _, notWant := range []string{"- Jira status:", "- Jira assignee:", "- Jira sync:"} {
+		if strings.Contains(body, notWant) {
+			t.Errorf("finding page should not stamp Jira workflow field %q:\n%s", notWant, body)
 		}
 	}
 }
@@ -1168,6 +1311,74 @@ func TestWriteVault_OccurrenceTrafficRendersHTTPBlocks(t *testing.T) {
 	}
 }
 
+func TestWriteVault_OccurrenceTrafficLabelsDerivedRequest(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
+	finding := entities.Finding{FindingID: "fin-traffic", DefinitionID: def.DefinitionID, PluginID: def.PluginID, URL: "https://example.com/ftp", Method: "GET", Risk: "Medium"}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-traffic",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		Request:      &entities.HTTPRequest{DerivedFrom: entities.RequestDerivedFromOccurrence, Headers: []entities.Header{{Name: "Host", Value: "example.com"}}},
+		Response:     &entities.HTTPResponse{StatusCode: 200, BodySnippet: "<html>ok</html>", BodyBytes: 15},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{SchemaVersion: "1", GeneratedAt: "2026-04-08T21:00:00Z", Definitions: []entities.Definition{def}, Findings: []entities.Finding{finding}, Occurrences: []entities.Occurrence{occ}}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "occurrences", "occ-traffic.md"))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence page: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "GET /ftp HTTP/1.1") {
+		t.Fatalf("occurrence page missing derived request line:\n%s", body)
+	}
+	if !strings.Contains(body, "Original request headers/body were not captured") {
+		t.Fatalf("occurrence page missing derived request disclosure:\n%s", body)
+	}
+	if strings.Contains(body, "_line:") {
+		t.Fatalf("derived request line should not be emitted as a curl header:\n%s", body)
+	}
+}
+
+func TestFormatHTTPRequestBlockSkipsMalformedRequestLineHeader(t *testing.T) {
+	req := &entities.HTTPRequest{Headers: []entities.Header{
+		{Name: "Authorization", Value: "Bearer secret"},
+		{Name: "GET http", Value: "//example.com/ HTTP/1.1"},
+		{Name: "Cache-Control", Value: "no-cache"},
+	}}
+
+	got := formatHTTPRequestBlock("GET", "http://example.com/", req)
+
+	if strings.Contains(got, "GET http:") {
+		t.Fatalf("malformed request line header should not render:\n%s", got)
+	}
+	if !strings.Contains(got, "Authorization: <redacted>") {
+		t.Fatalf("expected normal headers to remain redacted:\n%s", got)
+	}
+}
+
+func TestBuildCurlSkipsMalformedRequestLineHeader(t *testing.T) {
+	got := buildCurl(entities.Occurrence{
+		URL:    "http://example.com/",
+		Method: "GET",
+		Request: &entities.HTTPRequest{Headers: []entities.Header{
+			{Name: "Authorization", Value: "Bearer secret"},
+			{Name: "GET http", Value: "//example.com/ HTTP/1.1"},
+		}},
+	})
+
+	if strings.Contains(got, "GET http:") {
+		t.Fatalf("malformed request line header should not be emitted in curl: %s", got)
+	}
+	if !strings.Contains(got, `-H "Authorization: <redacted>"`) {
+		t.Fatalf("expected normal header in curl: %s", got)
+	}
+}
+
 func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 	root := t.TempDir()
 	def := entities.Definition{DefinitionID: "def-board", PluginID: "10001", Alert: "Board Alert"}
@@ -1204,11 +1415,76 @@ func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 		t.Fatalf("ReadFile triage-board.md: %v", err)
 	}
 	board := string(boardData)
-	if !strings.Contains(board, "| Triaged | 1 | 0 |") {
-		t.Errorf("triage-board should count the issue as triaged:\n%s", board)
+	if !strings.Contains(board, "| No Jira case | 1 | 1 |") {
+		t.Errorf("triage-board should count workflow buckets from Jira case coverage:\n%s", board)
 	}
-	if !strings.Contains(board, "| Open | 0 | 1 |") {
-		t.Errorf("triage-board should keep the occurrence history open:\n%s", board)
+	if strings.Contains(board, "| Triaged |") || strings.Contains(board, "| Open |") {
+		t.Errorf("triage-board should not use local KB status as workflow state:\n%s", board)
+	}
+}
+
+func TestWriteVault_ByDomainOmitsLocalStatusBuckets(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-domain", PluginID: "10001", Alert: "Domain Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-domain",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/domain",
+		Method:       "GET",
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "triaged"},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-domain",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "open"},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "by-domain.md"))
+	if err != nil {
+		t.Fatalf("ReadFile by-domain.md: %v", err)
+	}
+	page := string(data)
+	if strings.Contains(page, "| Open |") || strings.Contains(page, "| Triaged |") || strings.Contains(page, "| FP |") || strings.Contains(page, "| Accepted |") || strings.Contains(page, "| Fixed |") {
+		t.Fatalf("by-domain should not summarize KB-local analyst.status buckets:\n%s", page)
+	}
+	if !strings.Contains(page, "Workflow status comes from Jira") {
+		t.Fatalf("by-domain should explain Jira-owned workflow:\n%s", page)
+	}
+	if !strings.Contains(page, "| Domain | Occurrences | High | Medium | Low | Info |") {
+		t.Fatalf("by-domain missing exposure summary header:\n%s", page)
+	}
+}
+
+func TestWriteTriageGuideUsesJiraAsWorkflowSource(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTriageGuide(root); err != nil {
+		t.Fatalf("writeTriageGuide: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "TRIAGE-GUIDE.md"))
+	if err != nil {
+		t.Fatalf("ReadFile TRIAGE-GUIDE.md: %v", err)
+	}
+	guide := string(data)
+	if !strings.Contains(guide, "Jira is the source of truth") {
+		t.Fatalf("triage guide should direct analysts to Jira:\n%s", guide)
+	}
+	if strings.Contains(guide, "| open | New, not yet reviewed |") || strings.Contains(guide, "Status values") {
+		t.Fatalf("triage guide should not document generated KB status as the workflow:\n%s", guide)
 	}
 }
 
