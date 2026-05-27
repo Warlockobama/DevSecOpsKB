@@ -27,6 +27,7 @@ type HTTPRequest struct {
 	BodyHash    string   `json:"bodyHash,omitempty"`    // e.g., sha256 of captured body (future)
 	BodyBytes   int      `json:"bodyBytes,omitempty"`   // captured/truncated length (future)
 	BodySnippet string   `json:"bodySnippet,omitempty"` // optional small snippet for display
+	DerivedFrom string   `json:"derivedFrom,omitempty"` // non-empty when reconstructed from occurrence metadata
 	// New: preserve raw header block and original size
 	RawHeader      string `json:"rawHeader,omitempty"`
 	RawHeaderBytes int    `json:"rawHeaderBytes,omitempty"`
@@ -555,7 +556,7 @@ func BuildEntitiesWithOptions(alerts []zapclient.Alert, opts BuildOptions) Entit
 		return occs[i].Evidence < occs[j].Evidence
 	})
 
-	return EntitiesFile{
+	ef := EntitiesFile{
 		SchemaVersion: "v1",
 		GeneratedAt:   genAt,
 		SourceTool:    sourceTool,
@@ -563,6 +564,8 @@ func BuildEntitiesWithOptions(alerts []zapclient.Alert, opts BuildOptions) Entit
 		Findings:      finds,
 		Occurrences:   occs,
 	}
+	FillDerivedRequests(&ef)
+	return ef
 }
 
 // attachInlineTrafficFromAlert preserves inline request/response snippets that

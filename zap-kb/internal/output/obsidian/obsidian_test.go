@@ -1311,6 +1311,39 @@ func TestWriteVault_OccurrenceTrafficRendersHTTPBlocks(t *testing.T) {
 	}
 }
 
+func TestWriteVault_OccurrenceTrafficLabelsDerivedRequest(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
+	finding := entities.Finding{FindingID: "fin-traffic", DefinitionID: def.DefinitionID, PluginID: def.PluginID, URL: "https://example.com/ftp", Method: "GET", Risk: "Medium"}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-traffic",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+		Request:      &entities.HTTPRequest{DerivedFrom: entities.RequestDerivedFromOccurrence, Headers: []entities.Header{{Name: "Host", Value: "example.com"}}},
+		Response:     &entities.HTTPResponse{StatusCode: 200, BodySnippet: "<html>ok</html>", BodyBytes: 15},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{SchemaVersion: "1", GeneratedAt: "2026-04-08T21:00:00Z", Definitions: []entities.Definition{def}, Findings: []entities.Finding{finding}, Occurrences: []entities.Occurrence{occ}}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "occurrences", "occ-traffic.md"))
+	if err != nil {
+		t.Fatalf("ReadFile occurrence page: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "GET /ftp HTTP/1.1") {
+		t.Fatalf("occurrence page missing derived request line:\n%s", body)
+	}
+	if !strings.Contains(body, "Original request headers/body were not captured") {
+		t.Fatalf("occurrence page missing derived request disclosure:\n%s", body)
+	}
+	if strings.Contains(body, "_line:") {
+		t.Fatalf("derived request line should not be emitted as a curl header:\n%s", body)
+	}
+}
+
 func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 	root := t.TempDir()
 	def := entities.Definition{DefinitionID: "def-board", PluginID: "10001", Alert: "Board Alert"}

@@ -400,6 +400,7 @@ func main() {
 		if err := json.Unmarshal(raw, &entIn); err != nil {
 			log.Fatalf("decode -entities-in file: %v", err)
 		}
+		entities.FillDerivedRequests(&entIn)
 	}
 
 	// optional merge (flat alerts only)

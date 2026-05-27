@@ -2284,6 +2284,9 @@ func buildCurl(o entities.Occurrence) string {
 				continue
 			}
 			low := strings.ToLower(name)
+			if low == "_line" {
+				continue
+			}
 			if low == "authorization" {
 				val = "<redacted>"
 			}
@@ -3146,6 +3149,9 @@ func writeHTTPRequestBlock(b *strings.Builder, method, rawURL string, req *entit
 	b.WriteString("```http\n")
 	b.WriteString(formatHTTPRequestBlock(method, rawURL, req))
 	b.WriteString("\n```\n")
+	if strings.TrimSpace(req.DerivedFrom) != "" {
+		b.WriteString("\n_Original request headers/body were not captured; the request line above was reconstructed from occurrence method and URL._\n")
+	}
 	if req.BodyBytes > len(strings.TrimRight(req.BodySnippet, "\n")) {
 		fmt.Fprintf(b, "\n_Request body truncated to %d bytes (of %d)_\n", len(strings.TrimRight(req.BodySnippet, "\n")), req.BodyBytes)
 	}

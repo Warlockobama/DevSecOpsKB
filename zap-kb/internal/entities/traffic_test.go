@@ -73,3 +73,52 @@ func TestBuildEntitiesInlineTrafficMediumRiskResponseStillTruncates(t *testing.T
 		t.Fatalf("BodyBytes = %d, want %d", resp.BodyBytes, len(body))
 	}
 }
+
+func TestBuildEntitiesDerivesRequestLineWhenResponseOnly(t *testing.T) {
+	ef := BuildEntitiesWithOptions([]zapclient.Alert{{
+		PluginID:       "zap-legacy-ftp-surface",
+		Alert:          "Legacy FTP Surface Exposed Over Web",
+		Risk:           "Medium",
+		URL:            "http://juice-shop.range.svc.cluster.local:3000/ftp",
+		Method:         "GET",
+		ResponseHeader: "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n",
+		ResponseBody:   "<html>ok</html>",
+	}}, BuildOptions{GeneratedAt: "2026-01-01T00:00:00Z"})
+
+	if len(ef.Occurrences) != 1 {
+		t.Fatalf("occurrences = %d, want 1", len(ef.Occurrences))
+	}
+	req := ef.Occurrences[0].Request
+	if req == nil {
+		t.Fatal("expected derived request")
+	}
+	if req.DerivedFrom != RequestDerivedFromOccurrence {
+		t.Fatalf("DerivedFrom = %q, want %q", req.DerivedFrom, RequestDerivedFromOccurrence)
+	}
+	if !strings.Contains(req.RawHeader, "GET /ftp HTTP/1.1") {
+		t.Fatalf("derived raw header missing request line: %q", req.RawHeader)
+	}
+	if !strings.Contains(req.RawHeader, "Host: juice-shop.range.svc.cluster.local:3000") {
+		t.Fatalf("derived raw header missing host: %q", req.RawHeader)
+	}
+	if req.BodyBytes != 0 || req.BodySnippet != "" {
+		t.Fatalf("derived request should not invent a body: bytes=%d snippet=%q", req.BodyBytes, req.BodySnippet)
+	}
+}
+
+func TestBuildEntitiesDoesNotDeriveRequestWithoutTraffic(t *testing.T) {
+	ef := BuildEntitiesWithOptions([]zapclient.Alert{{
+		PluginID: "10001",
+		Alert:    "Informational Finding",
+		Risk:     "Info",
+		URL:      "https://example.test/path",
+		Method:   "GET",
+	}}, BuildOptions{GeneratedAt: "2026-01-01T00:00:00Z"})
+
+	if len(ef.Occurrences) != 1 {
+		t.Fatalf("occurrences = %d, want 1", len(ef.Occurrences))
+	}
+	if ef.Occurrences[0].Request != nil {
+		t.Fatalf("request = %+v, want nil without captured response traffic", ef.Occurrences[0].Request)
+	}
+}

@@ -53,6 +53,9 @@ func Read(path string) (Artifact, error) {
 	defer f.Close()
 	dec := json.NewDecoder(f)
 	err = dec.Decode(&a)
+	if err == nil {
+		entities.FillDerivedRequests(&a.Entities)
+	}
 	return a, err
 }
 
@@ -86,6 +89,7 @@ func ReadFlexible(path string) (Artifact, error) {
 		}
 		return Artifact{}, fmt.Errorf("decode entities JSON %q: %w", path, err3)
 	}
+	entities.FillDerivedRequests(&ent)
 	if strings.TrimSpace(ent.SchemaVersion) == "" && len(ent.Definitions) == 0 && len(ent.Occurrences) == 0 {
 		if err != nil {
 			return Artifact{}, err
