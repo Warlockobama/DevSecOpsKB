@@ -1438,7 +1438,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					continue
 				}
 				rule := fallbackString(is.RuleTitle, "Rule")
-				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | `%s` | %d | %s |\n",
+				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | %s | %d | %s |\n",
 					titleASCII(is.Severity), is.Alias, is.Link,
 					strings.TrimSpace(is.Method), strings.TrimSpace(is.URL),
 					formatTicketRefsMarkdown(is.Tickets, opts.JiraBaseURL, "No Jira case"),
@@ -1696,20 +1696,15 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			tbContent = "## Triage board\n\n_No data yet_\n"
 		}
 
-		// Open findings queue — severity-sorted list of open/untriaged findings.
+		// Priority evidence queue — severity-sorted list of findings from the KB evidence set.
 		{
 			const triageCap = 50
-			// Collect findings whose primary status is open (empty counts as open).
 			type openFinding struct {
 				is      issueSummary
 				sevRank int
 			}
 			var openFindings []openFinding
 			for _, is := range issueSummaries {
-				st := strings.TrimSpace(is.PrimaryStatus)
-				if st != "" && st != "open" {
-					continue
-				}
 				openFindings = append(openFindings, openFinding{
 					is:      is,
 					sevRank: rankSeverity(is.Severity),
@@ -1727,7 +1722,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 			if len(openFindings) > 0 {
 				var qb strings.Builder
-				qb.WriteString("## Open findings queue\n\n")
+				qb.WriteString("## Priority evidence queue\n\n")
+				qb.WriteString("_Severity-sorted KB evidence. Jira remains the source of truth for open/done workflow state._\n\n")
 				sevBands := []struct {
 					Label string
 					Key   string

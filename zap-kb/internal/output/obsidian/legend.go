@@ -10,7 +10,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
 
-const legendContent = `# KB Alias Legend
+const legendContent = `# Alias Legend
 
 Findings and occurrences use short aliases for display in tables and links.
 
@@ -211,7 +211,8 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		findByID[f.FindingID] = f
 	}
 
-	// Risk posture: count open findings and occurrences by severity.
+	// Risk posture: count findings and occurrences by severity. Jira owns workflow
+	// state, so this executive page reports exposure totals instead of local open/closed buckets.
 	type severityRow struct {
 		Label    string
 		Key      string
@@ -229,42 +230,33 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		sevFindingIdx[r.Key] = i
 	}
 
-	// Aggregate open occurrences per finding-severity.
-	// We count a finding as "open" if it has at least one open occurrence.
-	openOccsBySev := map[string]int{}  // sev -> open occ count
-	findSevOpen := map[string]string{} // findingID -> primary severity if it has open occs
+	occsBySev := map[string]int{}  // sev -> occurrence count
+	findSev := map[string]string{} // findingID -> primary severity
 
 	for _, o := range ef.Occurrences {
-		status := "open"
-		if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
-			status = strings.TrimSpace(o.Analyst.Status)
-		}
-		if status != "open" {
-			continue
-		}
 		sev, _ := deriveSeverity(o.Risk, o.RiskCode)
 		sevKey := strings.ToLower(strings.TrimSpace(sev))
 		if sevKey == "informational" {
 			sevKey = "info"
 		}
-		openOccsBySev[sevKey]++
-		if _, seen := findSevOpen[o.FindingID]; !seen {
-			findSevOpen[o.FindingID] = sevKey
+		occsBySev[sevKey]++
+		if _, seen := findSev[o.FindingID]; !seen {
+			findSev[o.FindingID] = sevKey
 		}
 	}
 
-	// Count open findings per severity.
-	openFindsBySev := map[string]int{}
-	for _, sevKey := range findSevOpen {
-		openFindsBySev[sevKey]++
+	// Count findings per severity.
+	findsBySev := map[string]int{}
+	for _, sevKey := range findSev {
+		findsBySev[sevKey]++
 	}
 
 	totalFinds := 0
 	totalOccs := 0
 	for i := range sevRows {
 		k := sevRows[i].Key
-		sevRows[i].findings = openFindsBySev[k]
-		sevRows[i].occs = openOccsBySev[k]
+		sevRows[i].findings = findsBySev[k]
+		sevRows[i].occs = occsBySev[k]
 		totalFinds += sevRows[i].findings
 		totalOccs += sevRows[i].occs
 	}
@@ -286,7 +278,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 	sort.Strings(owaspCats)
 
-	// Recommended immediate actions: top 5 high-severity open findings.
+	// Recommended immediate actions: top 5 high-severity finding groups.
 	type actionItem struct {
 		Title     string
 		Remedy    string
@@ -295,7 +287,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 	// Group high findings by definition.
 	defHighFinds := map[string][]string{} // defID -> []findingID
-	for fid, sevKey := range findSevOpen {
+	for fid, sevKey := range findSev {
 		if sevKey != "high" {
 			continue
 		}
@@ -365,7 +357,8 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 
 	b.WriteString("## Risk posture\n\n")
-	b.WriteString("| Severity | Open findings | Occurrences |\n")
+	b.WriteString("_Counts are KB evidence totals, not Jira workflow state. Jira remains the source of truth for open/done ownership and closure._\n\n")
+	b.WriteString("| Severity | Findings | Occurrences |\n")
 	b.WriteString("|---|---|---|\n")
 	for _, r := range sevRows {
 		fmt.Fprintf(&b, "| %s | %d | %d |\n", r.Label, r.findings, r.occs)
@@ -386,9 +379,9 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 
 	b.WriteString("## Recommended immediate actions\n\n")
-	b.WriteString("_Top High-severity findings requiring action:_\n\n")
+	b.WriteString("_Top High-severity finding groups to review against Jira workflow state:_\n\n")
 	if len(actions) == 0 {
-		b.WriteString("_No High-severity open findings._\n\n")
+		b.WriteString("_No High-severity findings._\n\n")
 	} else {
 		for i, a := range actions {
 			remedyStr := a.Remedy

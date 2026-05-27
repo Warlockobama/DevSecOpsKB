@@ -674,6 +674,9 @@ func TestWriteVault_SummaryTablesLinkJiraCasesAndUseIssueAliases(t *testing.T) {
 		if !strings.Contains(page, jiraLink) {
 			t.Fatalf("%s should render Jira cases as links:\n%s", name, page)
 		}
+		if name == "issues.md" && strings.Contains(page, "`[KAN-123]") {
+			t.Fatalf("%s should not wrap Jira links in code ticks:\n%s", name, page)
+		}
 		if strings.Contains(page, "| [find-nav](findings/find-nav.md)") {
 			t.Fatalf("%s should use finding alias labels instead of raw finding ids:\n%s", name, page)
 		}
@@ -720,6 +723,52 @@ func TestWriteVault_OccurrenceTrafficExplainsMissingRequest(t *testing.T) {
 	}
 	if !strings.Contains(page, "### Response") {
 		t.Fatalf("occurrence traffic should still render response evidence:\n%s", page)
+	}
+}
+
+func TestWriteExecutiveSummaryReportsExposureTotalsNotLocalWorkflow(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-exec", PluginID: "10001", Alert: "Executive Alert"}
+	finding := entities.Finding{
+		FindingID:    "find-exec",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://app.example.test/exec",
+		Method:       "GET",
+		Risk:         "High",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-exec",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "High",
+		Analyst:      &entities.Analyst{Status: "fixed"},
+	}
+	if err := writeExecutiveSummary(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2026-04-06T14:00:00Z",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}, "2026-04-06T14:00:00Z"); err != nil {
+		t.Fatalf("writeExecutiveSummary: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "EXECUTIVE-SUMMARY.md"))
+	if err != nil {
+		t.Fatalf("ReadFile EXECUTIVE-SUMMARY.md: %v", err)
+	}
+	page := string(data)
+	if strings.Contains(page, "Open findings") {
+		t.Fatalf("executive summary should not present local workflow as open work:\n%s", page)
+	}
+	if !strings.Contains(page, "| High | 1 | 1 |") {
+		t.Fatalf("executive summary should count evidence totals regardless of local status:\n%s", page)
+	}
+	if !strings.Contains(page, "Jira remains the source of truth") {
+		t.Fatalf("executive summary should clarify workflow authority:\n%s", page)
 	}
 }
 
@@ -780,12 +829,12 @@ func TestWriteVault_DefinitionPage_FalsePositiveConditions(t *testing.T) {
 	}
 }
 
-// --- Issue #39: Triage board open findings queue ---
+// --- Issue #39: Triage board priority evidence queue ---
 
-// TestWriteVault_TriageBoardOpenFindingsQueue verifies that triage-board.md
-// contains a "## Open findings queue" section with severity-ordered finding
-// links for open/untriaged findings.
-func TestWriteVault_TriageBoardOpenFindingsQueue(t *testing.T) {
+// TestWriteVault_TriageBoardPriorityEvidenceQueue verifies that triage-board.md
+// contains a "## Priority evidence queue" section with severity-ordered finding
+// links without presenting KB-local status as workflow truth.
+func TestWriteVault_TriageBoardPriorityEvidenceQueue(t *testing.T) {
 	root := t.TempDir()
 
 	ef := entities.EntitiesFile{
@@ -815,14 +864,20 @@ func TestWriteVault_TriageBoardOpenFindingsQueue(t *testing.T) {
 	}
 	tb := string(tbData)
 
-	if !strings.Contains(tb, "## Open findings queue") {
-		t.Errorf("triage-board.md missing '## Open findings queue' section:\n%s", tb)
+	if strings.Contains(tb, "## Open findings queue") {
+		t.Errorf("triage-board.md should not present KB-local status as open workflow:\n%s", tb)
+	}
+	if !strings.Contains(tb, "## Priority evidence queue") {
+		t.Errorf("triage-board.md missing '## Priority evidence queue' section:\n%s", tb)
+	}
+	if !strings.Contains(tb, "Jira remains the source of truth") {
+		t.Errorf("triage-board.md should clarify Jira-owned workflow:\n%s", tb)
 	}
 	if !strings.Contains(tb, "### High") {
-		t.Errorf("triage-board.md missing '### High' band in open findings queue:\n%s", tb)
+		t.Errorf("triage-board.md missing '### High' band in priority evidence queue:\n%s", tb)
 	}
 	if !strings.Contains(tb, "### Medium") {
-		t.Errorf("triage-board.md missing '### Medium' band in open findings queue:\n%s", tb)
+		t.Errorf("triage-board.md missing '### Medium' band in priority evidence queue:\n%s", tb)
 	}
 
 	// High must appear before Medium.

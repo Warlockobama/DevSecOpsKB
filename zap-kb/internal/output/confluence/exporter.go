@@ -558,7 +558,6 @@ func buildScanRows(ef *entities.EntitiesFile) []scanRow {
 // buildScansIndexBody renders the storage XML for the "Scans" index page.
 func buildScansIndexBody(rows []scanRow) string {
 	var b strings.Builder
-	b.WriteString("<h1>Scans</h1>")
 	b.WriteString("<p>One row per <code>scanLabel</code> seen across all occurrences. ")
 	b.WriteString("Use this page to audit which run produced which findings, plan re-scans, and verify accept-with-expiry baselines.</p>")
 	if len(rows) == 0 {
