@@ -600,11 +600,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				for i := 0; i < limit; i++ {
 					f := group[i]
 					occs := occsByFind[f.FindingID]
-					sc := aggStatus(occs)
-					fmt.Fprintf(&b, "- [[%s|%s %s]] — occurrences: %d (open:%d triaged:%d fp:%d accepted:%d fixed:%d)\n",
+					fmt.Fprintf(&b, "- [[%s|%s %s]] — occurrences: %d\n",
 						filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
-						strings.TrimSpace(f.Method), strings.TrimSpace(f.URL), len(occs),
-						sc["open"], sc["triaged"], sc["fp"], sc["accepted"], sc["fixed"])
+						strings.TrimSpace(f.Method), strings.TrimSpace(f.URL), len(occs))
 					if len(occs) > 0 {
 						b.WriteString("  - Samples:\n")
 						sort.Slice(occs, func(i, j int) bool {
@@ -762,7 +760,6 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Rollup section
 		b.WriteString("## Rollup\n\n")
 		fmt.Fprintf(&b, "- Occurrences: %d\n", len(occs))
-		fmt.Fprintf(&b, "- Status counts: %s\n", statusSummary)
 		trafficSamples := 0
 		for _, o := range occs {
 			if o.Request != nil || o.Response != nil {
@@ -812,11 +809,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				if ev != "" {
 					ev = truncate(ev, 60)
 				}
-				statusLabel := "open"
-				if o.Analyst != nil && strings.TrimSpace(o.Analyst.Status) != "" {
-					statusLabel = strings.TrimSpace(o.Analyst.Status)
-				}
-				decorations := []string{titleASCII(sev2), "kb-status:" + statusLabel}
+				decorations := []string{titleASCII(sev2)}
 				if strings.TrimSpace(o.ObservedAt) != "" {
 					decorations = append(decorations, "seen:"+formatShortDate(o.ObservedAt))
 				}
@@ -889,7 +882,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if len(tickets) > 0 {
 			b.WriteString("- Workflow source: Jira analyst case\n")
 		}
-		fmt.Fprintf(&b, "- KB lifecycle snapshot: %s (%s)\n", titleASCII(workflowStatus), statusSummary)
+		fmt.Fprintf(&b, "- KB lifecycle snapshot: %s\n", titleASCII(workflowStatus))
 		if len(owners) > 0 {
 			fmt.Fprintf(&b, "- KB owners: %s\n", formatListOrPlaceholder(owners, "_None recorded_"))
 		}

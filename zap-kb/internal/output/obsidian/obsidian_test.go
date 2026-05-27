@@ -1256,7 +1256,7 @@ func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
 	}
 	body := string(data)
 	for _, want := range []string{
-		"- KB lifecycle snapshot: Triaged (open:1)",
+		"- KB lifecycle snapshot: Triaged",
 		"- KB owners: James",
 		"- Tags: internet-facing, case-ticket",
 		"- Analyst cases: [SEC-42](https://example.atlassian.net/jira/software/projects/KAN/browse/SEC-42), [LEGACY-1](https://example.atlassian.net/jira/software/projects/KAN/browse/LEGACY-1)",
