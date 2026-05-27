@@ -2287,6 +2287,9 @@ func buildCurl(o entities.Occurrence) string {
 			if low == "_line" {
 				continue
 			}
+			if isMalformedHTTPStartHeader(name, val) {
+				continue
+			}
 			if low == "authorization" {
 				val = "<redacted>"
 			}
@@ -3231,11 +3234,25 @@ func formatHTTPResponseBlock(resp *entities.HTTPResponse) string {
 func writeHTTPHeaders(out *strings.Builder, headers []entities.Header) {
 	for _, h := range headers {
 		name := strings.TrimSpace(h.Name)
-		if name == "" || strings.EqualFold(name, "_line") {
+		val := strings.TrimSpace(h.Value)
+		if name == "" || strings.EqualFold(name, "_line") || isMalformedHTTPStartHeader(name, val) {
 			continue
 		}
-		fmt.Fprintf(out, "%s: %s\n", name, trafficHeaderValue(name, strings.TrimSpace(h.Value)))
+		fmt.Fprintf(out, "%s: %s\n", name, trafficHeaderValue(name, val))
 	}
+}
+
+func isMalformedHTTPStartHeader(name, value string) bool {
+	fields := strings.Fields(strings.TrimSpace(name) + " " + strings.TrimSpace(value))
+	if len(fields) < 3 {
+		return false
+	}
+	switch strings.ToUpper(fields[0]) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT":
+	default:
+		return false
+	}
+	return strings.Contains(strings.ToUpper(fields[len(fields)-1]), "HTTP/")
 }
 
 func hasHeader(headers []entities.Header, want string) bool {

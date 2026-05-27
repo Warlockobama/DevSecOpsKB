@@ -1344,6 +1344,41 @@ func TestWriteVault_OccurrenceTrafficLabelsDerivedRequest(t *testing.T) {
 	}
 }
 
+func TestFormatHTTPRequestBlockSkipsMalformedRequestLineHeader(t *testing.T) {
+	req := &entities.HTTPRequest{Headers: []entities.Header{
+		{Name: "Authorization", Value: "Bearer secret"},
+		{Name: "GET http", Value: "//example.com/ HTTP/1.1"},
+		{Name: "Cache-Control", Value: "no-cache"},
+	}}
+
+	got := formatHTTPRequestBlock("GET", "http://example.com/", req)
+
+	if strings.Contains(got, "GET http:") {
+		t.Fatalf("malformed request line header should not render:\n%s", got)
+	}
+	if !strings.Contains(got, "Authorization: <redacted>") {
+		t.Fatalf("expected normal headers to remain redacted:\n%s", got)
+	}
+}
+
+func TestBuildCurlSkipsMalformedRequestLineHeader(t *testing.T) {
+	got := buildCurl(entities.Occurrence{
+		URL:    "http://example.com/",
+		Method: "GET",
+		Request: &entities.HTTPRequest{Headers: []entities.Header{
+			{Name: "Authorization", Value: "Bearer secret"},
+			{Name: "GET http", Value: "//example.com/ HTTP/1.1"},
+		}},
+	})
+
+	if strings.Contains(got, "GET http:") {
+		t.Fatalf("malformed request line header should not be emitted in curl: %s", got)
+	}
+	if !strings.Contains(got, `-H "Authorization: <redacted>"`) {
+		t.Fatalf("expected normal header in curl: %s", got)
+	}
+}
+
 func TestWriteVault_TriageBoardUsesFindingStatusForIssueCounts(t *testing.T) {
 	root := t.TempDir()
 	def := entities.Definition{DefinitionID: "def-board", PluginID: "10001", Alert: "Board Alert"}

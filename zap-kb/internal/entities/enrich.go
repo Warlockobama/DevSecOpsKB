@@ -2,6 +2,7 @@ package entities
 
 import (
 	"context"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,9 @@ func EnrichFirstTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFi
 			// best-effort: skip errors
 			continue
 		}
+		if !trafficMatchesOccurrence(o, msg) {
+			continue
+		}
 		// Request
 		reqHeaders := parseRawHeaders(msg.RequestHeader)
 		reqBody := msg.RequestBody
@@ -81,6 +85,9 @@ func EnrichAllTraffic(ctx context.Context, c *zapclient.Client, ef *EntitiesFile
 		}
 		msg, err := c.GetMessage(ctx, o.SourceID)
 		if err != nil {
+			continue
+		}
+		if !trafficMatchesOccurrence(o, msg) {
 			continue
 		}
 		// Request
@@ -152,6 +159,9 @@ func EnrichTrafficSelective(ctx context.Context, c *zapclient.Client, ef *Entiti
 		if err != nil {
 			continue
 		}
+		if !trafficMatchesOccurrence(o, msg) {
+			continue
+		}
 		// Request
 		reqHeaders := parseRawHeaders(msg.RequestHeader)
 		reqBody := msg.RequestBody
@@ -209,6 +219,30 @@ func trafficResponseSnippet(body, risk string, max int) string {
 	return truncateUTF8(body, trafficSnippetLimit(max))
 }
 
+// DropMismatchedTraffic removes captured request/response samples whose request
+// line points at a different method/URL than the occurrence. This protects
+// offline -run-in exports from publishing stale or incorrectly correlated ZAP
+// history messages as finding evidence.
+func DropMismatchedTraffic(ef *EntitiesFile) int {
+	if ef == nil {
+		return 0
+	}
+	dropped := 0
+	for i := range ef.Occurrences {
+		o := &ef.Occurrences[i]
+		if o.Request == nil || strings.TrimSpace(o.Request.RawHeader) == "" {
+			continue
+		}
+		msg := zapclient.Message{RequestHeader: o.Request.RawHeader}
+		if !trafficMatchesOccurrence(*o, msg) {
+			o.Request = nil
+			o.Response = nil
+			dropped++
+		}
+	}
+	return dropped
+}
+
 func trafficSnippetLimit(max int) int {
 	if max <= 0 {
 		return max
@@ -223,13 +257,12 @@ func parseRawHeaders(raw string) []Header {
 	raw = strings.ReplaceAll(raw, "\r\n", "\n")
 	lines := strings.Split(raw, "\n")
 	var headers []Header
-	for i, line := range lines {
+	for _, line := range lines {
 		line = strings.TrimRight(line, "\r\n")
 		if strings.TrimSpace(line) == "" {
 			break
 		}
-		if i == 0 {
-			// request/status line
+		if isHTTPStartLine(line) {
 			headers = append(headers, Header{Name: "_line", Value: line})
 			continue
 		}
@@ -242,6 +275,105 @@ func parseRawHeaders(raw string) []Header {
 		}
 	}
 	return headers
+}
+
+func trafficMatchesOccurrence(o Occurrence, msg zapclient.Message) bool {
+	method, rawURL, ok := requestLineFromHeader(msg.RequestHeader)
+	if !ok {
+		return true
+	}
+	occMethod := strings.ToUpper(strings.TrimSpace(o.Method))
+	if occMethod != "" && method != "" && occMethod != method {
+		return false
+	}
+	msgURL := requestLineURL(rawURL, msg.RequestHeader)
+	occURL, err := url.Parse(strings.TrimSpace(o.URL))
+	if err != nil || occURL == nil {
+		return true
+	}
+	if msgURL == nil {
+		return true
+	}
+	if !strings.EqualFold(occURL.Host, msgURL.Host) {
+		return false
+	}
+	occPath := occURL.EscapedPath()
+	if occPath == "" {
+		occPath = "/"
+	}
+	msgPath := msgURL.EscapedPath()
+	if msgPath == "" {
+		msgPath = "/"
+	}
+	if occPath != msgPath {
+		return false
+	}
+	return occURL.RawQuery == msgURL.RawQuery
+}
+
+func requestLineFromHeader(raw string) (method, target string, ok bool) {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			return "", "", false
+		}
+		if !isHTTPRequestLine(line) {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		return strings.ToUpper(parts[0]), parts[1], true
+	}
+	return "", "", false
+}
+
+func requestLineURL(target, rawHeader string) *url.URL {
+	u, err := url.Parse(strings.TrimSpace(target))
+	if err == nil && u != nil && u.Host != "" {
+		return u
+	}
+	host := trafficHeaderValue(parseRawHeaders(rawHeader), "host")
+	if strings.TrimSpace(host) == "" {
+		return nil
+	}
+	if u == nil {
+		u = &url.URL{Path: strings.TrimSpace(target)}
+	}
+	return &url.URL{Scheme: "http", Host: strings.TrimSpace(host), Path: u.Path, RawQuery: u.RawQuery}
+}
+
+func trafficHeaderValue(headers []Header, name string) string {
+	want := strings.ToLower(strings.TrimSpace(name))
+	for _, h := range headers {
+		if strings.ToLower(strings.TrimSpace(h.Name)) == want {
+			return strings.TrimSpace(h.Value)
+		}
+	}
+	return ""
+}
+
+func isHTTPStartLine(line string) bool {
+	return isHTTPRequestLine(line) || isHTTPStatusLine(line)
+}
+
+func isHTTPRequestLine(line string) bool {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 3 {
+		return false
+	}
+	switch strings.ToUpper(fields[0]) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT":
+	default:
+		return false
+	}
+	return strings.HasPrefix(strings.ToUpper(fields[len(fields)-1]), "HTTP/")
+}
+
+func isHTTPStatusLine(line string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "HTTP/")
 }
 
 func parseRespHeaders(raw string) ([]Header, int) {

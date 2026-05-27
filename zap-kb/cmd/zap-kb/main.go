@@ -576,6 +576,9 @@ func main() {
 			fmt.Printf("Filtered to ZAP scanner alerts: definitions %d->%d findings %d->%d occurrences %d->%d\n",
 				beforeDefs, len(ent.Definitions), beforeFindings, len(ent.Findings), beforeOccurrences, len(ent.Occurrences))
 		}
+		if dropped := entities.DropMismatchedTraffic(&ent); dropped > 0 {
+			fmt.Printf("Dropped mismatched traffic samples: %d\n", dropped)
+		}
 
 		// Optional redaction pass
 		if strings.TrimSpace(redactOpts) != "" {
