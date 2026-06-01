@@ -338,8 +338,9 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		}
 	}
 
-	// Phase 3: Upsert "Security Rule Definitions" parent page (built-in ZAP rules)
-	// and "Custom Detections" sibling page (project-specific custom rules).
+	// Phase 3: Upsert definition parent pages. The custom parent is only useful
+	// when the current entity set actually contains custom rules; otherwise a
+	// ZAP-only publish leaves a stale-looking "Custom Detections" page in the KB.
 	defsBody := `<p>Auto-generated security rule definitions from the DevSecOps KB.</p>` + childrenMacro()
 	defsID, defsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Security Rule Definitions",
 		defsBody, rootID, hs)
@@ -348,13 +349,17 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	}
 	countAction(&summary, defsAction)
 
-	customDefsBody := `<p>Project-specific custom detection rules — not built-in ZAP plugins. Written for this application&#39;s known attack surface.</p>` + childrenMacro()
-	customDefsID, customDefsAction, err := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Custom Detections",
-		customDefsBody, rootID, hs)
-	if err != nil {
-		return summary, fmt.Errorf("upsert Custom Detections parent: %w", err)
+	customDefsID := ""
+	if hasConfluenceCustomDefinitions(opts.Entities) {
+		customDefsBody := `<p>Project-specific custom detection rules — not built-in ZAP plugins. Written for this application&#39;s known attack surface.</p>` + childrenMacro()
+		customDefsAction := ""
+		customDefsID, customDefsAction, err = upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, "Custom Detections",
+			customDefsBody, rootID, hs)
+		if err != nil {
+			return summary, fmt.Errorf("upsert Custom Detections parent: %w", err)
+		}
+		countAction(&summary, customDefsAction)
 	}
-	countAction(&summary, customDefsAction)
 
 	// Phase 4: Parallel upsert of definition pages
 	defsDir := filepath.Join(vaultRoot, "definitions")
@@ -413,7 +418,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 			// Route custom definitions to the "Custom Detections" folder.
 			parentID := defsID
-			if def != nil && isConfluenceCustomRule(def) {
+			if def != nil && isConfluenceCustomRule(def) && customDefsID != "" {
 				parentID = customDefsID
 			}
 
@@ -3577,4 +3582,16 @@ func occurrenceLabels(o *entities.Occurrence) []string {
 // rule rather than a built-in ZAP plugin. Mirrors the obsidian isCustomRule logic.
 func isConfluenceCustomRule(def *entities.Definition) bool {
 	return entities.IsCustomDefinition(def)
+}
+
+func hasConfluenceCustomDefinitions(ef *entities.EntitiesFile) bool {
+	if ef == nil {
+		return false
+	}
+	for i := range ef.Definitions {
+		if isConfluenceCustomRule(&ef.Definitions[i]) {
+			return true
+		}
+	}
+	return false
 }

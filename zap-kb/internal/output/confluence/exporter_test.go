@@ -237,18 +237,21 @@ func TestExportVault_FullTree(t *testing.T) {
 	}
 
 	// Expect (counted in VaultSummary, excludes KB Export Summary which uses _, _, _):
-	// INDEX + DASHBOARD + Triage + By Domain + Security Rule Definitions + Custom Detections +
-	// 2 defs = 8 (empty Findings/Occurrences stubs are no longer created).
+	// INDEX + DASHBOARD + Triage + By Domain + Security Rule Definitions +
+	// 2 defs = 7 (empty Findings/Occurrences stubs are no longer created).
 	total := sum.Created + sum.Updated
-	if total != 8 {
+	if total != 7 {
 		t.Logf("created pages: %v", created)
-		t.Errorf("expected 8 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
+		t.Errorf("expected 7 pages created, got created=%d updated=%d", sum.Created, sum.Updated)
 	}
 	// Verify key pages exist (server-side, including KB Export Summary)
-	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections", "KB Export Summary"} {
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "KB Export Summary"} {
 		if !created[title] {
 			t.Errorf("expected page %q to be created", title)
 		}
+	}
+	if created["Custom Detections"] {
+		t.Errorf("did not expect Custom Detections parent for a ZAP-only export")
 	}
 }
 
@@ -340,13 +343,97 @@ func TestExportVault_HierarchicalExportOmitsTopLevelFindingAndOccurrenceStubs(t 
 	if created["Findings"] || created["Occurrences"] {
 		t.Fatalf("did not expect top-level Findings/Occurrences pages in hierarchical export, got: %v", created)
 	}
-	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Posture", "Security Rule Definitions", "Custom Detections", "Missing Security Headers (Plugin 10016)", "KB Export Summary"} {
+	for _, title := range []string{"KB Index", "KB Dashboard", "Triage Board", "Security Posture", "Security Rule Definitions", "Missing Security Headers (Plugin 10016)", "KB Export Summary"} {
 		if !created[title] {
 			t.Errorf("expected page %q to be created", title)
 		}
 	}
+	if created["Custom Detections"] {
+		t.Errorf("did not expect Custom Detections parent for a ZAP-only export")
+	}
 	if sum.Errors != 0 {
 		t.Fatalf("expected no export errors, got %d", sum.Errors)
+	}
+}
+
+func TestExportVault_CustomDefinitionsUseCustomParent(t *testing.T) {
+	created := map[string]bool{}
+	pageParents := map[string]string{}
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			parentID := ""
+			if ancestors, ok := body["ancestors"].([]any); ok && len(ancestors) > 0 {
+				if first, ok := ancestors[0].(map[string]any); ok {
+					parentID, _ = first["id"].(string)
+				}
+			}
+			mu.Lock()
+			created[title] = true
+			pageParents[title] = parentID
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "pid-" + title})
+		case strings.Contains(r.URL.Path, "/property"):
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# Index")
+	mustWriteFile(t, filepath.Join(dir, "DASHBOARD.md"), "# Dashboard")
+	mustWriteFile(t, filepath.Join(dir, "triage-board.md"), "# Triage")
+	mustWriteFile(t, filepath.Join(dir, "by-domain.md"), "# Domains")
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "zap-custom-probe.md"), "# Custom Probe")
+
+	ef := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Definitions: []entities.Definition{{
+			DefinitionID: "def-zap-custom-probe",
+			PluginID:     "zap-custom-probe",
+			Alert:        "Custom Probe",
+			Origin:       entities.DefinitionOriginCustom,
+		}},
+	}
+
+	_, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:     srv.URL,
+		Username:    "user",
+		APIToken:    "token",
+		SpaceKey:    "KB",
+		Concurrency: 1,
+		Entities:    ef,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !created["Custom Detections"] {
+		t.Fatalf("expected Custom Detections parent to be created for custom rules, got: %v", created)
+	}
+	if got, want := pageParents["Custom Probe"], "pid-Custom Detections"; got != want {
+		t.Fatalf("custom definition parent: got %q, want %q", got, want)
 	}
 }
 
@@ -2742,11 +2829,14 @@ func TestExportVault_RequiredPagesUpserted(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions", "Custom Detections"}
+	required := []string{"KB Index", "KB Dashboard", "Triage Board", "Security Rule Definitions"}
 	for _, title := range required {
 		if !upserted[title] {
 			t.Errorf("expected page %q to be upserted, but it was not; all upserted: %v", title, upserted)
 		}
+	}
+	if upserted["Custom Detections"] {
+		t.Errorf("did not expect Custom Detections parent for a ZAP-only export")
 	}
 }
 
