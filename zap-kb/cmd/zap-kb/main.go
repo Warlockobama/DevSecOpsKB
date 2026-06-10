@@ -109,6 +109,7 @@ func main() {
 		forgejoDryRun       bool
 		forgejoSyncKBStatus bool
 		forgejoWiki         bool
+		forgejoRedact       string
 		allowAgentPublish   bool
 		allowCustomPublish  bool
 		zapAlertsOnly       bool
@@ -198,6 +199,7 @@ func main() {
 	flag.BoolVar(&forgejoDryRun, "forgejo-dry-run", false, "Dry-run Forgejo export (log instead of POST).")
 	flag.BoolVar(&forgejoSyncKBStatus, "forgejo-sync-kb-status", false, "Write mapped Forgejo issue state/labels back into KB analyst status. By default Forgejo is the workflow source of truth and KB state is not mutated.")
 	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
+	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes; 'off' disables. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
@@ -847,6 +849,7 @@ func main() {
 	// (Jira + Confluence) sink. Findings become issues; with -forgejo-wiki the
 	// generated vault is published to the repo wiki. Consumes the same entities
 	// model, so any detection source feeding the KB publishes through it.
+	var forgejoFailures int
 	if strings.TrimSpace(forgejoURL) != "" {
 		var extraLabels []string
 		for _, l := range strings.Split(forgejoLabels, ",") {
@@ -858,7 +861,7 @@ func main() {
 		if runInIsArtifact {
 			artPtr = &runInArtifact
 		}
-		runForgejoPublish(&ent, forgejoPublishOptions{
+		forgejoFailures = runForgejoPublish(&ent, forgejoPublishOptions{
 			BaseURL:       forgejoURL,
 			Token:         forgejoToken,
 			Owner:         forgejoOwner,
@@ -870,6 +873,7 @@ func main() {
 			DryRun:        forgejoDryRun,
 			SyncKBStatus:  forgejoSyncKBStatus,
 			Wiki:          forgejoWiki,
+			Redact:        forgejoRedact,
 			Format:        format,
 			Vault:         vault,
 			Out:           out,
@@ -945,6 +949,14 @@ func main() {
 			log.Fatalf("zip: %v", err)
 		}
 		fmt.Printf("Zipped outputs to %s\n", zipOut)
+	}
+
+	// Partial Forgejo publish failure exits non-zero so CI and the CronJob get
+	// a failure signal instead of a silent partial sync. Placed after run-out /
+	// zip so diagnostic artifacts are still produced.
+	if forgejoFailures > 0 {
+		log.Printf("forgejo publish completed with %d failure(s)", forgejoFailures)
+		os.Exit(1)
 	}
 
 	// Exit code 2 only when no content produced at all (no alerts and no entities).

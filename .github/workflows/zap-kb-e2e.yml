@@ -1,0 +1,174 @@
+name: forgejo-sync-e2e
+
+# Adversarial E2E for the Forgejo sync layer.
+#
+# Tier 1 (per PR): real ephemeral Forgejo container + `go test -tags e2e`.
+#   - main lane: assumption-attack tests that must pass
+#   - known-bugs lane: tests that reproduce filed follow-up bugs (A11/A13/A14/
+#     A15); continue-on-error so they stay loud without blocking merges.
+# Tier 2a (per PR): kubeconform schema validation of deploy/k8s (the Go policy
+#   tests in internal/e2e/deploypolicy run inside the normal unit-test job).
+# Tier 2b (nightly / deploy changes): kind cluster, apply deploy/k8s, run the
+#   real publisher CronJob end-to-end through the ingest PVC seam.
+#
+# Compliance: the Forgejo token is generated per run, lives only in job env,
+# and is never echoed; steps avoid `set -x`.
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+  schedule:
+    - cron: "17 4 * * *" # nightly tier 2b
+  workflow_dispatch: {}
+
+jobs:
+  e2e-forgejo:
+    name: tier1-ephemeral-forgejo
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zap-kb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Start ephemeral Forgejo
+        run: |
+          docker run -d --name forgejo -p 3000:3000 \
+            -e FORGEJO__security__INSTALL_LOCK=true \
+            -e FORGEJO__server__HTTP_PORT=3000 \
+            -e FORGEJO__server__ROOT_URL=http://127.0.0.1:3000/ \
+            codeberg.org/forgejo/forgejo:9
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "Forgejo did not become healthy" >&2
+          docker logs forgejo | tail -50
+          exit 1
+
+      - name: Provision admin user + token
+        run: |
+          docker exec -u 1000 forgejo forgejo admin user create \
+            --admin --username e2e-admin --password 'e2e-Passw0rd!' --email e2e@example.invalid
+          TOKEN=$(docker exec -u 1000 forgejo forgejo admin user generate-access-token \
+            --username e2e-admin --token-name e2e --scopes all --raw | tr -d '\r\n')
+          if [ -z "$TOKEN" ]; then echo "token generation failed" >&2; exit 1; fi
+          # Mask and export without echoing the value.
+          echo "::add-mask::$TOKEN"
+          echo "E2E_FORGEJO_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "E2E_FORGEJO_URL=http://127.0.0.1:3000" >> "$GITHUB_ENV"
+
+      - name: E2E (assumption attacks — must pass)
+        run: go test -tags e2e -count=1 -timeout 20m -skip 'KnownBug' ./internal/e2e/forgejo/...
+
+      - name: E2E (known-bug reproductions — loud but non-blocking)
+        continue-on-error: true
+        run: go test -tags e2e -count=1 -timeout 15m -run 'KnownBug' ./internal/e2e/forgejo/...
+
+      - name: Forgejo logs on failure
+        if: failure()
+        run: docker logs forgejo | tail -100
+
+  manifests-static:
+    name: tier2a-kubeconform
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          ./kubeconform -strict -summary deploy/k8s/*.yaml
+
+  e2e-kind:
+    name: tier2b-kind-cronjob
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: devsecopskb
+
+      - name: Build + load publisher image
+        run: |
+          docker build -f deploy/k8s/Dockerfile -t ghcr.io/warlockobama/devsecopskb:e2e .
+          kind load docker-image ghcr.io/warlockobama/devsecopskb:e2e --name devsecopskb
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f deploy/k8s/00-namespace.yaml
+          kubectl apply -f deploy/k8s/
+          kubectl -n devsecops-kb set image cronjob/kb-publisher publisher=ghcr.io/warlockobama/devsecopskb:e2e
+          kubectl -n devsecops-kb rollout status deploy/forgejo --timeout=180s
+
+      - name: Provision Forgejo (user, token, repo)
+        run: |
+          POD=$(kubectl -n devsecops-kb get pod -l app.kubernetes.io/component=forgejo -o name | head -1)
+          [ -n "$POD" ] || POD=$(kubectl -n devsecops-kb get pod -o name | grep forgejo | head -1)
+          kubectl -n devsecops-kb exec "$POD" -- forgejo admin user create \
+            --admin --username devsecops --password 'e2e-Passw0rd!' --email kb@example.invalid
+          TOKEN=$(kubectl -n devsecops-kb exec "$POD" -- forgejo admin user generate-access-token \
+            --username devsecops --token-name e2e --scopes all --raw | tr -d '\r\n')
+          echo "::add-mask::$TOKEN"
+          kubectl -n devsecops-kb create secret generic forgejo-credentials \
+            --from-literal=FORGEJO_TOKEN="$TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+          # Create the target repo via the in-cluster API.
+          kubectl -n devsecops-kb run provision-repo --rm -i --restart=Never --image=curlimages/curl -- \
+            curl -fsS -X POST http://forgejo.devsecops-kb.svc:3000/api/v1/user/repos \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"name":"kb","auto_init":true}'
+
+      - name: Seed ingest volume with a fixture
+        run: |
+          cat > /tmp/entities.json <<'EOF'
+          {"schemaVersion":"v1","sourceTool":"e2e","generatedAt":"2026-01-01T00:00:00Z",
+           "definitions":[{"definitionId":"def-10038","pluginId":"10038","name":"CSP Header Not Set"}],
+           "findings":[{"findingId":"fin-e2e0001","definitionId":"def-10038","name":"CSP /a","url":"https://t/a","method":"GET","risk":"High","occurrences":1}],
+           "occurrences":[{"occurrenceId":"occ-e2e0001","findingId":"fin-e2e0001","definitionId":"def-10038","url":"https://t/a","observedAt":"2026-01-01T00:00:00Z","scanLabel":"e2e"}]}
+          EOF
+          kubectl -n devsecops-kb apply -f - <<'EOF'
+          apiVersion: v1
+          kind: Pod
+          metadata: {name: ingest-seeder, namespace: devsecops-kb}
+          spec:
+            restartPolicy: Never
+            containers:
+              - name: seeder
+                image: busybox
+                command: ["sh", "-c", "sleep 300"]
+                volumeMounts: [{name: ingest, mountPath: /ingest}]
+            volumes:
+              - name: ingest
+                persistentVolumeClaim: {claimName: kb-ingest}
+          EOF
+          kubectl -n devsecops-kb wait --for=condition=Ready pod/ingest-seeder --timeout=120s
+          kubectl -n devsecops-kb cp /tmp/entities.json ingest-seeder:/ingest/entities.json
+          kubectl -n devsecops-kb delete pod ingest-seeder --wait=false
+
+      - name: Run the real publisher CronJob
+        run: |
+          kubectl -n devsecops-kb create job --from=cronjob/kb-publisher e2e-publish
+          kubectl -n devsecops-kb wait --for=condition=complete --timeout=300s job/e2e-publish || {
+            echo "publisher job did not complete:"; kubectl -n devsecops-kb logs job/e2e-publish | tail -60; exit 1; }
+          kubectl -n devsecops-kb logs job/e2e-publish | grep -E 'Forgejo: created=' || {
+            echo "no publish summary in logs"; exit 1; }
+
+      - name: Cleanup
+        if: always()
+        run: kind delete cluster --name devsecopskb || true

@@ -82,7 +82,17 @@ kubectl -n devsecops-kb logs job/kb-publish-now -f
 
 You should see `Forgejo: created=… skipped=…` and `Forgejo wiki: created=…`.
 Re-running is idempotent — findings dedup via a hidden marker on KB-managed
-issues, and unchanged wiki pages are updated in place.
+issues, and unchanged wiki pages are skipped (remote content compare).
+
+Published content is **redacted by default** (`-forgejo-redact`, default
+`auth,cookies,headers`): credentials captured in scanner evidence never reach
+issue bodies or wiki pages, while the entities file on the ingest volume keeps
+the unredacted data. Pass `-forgejo-redact=off` to disable. Ticket workflow
+state lives in Forgejo and is never written back into the KB (the
+`-forgejo-sync-kb-status` flag exists but is deliberately not used here).
+
+A partial publish (some issue creates or the wiki failing) exits **non-zero**,
+so a failed CronJob run shows up as a failed Job instead of a green no-op.
 
 ## Adding a detection source (the input contract)
 

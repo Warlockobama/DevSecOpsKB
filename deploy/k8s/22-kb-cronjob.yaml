@@ -52,7 +52,9 @@ spec:
                 - "-forgejo-repo=$(FORGEJO_REPO)"
                 - "-forgejo-min-risk=$(FORGEJO_MIN_RISK)"
                 - "-forgejo-wiki"
-                - "-forgejo-sync-kb-status"
+                # NOTE: -forgejo-sync-kb-status is intentionally absent. Ticket
+                # workflow state lives in Forgejo (external source of truth) and
+                # is never round-tripped back into the KB entities model.
               volumeMounts:
                 - name: ingest
                   mountPath: /ingest

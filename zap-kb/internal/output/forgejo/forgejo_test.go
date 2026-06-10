@@ -230,6 +230,8 @@ func TestExportWiki(t *testing.T) {
 	var creates int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true})
 		case strings.Contains(r.URL.Path, "/wiki/page/"):
 			// existence check — report not found so everything is "created"
 			w.WriteHeader(http.StatusNotFound)
@@ -255,5 +257,65 @@ func TestExportWiki(t *testing.T) {
 	}
 	if sum.Created != 2 {
 		t.Fatalf("created=%d, want 2 (Home + Findings/fin-1)", sum.Created)
+	}
+}
+
+// Fix A3: republishing identical content must be a no-op (skipped), not a
+// PATCH that churns the wiki's git history on every run.
+func TestExportWikiSkipsUnchangedContent(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("# Home\n\nhi"), 0o644)
+
+	var patches int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/wiki/page/"):
+			// Remote already holds exactly the local content.
+			json.NewEncoder(w).Encode(map[string]string{
+				"content_base64": base64.StdEncoding.EncodeToString([]byte("# Home\n\nhi")),
+			})
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/wiki/page/"):
+			atomic.AddInt32(&patches, 1)
+			w.Write([]byte("{}"))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	sum, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"})
+	if err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	if sum.Skipped != 1 || sum.Updated != 0 || sum.Created != 0 {
+		t.Fatalf("created=%d updated=%d skipped=%d, want 0/0/1", sum.Created, sum.Updated, sum.Skipped)
+	}
+	if atomic.LoadInt32(&patches) != 0 {
+		t.Fatalf("unchanged content still PATCHed %d time(s)", patches)
+	}
+}
+
+// Fix A22: a repo without its wiki enabled must fail the export hard with a
+// clear message, not degrade into N silent per-page 404 warnings.
+func TestExportWikiDisabledIsHardError(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("# Home"), 0o644)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb" {
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": false})
+			return
+		}
+		t.Errorf("unexpected request past preflight: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	_, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"})
+	if err == nil || !strings.Contains(err.Error(), "wiki is not enabled") {
+		t.Fatalf("err = %v, want hard 'wiki is not enabled' error", err)
 	}
 }

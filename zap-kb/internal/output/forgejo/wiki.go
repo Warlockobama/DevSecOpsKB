@@ -86,6 +86,19 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	}
 	c := newClient(defaultHTTP(opts.Timeout, opts.RequestDelay), opts.BaseURL, opts.Token, opts.Owner, opts.Repo)
 
+	// Preflight: a repo without its wiki enabled 404s every wiki call, which
+	// would otherwise surface as N per-page errors. Fail hard with a clear
+	// message instead so operators fix the repo settings once.
+	if !opts.DryRun {
+		hasWiki, err := c.repoHasWiki(ctx)
+		if err != nil {
+			return WikiSummary{}, fmt.Errorf("forgejo wiki: preflight repo check: %w", err)
+		}
+		if !hasWiki {
+			return WikiSummary{}, fmt.Errorf("forgejo wiki: wiki is not enabled on %s/%s — enable it in repo settings (has_wiki) or via PATCH /repos/%s/%s", opts.Owner, opts.Repo, opts.Owner, opts.Repo)
+		}
+	}
+
 	// Collect (pageName → file path) for every page to publish.
 	type page struct {
 		name string
@@ -160,12 +173,18 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	return summary, nil
 }
 
-// upsertWikiPage creates the wiki page or, if it already exists, updates it.
-// Returns "created" or "updated".
+// upsertWikiPage creates the wiki page, updates it when the content changed, or
+// skips it when the remote content is already identical. Returns "created",
+// "updated", or "skipped". The remote-content compare keeps re-publishes
+// idempotent without local state — important because the publisher runs in
+// ephemeral pods where a local hash cache would not survive between runs.
 func (c *client) upsertWikiPage(ctx context.Context, name, content, message string) (string, error) {
-	exists, err := c.wikiPageExists(ctx, name)
+	exists, remote, err := c.getWikiPage(ctx, name)
 	if err != nil {
 		return "", err
+	}
+	if exists && remote == content {
+		return "skipped", nil
 	}
 	body, err := json.Marshal(map[string]string{
 		"title":          name,
@@ -202,10 +221,44 @@ func (c *client) upsertWikiPage(ctx context.Context, name, content, message stri
 	return "created", nil
 }
 
-// wikiPageExists reports whether a wiki page with the given name already exists.
-func (c *client) wikiPageExists(ctx context.Context, name string) (bool, error) {
+// getWikiPage fetches a wiki page. Returns (exists, decodedContent, err);
+// content is "" when the page is missing or its body cannot be decoded.
+func (c *client) getWikiPage(ctx context.Context, name string) (bool, string, error) {
 	u := c.repoAPI() + "/wiki/page/" + url.PathEscape(name)
 	req, err := c.newRequest(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return false, "", err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false, "", err
+	}
+	defer drain(resp)
+	if resp.StatusCode == http.StatusNotFound {
+		return false, "", nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, "", synccore.HTTPError("forgejo", resp)
+	}
+	var page struct {
+		ContentBase64 string `json:"content_base64"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		// Treat an undecodable body as "exists, unknown content" so the caller
+		// falls through to a PATCH rather than erroring the whole publish.
+		return true, "", nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(page.ContentBase64)
+	if err != nil {
+		return true, "", nil
+	}
+	return true, string(decoded), nil
+}
+
+// repoHasWiki reports whether the target repository exists and has its wiki
+// enabled (the `has_wiki` repo setting).
+func (c *client) repoHasWiki(ctx context.Context) (bool, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, c.repoAPI(), nil)
 	if err != nil {
 		return false, err
 	}
@@ -215,12 +268,18 @@ func (c *client) wikiPageExists(ctx context.Context, name string) (bool, error) 
 	}
 	defer drain(resp)
 	if resp.StatusCode == http.StatusNotFound {
-		return false, nil
+		return false, fmt.Errorf("repository %s/%s not found", c.owner, c.repo)
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return true, nil
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, synccore.HTTPError("forgejo", resp)
 	}
-	return false, synccore.HTTPError("forgejo", resp)
+	var repo struct {
+		HasWiki bool `json:"has_wiki"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&repo); err != nil {
+		return false, fmt.Errorf("decode repo: %w", err)
+	}
+	return repo.HasWiki, nil
 }
 
 // readVaultMarkdown reads a vault markdown file and strips YAML frontmatter so
