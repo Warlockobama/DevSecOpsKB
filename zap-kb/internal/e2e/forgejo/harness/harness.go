@@ -356,8 +356,12 @@ func Fixture(opts FixtureOptions) entities.EntitiesFile {
 			Evidence:     evidence,
 		}
 		if opts.Secret != "" {
+			// The request line MUST match the occurrence URL/method — the CLI
+			// pipeline's DropMismatchedTraffic pass (entities/enrich.go) strips
+			// traffic samples whose start line disagrees with the occurrence,
+			// and a dropped sample would make redaction tests pass vacuously.
 			occ.Request = &entities.HTTPRequest{
-				RawHeader: "GET /app HTTP/1.1\nHost: target.example\nAuthorization: " + opts.Secret + "\n",
+				RawHeader: fmt.Sprintf("GET /app/%d HTTP/1.1\nHost: target.example\nAuthorization: %s\n", i, opts.Secret),
 				Headers: []entities.Header{
 					{Name: "Authorization", Value: opts.Secret},
 					{Name: "Cookie", Value: "session=" + opts.Secret},

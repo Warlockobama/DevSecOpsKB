@@ -37,14 +37,19 @@ finding.
 
 ## Running locally
 
-Any disposable Forgejo works; the suite creates and deletes its own repos.
+Any disposable Forgejo/Gitea works; the suite creates and deletes its own
+repos. **Server version matters**: Gitea 1.22's wiki REST API is broken on
+API-created repos (`wiki_branch` NULL — writes commit but every read 404s, and
+the column cannot be repaired via API). The sink detects this and fails fast
+with upgrade guidance; run the suite against Gitea >= 1.23 or Forgejo. When
+codeberg.org / docker.io are unreachable, `mirror.gcr.io` mirrors Docker Hub:
 
 ```bash
 docker run -d --name forgejo -p 3000:3000 \
-  -e FORGEJO__security__INSTALL_LOCK=true codeberg.org/forgejo/forgejo:9
-docker exec -u 1000 forgejo forgejo admin user create \
+  -e GITEA__security__INSTALL_LOCK=true mirror.gcr.io/gitea/gitea:1.24
+docker exec -u 1000 forgejo gitea admin user create \
   --admin --username e2e-admin --password 'e2e-Passw0rd!' --email e2e@example.invalid
-TOKEN=$(docker exec -u 1000 forgejo forgejo admin user generate-access-token \
+TOKEN=$(docker exec -u 1000 forgejo gitea admin user generate-access-token \
   --username e2e-admin --token-name e2e --scopes all --raw)
 
 cd zap-kb
@@ -54,6 +59,26 @@ E2E_FORGEJO_URL=http://127.0.0.1:3000 E2E_FORGEJO_TOKEN="$TOKEN" \
 
 Without the env vars every test skips, so `go test -tags e2e ./...` is always
 safe.
+
+## What the first live runs caught (kept as regression tests)
+
+The suite's first execution against a real server (Gitea 1.22/1.24) found
+three implementation-breaking facts no mock had surfaced:
+
+1. **Label names are not unique** — two racing publishers both 201 their
+   label create, and the server's `?labels=<name>` query then returns
+   *nothing*, blinding the dedup index into duplicating every finding on
+   every run. Fixed: the dedup index lists all issues and matches the hidden
+   marker (labels are cosmetic), and `ensureLabels` canonicalizes/deletes
+   duplicate names.
+2. **Gitea 1.22 wiki API is server-broken for API-created repos** —
+   `wiki_branch` NULL: writes commit but are unreadable, and PATCHing the
+   column is a silent no-op. Fixed: a serial canary write fails the export
+   fast with one descriptive error instead of N identical 404s.
+3. **Wiki page names with `/` don't round-trip via client-side escaping**
+   (`Findings/fin-1` → server stores sub_url `Findings%2Ffin-1.-`). Fixed:
+   pages are discovered via `GET /wiki/pages` and addressed by the
+   server-issued `sub_url`, never by guessed escaping.
 
 ## Running in a cluster (pod-based Tier 1)
 

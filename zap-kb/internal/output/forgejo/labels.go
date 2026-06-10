@@ -124,25 +124,54 @@ func (c *client) ensureLabels(ctx context.Context, names []string) (map[string]i
 			}
 			return nil, fmt.Errorf("create label %q: %w", name, err)
 		}
-		out[name] = lbl.ID
-		byLower[strings.ToLower(name)] = lbl.ID
+		// Forgejo/Gitea do NOT enforce label-name uniqueness, so a create race
+		// can leave two same-named labels — which breaks every name-based
+		// label query on the server (`?labels=<name>` returns nothing when
+		// the name is ambiguous). Canonicalize: adopt the lowest-id label
+		// with this name; if ours turned out to be a duplicate, delete it.
+		canonical := lbl.ID
+		if id, ok, lerr := c.findLabelByName(ctx, name); lerr == nil && ok && id < canonical {
+			canonical = id
+			c.deleteLabel(ctx, lbl.ID)
+		}
+		out[name] = canonical
+		byLower[strings.ToLower(name)] = canonical
 	}
 	return out, nil
 }
 
-// findLabelByName re-lists repo labels and returns the ID of the named label
-// (case-insensitive), if present.
+// findLabelByName re-lists repo labels and returns the LOWEST ID among labels
+// with the given name (case-insensitive) — the canonical winner when duplicate
+// names exist.
 func (c *client) findLabelByName(ctx context.Context, name string) (int64, bool, error) {
 	labels, err := c.listLabels(ctx)
 	if err != nil {
 		return 0, false, err
 	}
+	var best int64
+	found := false
 	for _, l := range labels {
-		if strings.EqualFold(l.Name, name) {
-			return l.ID, true, nil
+		if strings.EqualFold(l.Name, name) && (!found || l.ID < best) {
+			best = l.ID
+			found = true
 		}
 	}
-	return 0, false, nil
+	return best, found, nil
+}
+
+// deleteLabel removes a repo label. Best-effort duplicate cleanup — errors are
+// swallowed because a stale duplicate label is cosmetic once the dedup index
+// no longer depends on labels.
+func (c *client) deleteLabel(ctx context.Context, id int64) {
+	req, err := c.newRequest(ctx, http.MethodDelete, fmt.Sprintf("%s/labels/%d", c.repoAPI(), id), nil)
+	if err != nil {
+		return
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return
+	}
+	drain(resp)
 }
 
 // drain fully reads and closes a response body (best effort) so connections can

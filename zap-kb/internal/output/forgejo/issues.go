@@ -233,15 +233,20 @@ type issueInfo struct {
 	State  string // "open" | "closed"
 }
 
-// listFindingIssues lists all issues carrying the shared dedup label and
-// groups them by the findingID in their hidden body marker, each group sorted
+// listFindingIssues lists ALL issues in the repo and groups the KB-managed
+// ones (recognized by the hidden body marker) by findingID, each group sorted
 // ascending by issue number (so index 0 is the deterministic winner).
+//
+// Deliberately NOT filtered by the kb-finding label: Forgejo/Gitea allow
+// duplicate label names, and once two same-named labels exist (e.g. from a
+// first-run create race) the `?labels=<name>` query silently returns NOTHING —
+// which would blind the dedup index and duplicate every finding on every run.
+// The label stays attached for humans; correctness rides on the marker only.
 func (c *client) listFindingIssues(ctx context.Context) (map[string][]issueInfo, error) {
 	out := make(map[string][]issueInfo)
 	page := 1
 	for {
 		q := url.Values{}
-		q.Set("labels", dedupLabel)
 		q.Set("state", "all")
 		q.Set("type", "issues")
 		q.Set("limit", "50")
