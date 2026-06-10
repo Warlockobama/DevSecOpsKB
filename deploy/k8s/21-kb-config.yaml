@@ -1,0 +1,18 @@
+# Non-secret publisher configuration. Tune the Forgejo target + filtering here
+# without rebuilding the image. Consumed by the CronJob below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kb-publisher-config
+  namespace: devsecops-kb
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+data:
+  FORGEJO_URL: "http://forgejo.devsecops-kb.svc:3000"
+  FORGEJO_OWNER: "devsecops"
+  FORGEJO_REPO: "kb"
+  # Minimum risk to file as an issue: info|low|medium|high
+  FORGEJO_MIN_RISK: "medium"
+  # Path on the shared ingest volume where detection sources drop the normalized
+  # entities model (the input contract). See README "Adding a detection source".
+  ENTITIES_IN: "/ingest/entities.json"

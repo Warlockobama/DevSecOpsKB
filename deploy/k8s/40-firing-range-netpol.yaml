@@ -1,0 +1,24 @@
+# HOOK (disabled): firing-range integration. When your vulnerable-target
+# namespace exists, uncomment to let detection-source pods in this namespace
+# reach it (e.g. a ZAP scanner pod scanning the range) while keeping the sink
+# stack otherwise isolated. Label your firing-range namespace
+# `app.kubernetes.io/part-of: firing-range` for this selector to match.
+#
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: allow-egress-to-firing-range
+#   namespace: devsecops-kb
+#   labels:
+#     app.kubernetes.io/part-of: devsecops-kb
+# spec:
+#   podSelector:
+#     matchLabels:
+#       devsecopskb.io/role: scanner
+#   policyTypes:
+#     - Egress
+#   egress:
+#     - to:
+#         - namespaceSelector:
+#             matchLabels:
+#               app.kubernetes.io/part-of: firing-range

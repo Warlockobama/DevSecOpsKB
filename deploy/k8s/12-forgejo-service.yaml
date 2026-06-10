@@ -1,0 +1,20 @@
+# In-cluster DNS for the Forgejo instance. The publisher CronJob talks to
+# http://forgejo.devsecops-kb.svc:3000 — no ingress required for the demo.
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo
+  namespace: devsecops-kb
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+    app.kubernetes.io/name: forgejo
+spec:
+  selector:
+    app.kubernetes.io/name: forgejo
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+    - name: ssh
+      port: 22
+      targetPort: ssh
