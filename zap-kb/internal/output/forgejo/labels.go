@@ -112,12 +112,37 @@ func (c *client) ensureLabels(ctx context.Context, names []string) (map[string]i
 		}
 		lbl, err := c.createLabel(ctx, name, defaultLabelColor)
 		if err != nil {
+			// Two publishers can race the first-run create: both list an empty
+			// label set, both POST, one loses (409/422). Losing the race is
+			// success — re-list and take the winner's label instead of failing
+			// the whole export.
+			id, ok, lerr := c.findLabelByName(ctx, name)
+			if lerr == nil && ok {
+				out[name] = id
+				byLower[strings.ToLower(name)] = id
+				continue
+			}
 			return nil, fmt.Errorf("create label %q: %w", name, err)
 		}
 		out[name] = lbl.ID
 		byLower[strings.ToLower(name)] = lbl.ID
 	}
 	return out, nil
+}
+
+// findLabelByName re-lists repo labels and returns the ID of the named label
+// (case-insensitive), if present.
+func (c *client) findLabelByName(ctx context.Context, name string) (int64, bool, error) {
+	labels, err := c.listLabels(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, l := range labels {
+		if strings.EqualFold(l.Name, name) {
+			return l.ID, true, nil
+		}
+	}
+	return 0, false, nil
 }
 
 // drain fully reads and closes a response body (best effort) so connections can

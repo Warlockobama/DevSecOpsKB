@@ -123,7 +123,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 	if err != nil {
 		log.Fatalf("forgejo export: %v", err)
 	}
-	fmt.Printf("Forgejo: created=%d skipped=%d errors=%d\n", sum.Created, sum.Skipped, sum.Errors)
+	fmt.Printf("Forgejo: created=%d skipped=%d errors=%d duplicates_closed=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
 	failures += sum.Errors
 
 	addedTicketKeys := 0

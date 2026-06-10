@@ -192,7 +192,9 @@ func (c *client) fetchIssueStatus(ctx context.Context, number int64) (string, st
 	if err != nil {
 		return "", "", false, err
 	}
-	resp, err := c.http.Do(req)
+	// Raw variant: transient 429/5xx are retried, but a terminal 404 still
+	// reaches us as data ("issue not found") rather than an error.
+	resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
 	if err != nil {
 		return "", "", false, err
 	}

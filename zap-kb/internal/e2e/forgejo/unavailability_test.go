@@ -2,10 +2,11 @@
 
 // Adversarial E2E: Forgejo unavailability (assumptions A14, A15, A16).
 //
-// KNOWN-BUG tests: synccore.DoWithRetry retries only HTTP 429 (follow-up fix
-// #5) and several GET paths bypass retry entirely. A single transient 5xx —
-// e.g. Forgejo restarting mid-sync — aborts work that one retry would save.
-// These FAIL while the gap exists; CI runs them continue-on-error.
+// synccore.DoWithRetry now retries transient failures (429 + 502/503/504 +
+// transport errors), and the GET-heavy paths (status pull, wiki existence,
+// repo preflight) route through DoWithRetryRaw. These tests assert that a
+// single transient blip — e.g. Forgejo restarting mid-sync — is absorbed
+// rather than dropping work. They REGRESS (fail) if retry coverage narrows.
 package forgejoe2e
 
 import (
@@ -18,9 +19,9 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 )
 
-// A14: one transient 503 on an issue POST (server restarting) should be
-// absorbed by a retry; today it fails that finding's create outright.
-func TestKnownBugNoRetryOnTransient5xx(t *testing.T) {
+// A14: one transient 503 on an issue POST (server restarting) must be absorbed
+// by a retry, not lose that finding's create.
+func TestTransient5xxIsRetried(t *testing.T) {
 	env := harness.FromEnv(t)
 	repo := env.CreateRepo(t, true)
 	proxy := harness.NewFaultProxy(t, env.BaseURL)
@@ -37,14 +38,17 @@ func TestKnownBugNoRetryOnTransient5xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export hard error: %v", err)
 	}
-	if sum.Errors > 0 {
-		t.Errorf("KNOWN BUG (follow-up #5/A14) reproduced: a single transient 503 lost a finding (created=%d errors=%d); DoWithRetry only retries 429", sum.Created, sum.Errors)
+	if sum.Errors != 0 {
+		t.Errorf("A14 REGRESSION: a single transient 503 lost a finding (created=%d errors=%d); DoWithRetry should absorb 503", sum.Created, sum.Errors)
+	}
+	if got := env.ListIssues(t, repo); len(got) != 2 {
+		t.Errorf("A14 REGRESSION: %d issues after a transient 503, want 2", len(got))
 	}
 }
 
-// A15: the status-pull GET path bypasses retry entirely — even a 429 (which
-// the create path *does* retry) fails the pull immediately.
-func TestKnownBugStatusPullBypassesRetry(t *testing.T) {
+// A15: the status-pull GET path now goes through DoWithRetryRaw, so a single
+// transient 503 is retried instead of failing the pull.
+func TestStatusPullRetriesTransient(t *testing.T) {
 	env := harness.FromEnv(t)
 	repo := env.CreateRepo(t, true)
 	ef := harness.Fixture(harness.FixtureOptions{NumHighFindings: 1})
@@ -64,9 +68,9 @@ func TestKnownBugStatusPullBypassesRetry(t *testing.T) {
 		}
 	}
 
-	// Pull through a proxy that 429s the first issue GET, then recovers.
+	// Pull through a proxy that 503s the first issue GET, then recovers.
 	proxy := harness.NewFaultProxy(t, env.BaseURL)
-	proxy.AddRule(harness.FailNTimes(http.MethodGet, "/issues/", http.StatusTooManyRequests, 1))
+	proxy.AddRule(harness.FailNTimes(http.MethodGet, "/issues/", http.StatusServiceUnavailable, 1))
 	res, err := forgejo.PullStatus(ctx, ef, forgejo.PullOptions{
 		BaseURL: proxy.URL(), Token: env.Token, Owner: env.Owner, Repo: repo, ReadOnly: true,
 	})
@@ -74,6 +78,6 @@ func TestKnownBugStatusPullBypassesRetry(t *testing.T) {
 		t.Fatalf("pull hard error: %v", err)
 	}
 	if res.Result.Errors > 0 {
-		t.Errorf("KNOWN BUG (follow-up #5/A15) reproduced: one 429 on the GET path failed the status pull (errors=%d); fetchIssueStatus bypasses DoWithRetry", res.Result.Errors)
+		t.Errorf("A15 REGRESSION: a transient 503 on the GET path failed the status pull (errors=%d); fetchIssueStatus should retry via DoWithRetryRaw", res.Result.Errors)
 	}
 }

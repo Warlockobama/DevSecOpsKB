@@ -229,7 +229,7 @@ func (c *client) getWikiPage(ctx context.Context, name string) (bool, string, er
 	if err != nil {
 		return false, "", err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
 	if err != nil {
 		return false, "", err
 	}
@@ -262,7 +262,7 @@ func (c *client) repoHasWiki(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
 	if err != nil {
 		return false, err
 	}

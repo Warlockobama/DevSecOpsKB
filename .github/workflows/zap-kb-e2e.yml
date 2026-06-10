@@ -3,9 +3,8 @@ name: forgejo-sync-e2e
 # Adversarial E2E for the Forgejo sync layer.
 #
 # Tier 1 (per PR): real ephemeral Forgejo container + `go test -tags e2e`.
-#   - main lane: assumption-attack tests that must pass
-#   - known-bugs lane: tests that reproduce filed follow-up bugs (A11/A13/A14/
-#     A15); continue-on-error so they stay loud without blocking merges.
+#   All assumption-attack tests must pass (the formerly-known bugs A11/A13/A14/
+#   A15 are now fixed and asserted as regressions).
 # Tier 2a (per PR): kubeconform schema validation of deploy/k8s (the Go policy
 #   tests in internal/e2e/deploypolicy run inside the normal unit-test job).
 # Tier 2b (nightly / deploy changes): kind cluster, apply deploy/k8s, run the
@@ -68,11 +67,7 @@ jobs:
           echo "E2E_FORGEJO_URL=http://127.0.0.1:3000" >> "$GITHUB_ENV"
 
       - name: E2E (assumption attacks — must pass)
-        run: go test -tags e2e -count=1 -timeout 20m -skip 'KnownBug' ./internal/e2e/forgejo/...
-
-      - name: E2E (known-bug reproductions — loud but non-blocking)
-        continue-on-error: true
-        run: go test -tags e2e -count=1 -timeout 15m -run 'KnownBug' ./internal/e2e/forgejo/...
+        run: go test -tags e2e -count=1 -timeout 20m ./internal/e2e/forgejo/...
 
       - name: Forgejo logs on failure
         if: failure()

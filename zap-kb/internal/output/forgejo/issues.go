@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,11 @@ type Summary struct {
 	Created int
 	Skipped int // already existed
 	Errors  int
+	// DuplicatesClosed counts duplicate open issues (same finding marker)
+	// closed by the post-create reconcile pass. Duplicates appear when two
+	// publishers race the dedup index or a retried create double-lands; the
+	// reconcile converges on the lowest-numbered issue per finding.
+	DuplicatesClosed int
 	// TicketRefs maps findingID → issue reference ("owner/repo#42"). Persisted
 	// back onto analyst.ticketRefs so subsequent runs short-circuit dedup.
 	TicketRefs map[string]string
@@ -116,10 +122,20 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	}
 
 	// Build the dedup index once: all open+closed issues carrying the shared
-	// dedup label, keyed by the finding marker found in their body.
-	existing, err := c.findingIssueIndex(ctx)
+	// dedup label, keyed by the finding marker found in their body. The winner
+	// per finding is the lowest issue number — deterministic regardless of
+	// list pagination order.
+	byFinding, err := c.listFindingIssues(ctx)
 	if err != nil {
 		return Summary{}, fmt.Errorf("build dedup index: %w", err)
+	}
+	existing := make(map[string]string, len(byFinding))
+	initialDups := false
+	for fid, issues := range byFinding {
+		existing[fid] = c.issueRef(issues[0].Number)
+		if len(issues) > 1 {
+			initialDups = true
+		}
 	}
 
 	ticketRefs := make(map[string]string)
@@ -156,7 +172,30 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	}
 	wg.Wait()
 
-	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketRefs: ticketRefs}, nil
+	// Reconcile duplicates. A concurrent publisher racing the dedup index (or
+	// a retried POST that double-landed) leaves two open issues for one
+	// finding; converge by keeping the lowest-numbered issue and closing the
+	// rest. Skipped when nothing was created and the initial index was clean —
+	// the common steady-state re-run costs no extra API calls.
+	dupsClosed := 0
+	if created > 0 || initialDups {
+		closed, winners, rerr := c.reconcileDuplicates(ctx)
+		if rerr != nil {
+			fmt.Printf("[forgejo] warning: duplicate reconcile failed: %v\n", rerr)
+			errCount++
+		} else {
+			dupsClosed = closed
+			// Repoint refs at the surviving winner so persisted ticketRefs
+			// never reference an issue the reconcile just closed.
+			for fid, ref := range winners {
+				if _, ours := ticketRefs[fid]; ours {
+					ticketRefs[fid] = ref
+				}
+			}
+		}
+	}
+
+	return Summary{Created: created, Skipped: skipped, Errors: errCount, DuplicatesClosed: dupsClosed, TicketRefs: ticketRefs}, nil
 }
 
 // createIssue POSTs a new issue for the finding and returns its number.
@@ -188,10 +227,17 @@ func (c *client) createIssue(ctx context.Context, f entities.Finding, def *entit
 	return created.Number, nil
 }
 
-// findingIssueIndex lists all issues carrying the shared dedup label and maps
-// findingID → issue ref by scanning each body for the hidden marker.
-func (c *client) findingIssueIndex(ctx context.Context) (map[string]string, error) {
-	out := make(map[string]string)
+// issueInfo is the dedup-relevant slice of an issue.
+type issueInfo struct {
+	Number int64
+	State  string // "open" | "closed"
+}
+
+// listFindingIssues lists all issues carrying the shared dedup label and
+// groups them by the findingID in their hidden body marker, each group sorted
+// ascending by issue number (so index 0 is the deterministic winner).
+func (c *client) listFindingIssues(ctx context.Context) (map[string][]issueInfo, error) {
+	out := make(map[string][]issueInfo)
 	page := 1
 	for {
 		q := url.Values{}
@@ -211,6 +257,7 @@ func (c *client) findingIssueIndex(ctx context.Context) (map[string]string, erro
 		var batch []struct {
 			Number int64  `json:"number"`
 			Body   string `json:"body"`
+			State  string `json:"state"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&batch); err != nil {
 			resp.Body.Close()
@@ -219,9 +266,7 @@ func (c *client) findingIssueIndex(ctx context.Context) (map[string]string, erro
 		resp.Body.Close()
 		for _, iss := range batch {
 			if fid := markerFindingID(iss.Body); fid != "" {
-				if _, seen := out[fid]; !seen {
-					out[fid] = c.issueRef(iss.Number)
-				}
+				out[fid] = append(out[fid], issueInfo{Number: iss.Number, State: strings.ToLower(iss.State)})
 			}
 		}
 		if len(batch) < 50 {
@@ -229,7 +274,55 @@ func (c *client) findingIssueIndex(ctx context.Context) (map[string]string, erro
 		}
 		page++
 	}
+	for fid := range out {
+		sort.Slice(out[fid], func(i, j int) bool { return out[fid][i].Number < out[fid][j].Number })
+	}
 	return out, nil
+}
+
+// reconcileDuplicates re-lists KB-managed issues and, for every finding with
+// more than one issue, keeps the lowest-numbered one and closes the other OPEN
+// ones. Returns (closedCount, findingID → winning issue ref). Closing an
+// already-closed duplicate is a no-op, so concurrent reconciles converge.
+func (c *client) reconcileDuplicates(ctx context.Context) (int, map[string]string, error) {
+	byFinding, err := c.listFindingIssues(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	winners := make(map[string]string, len(byFinding))
+	closed := 0
+	for fid, issues := range byFinding {
+		winners[fid] = c.issueRef(issues[0].Number)
+		for _, dup := range issues[1:] {
+			if dup.State != "open" {
+				continue
+			}
+			if cerr := c.closeIssue(ctx, dup.Number); cerr != nil {
+				return closed, winners, fmt.Errorf("close duplicate #%d for %s: %w", dup.Number, fid, cerr)
+			}
+			fmt.Printf("[forgejo] closed duplicate issue #%d for finding %s (winner %s)\n", dup.Number, fid, winners[fid])
+			closed++
+		}
+	}
+	return closed, winners, nil
+}
+
+// closeIssue PATCHes an issue to state=closed.
+func (c *client) closeIssue(ctx context.Context, number int64) error {
+	payload, err := json.Marshal(map[string]string{"state": "closed"})
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, http.MethodPatch, fmt.Sprintf("%s/issues/%d", c.repoAPI(), number), payload)
+	if err != nil {
+		return err
+	}
+	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	if err != nil {
+		return err
+	}
+	drain(resp)
+	return nil
 }
 
 // markerFindingID extracts the findingID from a body's hidden marker, or "".

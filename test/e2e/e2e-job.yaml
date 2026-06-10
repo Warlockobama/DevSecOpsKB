@@ -97,9 +97,7 @@ spec:
               export E2E_FORGEJO_TOKEN="$(tr -d '\r\n' < /shared/forgejo-token)"
               git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" /src
               cd /src/zap-kb
-              go test -tags e2e -count=1 -timeout 20m -skip 'KnownBug' ./internal/e2e/forgejo/...
-              # Known-bug reproductions: loud, never block the job.
-              go test -tags e2e -count=1 -timeout 15m -run 'KnownBug' ./internal/e2e/forgejo/... || true
+              go test -tags e2e -count=1 -timeout 20m ./internal/e2e/forgejo/...
           volumeMounts:
             - name: shared
               mountPath: /shared

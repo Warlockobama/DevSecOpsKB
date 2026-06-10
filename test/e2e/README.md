@@ -22,16 +22,18 @@ environment does not guarantee (see the test-file headers in
 | `idempotency_test.go` | A1 label-name dedup query, A2 marker round-trip, A3 wiki no-op republish, A4 stable ticket refs |
 | `conflict_test.go` | A5 create-only issue content freeze (pinned drift), A6 KB-wins wiki clobber |
 | `partial_test.go` | A8 crash-mid-run convergence, A9 non-zero exit on partial failure |
-| `concurrency_test.go` | A11/A13 two-writer races (**KnownBug**), A24 first-marker-wins pin |
-| `unavailability_test.go` | A14 no 5xx retry, A15 GET paths bypass retry (**KnownBug**) |
+| `concurrency_test.go` | A11/A13 two-writer convergence + clean label race, A24 stable lowest-number winner |
+| `unavailability_test.go` | A14 transient 5xx retried, A15 GET paths retry via DoWithRetryRaw |
 | `redaction_test.go` | A18 secrets never reach issues/wiki by default, A19 token/secret never in logs |
 | `sor_test.go` | A20 truncated ingest fails cleanly, A22 wiki-disabled hard error |
 
-**KnownBug tests fail when the filed follow-up bugs reproduce.** CI runs them
-in a `continue-on-error` lane so they stay loud without blocking merges. Do
-not "fix" them by weakening assertions — fix the layer (follow-ups: retry on
-transient 5xx/conn errors; cross-process dedup guard; atomic entities
-write-back).
+The assumptions that were originally filed as known bugs (A11/A13 dedup +
+label race, A14/A15 retry coverage, A10 atomic write) are now **fixed in the
+layer and asserted as regressions** — these tests fail if the fix is reverted.
+The convergence approach: two racing publishers may briefly create duplicate
+issues, but the post-create reconcile keeps the lowest-numbered issue per
+finding and closes the rest, so the steady state is at most one open issue per
+finding.
 
 ## Running locally
 

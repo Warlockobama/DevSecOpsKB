@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -169,6 +170,93 @@ func TestExportSkipsExisting(t *testing.T) {
 	}
 	if sum.TicketRefs["fin-high"] != "acme/kb#5" {
 		t.Fatalf("ref = %q, want acme/kb#5", sum.TicketRefs["fin-high"])
+	}
+}
+
+// Fix A13: losing the label-create race (another publisher created it between
+// our list and our POST) must resolve to the winner's label, not fail the run.
+func TestEnsureLabelsSurvivesCreateRace(t *testing.T) {
+	var listCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
+			// First list: empty (label "missing"). Re-list after the failed
+			// create: the racing winner's label is there.
+			if atomic.AddInt32(&listCalls, 1) == 1 {
+				json.NewEncoder(w).Encode([]forgejoLabel{})
+				return
+			}
+			json.NewEncoder(w).Encode([]forgejoLabel{{ID: 7, Name: "kb-finding"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			w.WriteHeader(http.StatusConflict) // lost the race
+			w.Write([]byte(`{"message":"label already exists"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	c := newClient(http.DefaultClient, srv.URL, "tok", "acme", "kb")
+	ids, err := c.ensureLabels(context.Background(), []string{"kb-finding"})
+	if err != nil {
+		t.Fatalf("ensureLabels failed on a lost create race: %v", err)
+	}
+	if ids["kb-finding"] != 7 {
+		t.Fatalf("label id = %d, want the race winner's 7", ids["kb-finding"])
+	}
+}
+
+// Fix A11/A24: when the dedup index holds duplicate issues for one finding,
+// Export converges — lowest number wins, other open duplicates are closed,
+// and the returned ticket ref points at the winner.
+func TestExportReconcilesDuplicateIssues(t *testing.T) {
+	var closed []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
+			json.NewEncoder(w).Encode([]forgejoLabel{{ID: 1, Name: "kb-finding"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			// Duplicate pair for fin-high; list deliberately returns the
+			// HIGHER number first to prove winner choice is number-based,
+			// not order-based (A24).
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"number": 9, "state": "open", "body": "dup\n" + findingMarker("fin-high")},
+				{"number": 5, "state": "open", "body": "orig\n" + findingMarker("fin-high")},
+			})
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/"):
+			mu.Lock()
+			closed = append(closed, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+			mu.Unlock()
+			w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			t.Errorf("must not create: finding already has issues")
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	sum, err := Export(context.Background(), sampleEntities(), Options{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if sum.Skipped != 1 || sum.Created != 0 {
+		t.Fatalf("created=%d skipped=%d, want 0/1", sum.Created, sum.Skipped)
+	}
+	if sum.DuplicatesClosed != 1 {
+		t.Fatalf("DuplicatesClosed=%d, want 1", sum.DuplicatesClosed)
+	}
+	if sum.TicketRefs["fin-high"] != "acme/kb#5" {
+		t.Fatalf("ticket ref = %q, want lowest-numbered winner acme/kb#5", sum.TicketRefs["fin-high"])
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(closed) != 1 || closed[0] != "9" {
+		t.Fatalf("closed issues = %v, want exactly [9]", closed)
 	}
 }
 
