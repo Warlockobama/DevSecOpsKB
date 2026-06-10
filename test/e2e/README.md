@@ -80,6 +80,23 @@ three implementation-breaking facts no mock had surfaced:
    pages are discovered via `GET /wiki/pages` and addressed by the
    server-issued `sub_url`, never by guessed escaping.
 
+## CronJob-equivalent container validation
+
+The publisher image was also exercised with the exact `22-kb-cronjob.yaml`
+args (env-injected token, `/ingest` volume, `-forgejo-wiki`) against a live
+server. Findings worth knowing as an operator:
+
+- **`fsGroup: 1000` in the pod securityContext is load-bearing**: the
+  container runs non-root and `mkdir /work/vault` fails without it (observed
+  when emulating with a root-owned docker volume). Don't remove it.
+- **Convergence shape**: run 1 creates issues + wiki and persists ticket refs
+  into the ingest `entities.json`; run 2 updates the handful of wiki pages
+  whose content legitimately gained the issue link; run 3+ is a true no-op
+  (`created=0`, all wiki pages skipped). Vault generation itself is
+  byte-deterministic for identical entities (verified by diffing two runs).
+- The read-only status pull leaves `analyst.status` and `analyst.history`
+  untouched in the persisted entities (R2/R5 verified end-to-end).
+
 ## Running in a cluster (pod-based Tier 1)
 
 ```bash
