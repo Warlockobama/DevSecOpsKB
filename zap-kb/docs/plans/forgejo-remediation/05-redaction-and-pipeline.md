@@ -60,18 +60,19 @@ func redactRawHeaderBlock(raw string, ro RedactOptions) string {
 		if strings.TrimSpace(trimmed) == "" {
 			continue
 		}
-		if i == 0 && !strings.Contains(trimmed, ":") {
-			// Request/status line ("GET /a?b=c HTTP/1.1"): reuse the _line rule.
+		colon := strings.Index(trimmed, ":")
+		// Start-line (request/status), NOT a header: a header name never contains
+		// whitespace before its colon, whereas "GET https://h/p HTTP/1.1" and
+		// "HTTP/1.1 200 OK" do (or have no colon at all). Do NOT test merely for
+		// the absence of a colon — an absolute-URL request target ("GET
+		// https://…") contains one and would be mis-parsed as a header.
+		if i == 0 && (colon < 0 || strings.ContainsAny(trimmed[:colon], " \t")) {
 			if ro.Domain || ro.Query {
-				parts := strings.Fields(trimmed)
-				if len(parts) >= 2 {
-					parts[1] = redactURL(parts[1], ro)
-					lines[i] = strings.Join(parts, " ") + suffix
-				}
+				scrubbed := redactHeaders([]Header{{Name: "_line", Value: trimmed}}, ro)
+				lines[i] = scrubbed[0].Value + suffix
 			}
 			continue
 		}
-		colon := strings.Index(trimmed, ":")
 		if colon <= 0 {
 			lines[i] = "<redacted: unparsed header line>" + suffix
 			continue
@@ -190,9 +191,14 @@ covers redaction):
    contain `GET /search?q=secret HTTP/1.1` (query mode off), `Host:
    target.example`, and `Accept: text/html`; the Authorization/Cookie/X-Api-Key
    lines read `<name>: <redacted>`.
-2. `TestRedactRawHeaderBlock_QueryAndDomain` — same block with
-   `RedactOptions{Domain: true, Query: true}`: request line's URL has
-   `q=%3Credacted%3E`-style value and Host line value is `<redacted>`.
+2. `TestRedactRawHeaderBlock_QueryAndDomain` — query/domain redaction of the
+   request line only fires when the target is an ABSOLUTE URL (`redactURL`
+   ignores relative paths, exactly as the structured `_line` rule does — do not
+   "fix" this divergently). Use a block whose first line is
+   `GET https://target.example/search?q=secret HTTP/1.1` plus a
+   `Host: target.example` line; with `RedactOptions{Domain: true, Query: true}`
+   assert the output contains neither `secret` nor `target.example`, and keeps
+   `Accept: text/html`.
 3. `TestRedactRawHeaderBlock_UnparsedLineFailsClosed` — a middle line with no
    colon (`garbage continuation`) becomes `<redacted: unparsed header line>`.
 4. `TestRedactEntities_RawHeaderSurvivesScrubbed` — full `EntitiesFile` with

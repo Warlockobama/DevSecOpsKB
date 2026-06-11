@@ -119,3 +119,25 @@ func TestMergeForgejoTicketRefs_NoChangeWhenRefAlreadyCurrent(t *testing.T) {
 		t.Fatalf("refs = %v, want [owner/repo#3] unchanged", got)
 	}
 }
+
+// A wholesale export failure must RETURN a non-zero failure count (so the
+// caller can os.Exit(1)) rather than killing the process via log.Fatalf — which
+// would also abort other sinks. Pointing at an unreachable host forces Export
+// to fail on its first request.
+func TestRunForgejoPublish_ExportErrorReturnsFailure(t *testing.T) {
+	ent := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Findings:      []entities.Finding{{FindingID: "fin-1", URL: "https://t/a", Risk: "High", Occurrences: 1}},
+	}
+	failures := runForgejoPublish(ent, forgejoPublishOptions{
+		BaseURL: "http://127.0.0.1:1",
+		Token:   "t",
+		Owner:   "acme",
+		Repo:    "kb",
+		MinRisk: "medium",
+		Redact:  "off",
+	})
+	if failures < 1 {
+		t.Fatalf("failures=%d, want >=1 (returned, not exited)", failures)
+	}
+}

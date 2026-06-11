@@ -103,7 +103,10 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 	if redactOn {
 		cp, err := redactedCopy(*ent, ro)
 		if err != nil {
-			log.Fatalf("forgejo redaction: %v", err)
+			// Abort the Forgejo publish (so unredacted data is never pushed) but
+			// return rather than killing the whole multi-sink pipeline.
+			log.Printf("error: forgejo redaction failed — skipping Forgejo publish: %v", err)
+			return failures + 1
 		}
 		pubEnt = cp
 	}
@@ -130,7 +133,11 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		WikiURLBase: wikiURLBase,
 	})
 	if err != nil {
-		log.Fatalf("forgejo export: %v", err)
+		// A wholesale export failure (auth/connectivity) would fail the pull and
+		// wiki steps the same way; return early with a failure so CI/cron sees a
+		// non-zero exit, without aborting other sinks via log.Fatalf.
+		log.Printf("error: forgejo export: %v", err)
+		return failures + 1
 	}
 	fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
 		sum.Created, sum.Reopened, sum.BodiesUpdated, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
