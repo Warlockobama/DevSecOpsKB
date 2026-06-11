@@ -1,0 +1,36 @@
+# HOOK (stub): link-intelligence source slot. Your forthcoming Link Intelligence
+# service plugs in here. Its only contract with the sink is to write a normalized
+# entities.json into the shared `kb-ingest` volume; the publisher CronJob does
+# the rest. Swap the placeholder image/command for the real service when ready.
+#
+# apiVersion: batch/v1
+# kind: CronJob
+# metadata:
+#   name: link-intel-source
+#   namespace: devsecops-kb
+#   labels:
+#     app.kubernetes.io/part-of: devsecops-kb
+#     app.kubernetes.io/component: source
+#     devsecopskb.io/source: link-intel
+# spec:
+#   schedule: "*/30 * * * *"
+#   jobTemplate:
+#     spec:
+#       template:
+#         metadata:
+#           labels:
+#             devsecopskb.io/source: link-intel
+#         spec:
+#           restartPolicy: Never
+#           containers:
+#             - name: link-intel
+#               image: REPLACE/link-intelligence:latest
+#               # Must emit the entities model to /ingest/entities.json
+#               args: ["--out=/ingest/entities.json"]
+#               volumeMounts:
+#                 - name: ingest
+#                   mountPath: /ingest
+#           volumes:
+#             - name: ingest
+#               persistentVolumeClaim:
+#                 claimName: kb-ingest

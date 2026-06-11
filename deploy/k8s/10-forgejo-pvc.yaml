@@ -1,0 +1,17 @@
+# Persistent data for the Forgejo instance (repos, issues, wiki git, SQLite DB).
+# Survives pod restarts so published issues/wiki pages are not lost.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-data
+  namespace: devsecops-kb
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+    app.kubernetes.io/name: forgejo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: ""   # uncomment + set to match your cluster's default

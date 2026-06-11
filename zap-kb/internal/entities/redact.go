@@ -78,9 +78,10 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 		}
 	}
 	// rawHeaderRedact is true whenever any mode that can expose credentials in the
-	// raw header block is active. RawHeader is an unstructured string — we cannot
-	// selectively redact it, so we zero the field entirely to preserve the guarantee
-	// that -redact removes sensitive values from the output.
+	// raw header block is active. The raw block is line-structured, so it is
+	// scrubbed line-by-line (see redactRawHeaderBlock) rather than blanked — the
+	// scrubbed evidence stays useful while sensitive values are removed.
+	// RawHeaderBytes is recomputed to the post-scrub length.
 	rawHeaderRedact := ro.Cookies || ro.Auth || ro.Headers || ro.Domain || ro.Query
 
 	for i := range e.Occurrences {
@@ -128,10 +129,8 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			}
 			if rawHeaderRedact {
 				e.Occurrences[i].Request.Headers = redactHeaders(e.Occurrences[i].Request.Headers, ro)
-				// RawHeader is an unstructured string that cannot be selectively
-				// redacted — zero it out to prevent credential bypass.
-				e.Occurrences[i].Request.RawHeader = ""
-				e.Occurrences[i].Request.RawHeaderBytes = 0
+				e.Occurrences[i].Request.RawHeader = redactRawHeaderBlock(e.Occurrences[i].Request.RawHeader, ro)
+				e.Occurrences[i].Request.RawHeaderBytes = len(e.Occurrences[i].Request.RawHeader)
 			}
 		}
 		if e.Occurrences[i].Response != nil {
@@ -140,8 +139,8 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			}
 			if rawHeaderRedact {
 				e.Occurrences[i].Response.Headers = redactHeaders(e.Occurrences[i].Response.Headers, ro)
-				e.Occurrences[i].Response.RawHeader = ""
-				e.Occurrences[i].Response.RawHeaderBytes = 0
+				e.Occurrences[i].Response.RawHeader = redactRawHeaderBlock(e.Occurrences[i].Response.RawHeader, ro)
+				e.Occurrences[i].Response.RawHeaderBytes = len(e.Occurrences[i].Response.RawHeader)
 			}
 		}
 	}
@@ -208,6 +207,56 @@ func redactCurlHeader(curl, name, sentinel string) string {
 		start = valStart + len(sentinel)
 	}
 	return curl
+}
+
+// redactRawHeaderBlock applies the same per-header redaction rules as
+// redactHeaders to a raw HTTP header block. Raw blocks are line-structured
+// (request/status line, then "Name: value" lines), so selective scrubbing is
+// possible after all — the historical blanket-blanking threw away the whole
+// evidence block on any redaction mode, so the Request/Response sections the
+// publishers promise never appeared. Lines that do not parse as a header are
+// replaced entirely (fail closed): the -redact guarantee that sensitive values
+// are gone outranks evidence fidelity.
+func redactRawHeaderBlock(raw string, ro RedactOptions) string {
+	if strings.TrimSpace(raw) == "" {
+		return raw
+	}
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		suffix := line[len(trimmed):] // preserve a trailing \r
+		if strings.TrimSpace(trimmed) == "" {
+			continue
+		}
+		colon := strings.Index(trimmed, ":")
+		// A valid header name is a token with no whitespace before the colon.
+		// Whitespace before the colon (or no colon) means the line is not a
+		// clean "Name: value" header.
+		nameMalformed := colon < 0 || strings.ContainsAny(trimmed[:colon], " \t")
+		if i == 0 && nameMalformed {
+			// Request/status start-line, NOT a header — "GET https://h/p HTTP/1.1"
+			// and "HTTP/1.1 200 OK" have whitespace before any colon (or none).
+			// Reuse the _line rule via redactHeaders so URL host/query redaction
+			// stays in one place.
+			if ro.Domain || ro.Query {
+				scrubbed := redactHeaders([]Header{{Name: "_line", Value: trimmed}}, ro)
+				lines[i] = scrubbed[0].Value + suffix
+			}
+			continue
+		}
+		if nameMalformed {
+			// Fail closed: a non-start-line that does not parse as a clean header
+			// (no colon, or whitespace in the name) is replaced entirely rather
+			// than risk a sensitive value slipping past the name-based rules.
+			lines[i] = "<redacted: unparsed header line>" + suffix
+			continue
+		}
+		name := trimmed[:colon]
+		value := strings.TrimSpace(trimmed[colon+1:])
+		scrubbed := redactHeaders([]Header{{Name: name, Value: value}}, ro)
+		lines[i] = name + ": " + scrubbed[0].Value + suffix
+	}
+	return strings.Join(lines, "\n")
 }
 
 func redactHeaders(hs []Header, ro RedactOptions) []Header {

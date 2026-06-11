@@ -1,0 +1,107 @@
+# Tier-1 adversarial E2E as an in-cluster pod: ephemeral Forgejo sidecar +
+# provision sidecar + Go test runner, all in one Job pod. State lives in
+# emptyDir volumes, so everything dies with the pod — guaranteed teardown even
+# when tests panic. Run each invocation in a fresh namespace:
+#
+#   RUNID=$(date +%s)
+#   kubectl create ns e2e-$RUNID
+#   kubectl -n e2e-$RUNID apply -f test/e2e/e2e-job.yaml
+#   kubectl -n e2e-$RUNID wait --for=condition=complete --timeout=30m job/forgejo-sync-e2e \
+#     || kubectl -n e2e-$RUNID logs job/forgejo-sync-e2e -c runner --tail=200
+#   kubectl delete ns e2e-$RUNID   # always — also wired into CI via trap
+#
+# The runner clones the repo (set GIT_URL/GIT_REF below or bake an image).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-sync-e2e
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+    app.kubernetes.io/component: e2e
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600 # backstop teardown if namespace cleanup is missed
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: devsecops-kb
+        app.kubernetes.io/component: e2e
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: forgejo-data
+          emptyDir: {}
+        - name: shared
+          emptyDir: {}
+      containers:
+        # The sink target under test. SQLite on emptyDir → virgin state per run.
+        - name: forgejo
+          image: codeberg.org/forgejo/forgejo:9
+          env:
+            - name: FORGEJO__security__INSTALL_LOCK
+              value: "true"
+            - name: FORGEJO__server__HTTP_PORT
+              value: "3000"
+            - name: FORGEJO__server__ROOT_URL
+              value: "http://localhost:3000/"
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: forgejo-data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /api/healthz, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 3
+
+        # Provision sidecar: same image + shared data volume, so the forgejo
+        # CLI can mint the admin user and token against the live database.
+        # Writes the token to the shared volume — never to stdout/logs.
+        - name: provision
+          image: codeberg.org/forgejo/forgejo:9
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until wget -q -O /dev/null http://localhost:3000/api/healthz; do sleep 2; done
+              forgejo admin user create --admin --username e2e-admin \
+                --password 'e2e-Passw0rd!' --email e2e@example.invalid || true
+              forgejo admin user generate-access-token --username e2e-admin \
+                --token-name e2e --scopes all --raw > /shared/forgejo-token
+              chmod 0400 /shared/forgejo-token
+              # Stay alive so the pod isn't marked failed; runner ends the run.
+              sleep infinity
+          volumeMounts:
+            - name: forgejo-data
+              mountPath: /data
+            - name: shared
+              mountPath: /shared
+
+        # Test runner: clones the repo and runs the tagged suite against the
+        # sidecar. Reads the token from the shared file, never the environment
+        # of the pod spec.
+        - name: runner
+          image: golang:1.24
+          env:
+            - name: GIT_URL
+              value: "https://github.com/Warlockobama/DevSecOpsKB.git"
+            - name: GIT_REF
+              value: "claude/forgejo-sync-layer"
+            - name: E2E_FORGEJO_URL
+              value: "http://localhost:3000"
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              until [ -s /shared/forgejo-token ]; do sleep 2; done
+              export E2E_FORGEJO_TOKEN="$(tr -d '\r\n' < /shared/forgejo-token)"
+              git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" /src
+              cd /src/zap-kb
+              go test -tags e2e -count=1 -timeout 20m ./internal/e2e/forgejo/...
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }

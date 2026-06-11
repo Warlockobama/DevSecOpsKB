@@ -1,0 +1,11 @@
+# Greenfield, self-contained namespace for the DevSecOpsKB sink stack.
+# Everything here is labeled `app.kubernetes.io/part-of: devsecops-kb` so it can
+# be selected, observed, and later wired into a firing range / link-intelligence
+# service without disturbing other workloads.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devsecops-kb
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+    pod-security.kubernetes.io/enforce: baseline

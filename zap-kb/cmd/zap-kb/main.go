@@ -25,82 +25,95 @@ import (
 
 func main() {
 	var (
-		zapURL             string
-		apiKey             string
-		baseURL            string
-		count              int
-		out                string
-		merge              bool
-		format             string
-		source             string
-		vault              string
-		infile             string
-		entitiesIn         string
-		plugins            string
-		allPlugins         bool
-		genAt              string
-		includeTraffic     bool
-		trafficMax         int
-		trafficMaxPerIssue int
-		trafficTotalMax    int
-		scanLabel          string
-		siteLabel          string
-		trafficScope       string
-		zapBase            string
-		trafficMinRisk     string
-		includeDetect      bool
-		includeMITRE       bool
-		mitreCWECache      string
-		mitreCAPECCache    string
-		mitreATTACKCache   string
-		includeCVSS        bool
-		detectDetails      string
-		initMode           bool
-		runOut             string
-		runIn              string
-		zipOut             string
-		redactOpts         string
-		wizard             bool
-		pruneScanLabel     string
-		pruneSiteLabel     string
-		pruneVault         string
-		pruneDryRun        bool
-		reportOut          string
-		reportSince        string
-		reportUntil        string
-		reportLookback     string
-		reportTitle        string
-		reportScanLabel    string
-		confURL            string
-		confUser           string
-		confToken          string
-		confSpace          string
-		confParent         string
-		confTitlePrefix    string
-		confDryRun         bool
-		confFull           bool
-		confConcurrency    int
-		jiraURL            string
-		jiraUser           string
-		jiraToken          string
-		jiraProject        string
-		jiraServerID       string
-		jiraServerName     string
-		jiraUserMap        string
-		jiraIssueType      string
-		jiraComponent      string
-		jiraLabels         string
-		jiraMinRisk        string
-		jiraOptInTag       string
-		jiraDryRun         bool
-		jiraConcurrency    int
-		jiraDetectionEpic  bool
-		jiraEpicIssueType  string
-		jiraEpicComponent  string
-		jiraSyncKBStatus   bool
-		allowAgentPublish  bool
-		allowCustomPublish bool
-		zapAlertsOnly      bool
+		zapURL              string
+		apiKey              string
+		baseURL             string
+		count               int
+		out                 string
+		merge               bool
+		format              string
+		source              string
+		vault               string
+		infile              string
+		entitiesIn          string
+		plugins             string
+		allPlugins          bool
+		genAt               string
+		includeTraffic      bool
+		trafficMax          int
+		trafficMaxPerIssue  int
+		trafficTotalMax     int
+		scanLabel           string
+		siteLabel           string
+		trafficScope        string
+		zapBase             string
+		trafficMinRisk      string
+		includeDetect       bool
+		includeMITRE        bool
+		mitreCWECache       string
+		mitreCAPECCache     string
+		mitreATTACKCache    string
+		includeCVSS         bool
+		detectDetails       string
+		initMode            bool
+		runOut              string
+		runIn               string
+		zipOut              string
+		redactOpts          string
+		wizard              bool
+		pruneScanLabel      string
+		pruneSiteLabel      string
+		pruneVault          string
+		pruneDryRun         bool
+		reportOut           string
+		reportSince         string
+		reportUntil         string
+		reportLookback      string
+		reportTitle         string
+		reportScanLabel     string
+		confURL             string
+		confUser            string
+		confToken           string
+		confSpace           string
+		confParent          string
+		confTitlePrefix     string
+		confDryRun          bool
+		confFull            bool
+		confConcurrency     int
+		jiraURL             string
+		jiraUser            string
+		jiraToken           string
+		jiraProject         string
+		jiraServerID        string
+		jiraServerName      string
+		jiraUserMap         string
+		jiraIssueType       string
+		jiraComponent       string
+		jiraLabels          string
+		jiraMinRisk         string
+		jiraOptInTag        string
+		jiraDryRun          bool
+		jiraConcurrency     int
+		jiraDetectionEpic   bool
+		jiraEpicIssueType   string
+		jiraEpicComponent   string
+		jiraSyncKBStatus    bool
+		forgejoURL          string
+		forgejoToken        string
+		forgejoOwner        string
+		forgejoRepo         string
+		forgejoMinRisk      string
+		forgejoOptInTag     string
+		forgejoLabels       string
+		forgejoConcurrency  int
+		forgejoDryRun       bool
+		forgejoSyncKBStatus bool
+		forgejoWiki         bool
+		forgejoWikiPrune    bool
+		forgejoRedact       string
+		allowAgentPublish   bool
+		allowCustomPublish  bool
+		zapAlertsOnly       bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
@@ -176,6 +189,19 @@ func main() {
 	flag.StringVar(&jiraEpicIssueType, "jira-epic-issue-type", "Epic", "Issue type for detection Epics (default: Epic; override for projects that use Initiative).")
 	flag.StringVar(&jiraEpicComponent, "jira-epic-component", "", "Optional Jira component name applied to detection Epics.")
 	flag.BoolVar(&jiraSyncKBStatus, "jira-sync-kb-status", false, "Legacy mode: write mapped Jira workflow status and assignee back into KB analyst fields. By default Jira remains the workflow source of truth and KB state is not mutated.")
+	flag.StringVar(&forgejoURL, "forgejo-url", "", "Forgejo/Gitea base URL (enables open-source issue + wiki publishing; e.g. https://forge.example.com).")
+	flag.StringVar(&forgejoToken, "forgejo-token", "", "Forgejo/Gitea API token (env: FORGEJO_TOKEN).")
+	flag.StringVar(&forgejoOwner, "forgejo-owner", "", "Forgejo/Gitea repository owner (user or org).")
+	flag.StringVar(&forgejoRepo, "forgejo-repo", "", "Forgejo/Gitea repository name.")
+	flag.StringVar(&forgejoMinRisk, "forgejo-min-risk", "medium", "Minimum risk level to export as Forgejo issues: info|low|medium|high (default: medium).")
+	flag.StringVar(&forgejoOptInTag, "forgejo-opt-in-tag", "case-ticket", "Analyst tag that forces Forgejo export for lower-severity findings.")
+	flag.StringVar(&forgejoLabels, "forgejo-labels", "", "Comma-separated extra labels to add to each Forgejo issue.")
+	flag.IntVar(&forgejoConcurrency, "forgejo-concurrency", 3, "Max parallel Forgejo API requests (default: 3, max: 5).")
+	flag.BoolVar(&forgejoDryRun, "forgejo-dry-run", false, "Dry-run Forgejo export (log instead of POST).")
+	flag.BoolVar(&forgejoSyncKBStatus, "forgejo-sync-kb-status", false, "Write mapped Forgejo issue state/labels back into KB analyst status. By default Forgejo is the workflow source of truth and KB state is not mutated.")
+	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
+	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
+	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes; 'off' disables. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
@@ -205,6 +231,7 @@ func main() {
 	envFallback(&jiraToken, "JIRA_API_TOKEN")
 	envFallback(&jiraServerID, "JIRA_SERVER_ID")
 	envFallback(&jiraServerName, "JIRA_SERVER_NAME")
+	envFallback(&forgejoToken, "FORGEJO_TOKEN")
 
 	// Load operator-tunable triage policy once at startup. This drives the
 	// auto-reopen gate, auto-suppression cadence, and rule-tune-scan tagging
@@ -819,6 +846,49 @@ func main() {
 			}
 		}
 	}
+
+	// Optional Forgejo/Gitea publish — open-source analog to the Atlassian
+	// (Jira + Confluence) sink. Findings become issues; with -forgejo-wiki the
+	// generated vault is published to the repo wiki. Consumes the same entities
+	// model, so any detection source feeding the KB publishes through it.
+	var forgejoFailures int
+	if strings.TrimSpace(forgejoURL) != "" {
+		var extraLabels []string
+		for _, l := range strings.Split(forgejoLabels, ",") {
+			if l = strings.TrimSpace(l); l != "" {
+				extraLabels = append(extraLabels, l)
+			}
+		}
+		var artPtr *runartifact.Artifact
+		if runInIsArtifact {
+			artPtr = &runInArtifact
+		}
+		forgejoFailures = runForgejoPublish(&ent, forgejoPublishOptions{
+			BaseURL:       forgejoURL,
+			Token:         forgejoToken,
+			Owner:         forgejoOwner,
+			Repo:          forgejoRepo,
+			MinRisk:       forgejoMinRisk,
+			OptInTag:      forgejoOptInTag,
+			ExtraLabels:   extraLabels,
+			Concurrency:   forgejoConcurrency,
+			DryRun:        forgejoDryRun,
+			SyncKBStatus:  forgejoSyncKBStatus,
+			Wiki:          forgejoWiki,
+			WikiPrune:     forgejoWikiPrune,
+			Redact:        forgejoRedact,
+			Format:        format,
+			Vault:         vault,
+			Out:           out,
+			EntitiesIn:    entitiesIn,
+			RunIn:         runIn,
+			RunInArtifact: artPtr,
+			ScanLabel:     scanLabel,
+			SiteLabel:     siteLabel,
+			ZapBaseURL:    zapBase,
+		})
+	}
+
 	// Optional report generation (vault-wide, time-bounded)
 	if strings.TrimSpace(reportOut) != "" {
 		if format != "obsidian" {
@@ -882,6 +952,14 @@ func main() {
 			log.Fatalf("zip: %v", err)
 		}
 		fmt.Printf("Zipped outputs to %s\n", zipOut)
+	}
+
+	// Partial Forgejo publish failure exits non-zero so CI and the CronJob get
+	// a failure signal instead of a silent partial sync. Placed after run-out /
+	// zip so diagnostic artifacts are still produced.
+	if forgejoFailures > 0 {
+		log.Printf("forgejo publish completed with %d failure(s)", forgejoFailures)
+		os.Exit(1)
 	}
 
 	// Exit code 2 only when no content produced at all (no alerts and no entities).

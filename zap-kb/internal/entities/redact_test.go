@@ -31,7 +31,85 @@ func makeOccurrenceWithRawHeaders(cookie, auth string) Occurrence {
 	}
 }
 
-func TestRedactEntities_RawHeaderZeroedOnCookieRedact(t *testing.T) {
+// Raw header blocks are now scrubbed line-by-line (not blanked): the targeted
+// secret is removed while the rest of the evidence survives. These tests assert
+// the not-contains-secret invariant per redaction category.
+
+func TestRedactRawHeaderBlock_ScrubsSensitiveKeepsRest(t *testing.T) {
+	block := "GET /search?q=secret HTTP/1.1\n" +
+		"Host: target.example\n" +
+		"Authorization: Bearer sekrit-token\n" +
+		"Cookie: session=abc123\n" +
+		"X-Api-Key: key-456\n" +
+		"Accept: text/html\n"
+	got := redactRawHeaderBlock(block, RedactOptions{Auth: true, Cookies: true, Headers: true})
+
+	for _, secret := range []string{"sekrit-token", "abc123", "key-456"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("secret %q survived:\n%s", secret, got)
+		}
+	}
+	// Query mode is off → request line preserved verbatim.
+	for _, keep := range []string{"GET /search?q=secret HTTP/1.1", "Host: target.example", "Accept: text/html"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("expected to keep %q:\n%s", keep, got)
+		}
+	}
+	for _, redLine := range []string{"Authorization: <redacted>", "Cookie: <redacted>", "X-Api-Key: <redacted>"} {
+		if !strings.Contains(got, redLine) {
+			t.Errorf("expected redacted line %q:\n%s", redLine, got)
+		}
+	}
+}
+
+func TestRedactRawHeaderBlock_QueryAndDomain(t *testing.T) {
+	// Query/domain redaction of a request line works when the target is an
+	// absolute URL (redactURL ignores relative paths, same as the structured
+	// _line rule). Host header redaction works regardless.
+	block := "GET https://target.example/search?q=secret HTTP/1.1\n" +
+		"Host: target.example\n" +
+		"Accept: text/html\n"
+	got := redactRawHeaderBlock(block, RedactOptions{Domain: true, Query: true})
+
+	if strings.Contains(got, "secret") {
+		t.Errorf("query value survived: %s", got)
+	}
+	if strings.Contains(got, "target.example") {
+		t.Errorf("host survived: %s", got)
+	}
+	if !strings.Contains(got, "Accept: text/html") {
+		t.Errorf("non-sensitive header dropped: %s", got)
+	}
+}
+
+func TestRedactRawHeaderBlock_UnparsedLineFailsClosed(t *testing.T) {
+	block := "GET /a HTTP/1.1\n" +
+		"Authorization: Bearer x\n" +
+		"garbage continuation\n"
+	got := redactRawHeaderBlock(block, RedactOptions{Auth: true})
+	if !strings.Contains(got, "<redacted: unparsed header line>") {
+		t.Errorf("unparseable line not failed closed: %s", got)
+	}
+	if strings.Contains(got, "garbage continuation") {
+		t.Errorf("unparseable line leaked: %s", got)
+	}
+}
+
+// A non-start-line whose header name has whitespace before the colon is
+// malformed and must fail closed, not be passed through the name-based rules.
+func TestRedactRawHeaderBlock_MalformedHeaderNameFailsClosed(t *testing.T) {
+	block := "GET /a HTTP/1.1\n" +
+		"Authorization : Bearer leakedsecret\n" + // space before colon
+		"Foo Authorization: alsoleaked\n" // internal space in name
+	got := redactRawHeaderBlock(block, RedactOptions{Auth: true})
+	for _, secret := range []string{"leakedsecret", "alsoleaked"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("secret %q survived a malformed header line:\n%s", secret, got)
+		}
+	}
+}
+
+func TestRedactEntities_RawHeaderScrubsCookie(t *testing.T) {
 	ef := &EntitiesFile{
 		Occurrences: []Occurrence{
 			makeOccurrenceWithRawHeaders("session=supersecret", "Bearer token123"),
@@ -40,16 +118,22 @@ func TestRedactEntities_RawHeaderZeroedOnCookieRedact(t *testing.T) {
 	RedactEntities(ef, RedactOptions{Cookies: true})
 
 	o := ef.Occurrences[0]
-	if o.Request.RawHeader != "" {
-		t.Errorf("RawHeader should be zeroed when Cookies redaction is active, got: %q", o.Request.RawHeader)
+	if o.Request.RawHeader == "" {
+		t.Fatal("RawHeader was blanked; it must be scrubbed in place")
 	}
-	if o.Request.RawHeaderBytes != 0 {
-		t.Errorf("RawHeaderBytes should be 0 when Cookies redaction is active, got: %d", o.Request.RawHeaderBytes)
+	if strings.Contains(o.Request.RawHeader, "session=supersecret") {
+		t.Errorf("cookie secret survived in RawHeader: %q", o.Request.RawHeader)
 	}
-	if o.Response.RawHeader != "" {
-		t.Errorf("Response RawHeader should be zeroed, got: %q", o.Response.RawHeader)
+	if !strings.Contains(o.Request.RawHeader, "Cookie: <redacted>") {
+		t.Errorf("cookie line not redacted: %q", o.Request.RawHeader)
 	}
-	// Structured headers still redacted
+	if o.Request.RawHeaderBytes != len(o.Request.RawHeader) {
+		t.Errorf("RawHeaderBytes=%d, want len(RawHeader)=%d", o.Request.RawHeaderBytes, len(o.Request.RawHeader))
+	}
+	if strings.Contains(o.Response.RawHeader, "session=abc") {
+		t.Errorf("Set-Cookie secret survived in response RawHeader: %q", o.Response.RawHeader)
+	}
+	// Structured headers still redacted.
 	for _, h := range o.Request.Headers {
 		if h.Name == "Cookie" && h.Value != "<redacted>" {
 			t.Errorf("Cookie header should be redacted in structured headers")
@@ -57,7 +141,7 @@ func TestRedactEntities_RawHeaderZeroedOnCookieRedact(t *testing.T) {
 	}
 }
 
-func TestRedactEntities_RawHeaderZeroedOnAuthRedact(t *testing.T) {
+func TestRedactEntities_RawHeaderScrubsAuth(t *testing.T) {
 	ef := &EntitiesFile{
 		Occurrences: []Occurrence{
 			makeOccurrenceWithRawHeaders("session=abc", "Bearer supersecrettoken"),
@@ -66,25 +150,34 @@ func TestRedactEntities_RawHeaderZeroedOnAuthRedact(t *testing.T) {
 	RedactEntities(ef, RedactOptions{Auth: true})
 
 	o := ef.Occurrences[0]
-	if o.Request.RawHeader != "" {
-		t.Errorf("RawHeader should be zeroed when Auth redaction is active")
+	if o.Request.RawHeader == "" {
+		t.Fatal("RawHeader was blanked; it must be scrubbed in place")
 	}
-	if o.Request.RawHeaderBytes != 0 {
-		t.Errorf("RawHeaderBytes should be 0 when Auth redaction is active")
+	if strings.Contains(o.Request.RawHeader, "supersecrettoken") {
+		t.Errorf("auth secret survived in RawHeader: %q", o.Request.RawHeader)
+	}
+	if !strings.Contains(o.Request.RawHeader, "Authorization: <redacted>") {
+		t.Errorf("authorization line not redacted: %q", o.Request.RawHeader)
 	}
 }
 
-func TestRedactEntities_RawHeaderZeroedOnDomainRedact(t *testing.T) {
-	ef := &EntitiesFile{
-		Occurrences: []Occurrence{
-			makeOccurrenceWithRawHeaders("x", "y"),
+func TestRedactEntities_RawHeaderScrubsHost(t *testing.T) {
+	occ := Occurrence{
+		OccurrenceID: "occ-host",
+		Request: &HTTPRequest{
+			RawHeader:      "GET /a HTTP/1.1\r\nHost: secret.host.io\r\nAccept: text/html\r\n",
+			RawHeaderBytes: 100,
 		},
 	}
+	ef := &EntitiesFile{Occurrences: []Occurrence{occ}}
 	RedactEntities(ef, RedactOptions{Domain: true})
 
 	o := ef.Occurrences[0]
-	if o.Request.RawHeader != "" {
-		t.Errorf("RawHeader should be zeroed when Domain redaction is active (Host header leaks)")
+	if strings.Contains(o.Request.RawHeader, "secret.host.io") {
+		t.Errorf("host survived in RawHeader after domain redaction: %q", o.Request.RawHeader)
+	}
+	if !strings.Contains(o.Request.RawHeader, "Accept: text/html") {
+		t.Errorf("non-sensitive header was dropped: %q", o.Request.RawHeader)
 	}
 }
 

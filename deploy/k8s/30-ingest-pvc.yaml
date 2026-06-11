@@ -1,0 +1,19 @@
+# Shared "ingest" volume — the integration seam for the firing range and the
+# link-intelligence service. Each detection source (ZAP, YARA, Snort, link-intel,
+# …) writes a normalized entities.json here; the publisher reads it and pushes to
+# Forgejo. Sources stay decoupled from the sink — they only need to speak the
+# entities model (the input contract documented in README.md).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kb-ingest
+  namespace: devsecops-kb
+  labels:
+    app.kubernetes.io/part-of: devsecops-kb
+    app.kubernetes.io/component: ingest
+spec:
+  accessModes:
+    - ReadWriteOnce # use ReadWriteMany if multiple source pods write concurrently
+  resources:
+    requests:
+      storage: 1Gi
