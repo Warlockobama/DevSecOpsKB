@@ -32,6 +32,7 @@ type forgejoLabel struct {
 // listLabels returns all labels defined on the repo.
 func (c *client) listLabels(ctx context.Context) ([]forgejoLabel, error) {
 	var all []forgejoLabel
+	seen := make(map[int64]bool)
 	page := 1
 	for {
 		url := fmt.Sprintf("%s/labels?limit=50&page=%d", c.repoAPI(), page)
@@ -50,11 +51,25 @@ func (c *client) listLabels(ctx context.Context) ([]forgejoLabel, error) {
 			return nil, fmt.Errorf("decode labels: %w", err)
 		}
 		resp.Body.Close()
-		all = append(all, batch...)
-		if len(batch) < 50 {
+		// Progress-based termination (see listFindingIssues): stop when a page
+		// adds no label IDs we have not already seen. Robust to servers that cap
+		// `limit` below 50 and to servers that ignore `page`. Dedup on label ID.
+		added := 0
+		for _, l := range batch {
+			if seen[l.ID] {
+				continue
+			}
+			seen[l.ID] = true
+			added++
+			all = append(all, l)
+		}
+		if added == 0 {
 			break
 		}
 		page++
+		if page > 1000 {
+			return nil, fmt.Errorf("forgejo: label pagination exceeded 1000 pages — aborting (server ignoring page param?)")
+		}
 	}
 	return all, nil
 }

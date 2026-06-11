@@ -160,27 +160,48 @@ Three paginated list loops share the same bug — they break on
 2. `internal/output/forgejo/labels.go`, function `listLabels`
 3. `internal/output/forgejo/wiki.go`, function `listWikiPages`
 
-In each, replace the `if len(batch) < 50 { break }` (or `return out, nil`)
-termination with:
+Do **not** terminate on `len(batch) == 0` alone: a server that ignores the
+`page` parameter and returns the same full page every time would then loop
+forever (and a non-paginating *test stub* will hang the suite for the full
+600s timeout — this is a real trap). Use **progress-based termination**
+instead: dedup the items by a stable key and stop when a page adds nothing new.
+This fixes the capped-`limit` bug (short pages no longer stop the loop early)
+*and* terminates safely against a server that ignores `page`.
 
-```go
-if len(batch) == 0 {
-	break // past the last page; never trust page size — servers cap `limit`
-}
-page++
-if page > 1000 {
-	return nil, fmt.Errorf("forgejo: pagination exceeded 1000 pages — aborting (server ignoring page param?)")
-}
-```
+Per function, keep a `seen` set and count newly added items per page:
 
-Adjust per-function: `listWikiPages` returns `(map[string]string, error)` and
-currently `return out, nil` on the short page — keep returning `out, nil` after
-the loop ends via `break`. Keep the existing 404 early-return in
-`listWikiPages` untouched. The `limit=50` query parameter stays as-is (it is a
-hint, not a contract).
+- `listFindingIssues` — dedup on issue `Number`:
+  ```go
+  seen := make(map[int64]bool)
+  // …inside the loop, after decoding batch:
+  added := 0
+  for _, iss := range batch {
+  	if seen[iss.Number] {
+  		continue
+  	}
+  	seen[iss.Number] = true
+  	added++
+  	if fid := markerFindingID(iss.Body); fid != "" {
+  		out[fid] = append(out[fid], issueInfo{Number: iss.Number, State: strings.ToLower(iss.State)})
+  	}
+  }
+  if added == 0 {
+  	break
+  }
+  page++
+  if page > 1000 {
+  	return nil, fmt.Errorf("forgejo: issue pagination exceeded 1000 pages — aborting (server ignoring page param?)")
+  }
+  ```
+- `listLabels` — dedup on label `ID`; `added++` and `all = append(all, l)` only
+  for unseen IDs; same `added == 0` break and 1000-page guard.
+- `listWikiPages` — dedup on page `Title`; `added++` only when the title was not
+  already in `out`; `return out, nil` when `added == 0`. Keep the existing 404
+  early-return and the non-2xx error branch untouched.
 
-Note this costs exactly one extra request per listing (the final empty page).
-That is acceptable; do not try to optimize it away.
+The `limit=50` query parameter stays as-is (it is a hint, not a contract). This
+costs one extra request per listing only when the total is an exact multiple of
+the server's page size; otherwise it stops on the short final page.
 
 ## Task 5 — Rune-safe truncation (D4)
 
@@ -233,9 +254,12 @@ package). Test names and the behavior each must assert:
    the fence itself and it is strictly longer than any run in the input).
 4. `TestListFindingIssues_ServerCapsPageSize` — stub server that ignores
    `limit=50` and returns at most 3 issues per page across 7 total issues
-   (each with a distinct marker body), empty array past the last page. Assert
-   all 7 findings appear in the returned map. Model the stub on the existing
-   stub-server tests in `forgejo_test.go`.
+   (each with a distinct marker body), keyed off the `page` query param, with
+   an empty array past the last page. Assert all 7 findings appear in the
+   returned map. Model the stub on the existing stub-server tests in
+   `forgejo_test.go`. (Existing stubs that return a fixed non-empty list on
+   every request keep working unchanged: progress-based termination stops them
+   after the second page adds no new IDs — do **not** modify them.)
 5. `TestTruncate_RuneSafe` — `truncate("héllo", 2)` must return a valid UTF-8
    string (`utf8.ValidString`) that does not contain a broken `é`; also
    `truncate("abc", 3) == "abc"` (no ellipsis when nothing cut).

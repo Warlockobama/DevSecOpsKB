@@ -36,23 +36,39 @@ Do **not** run two workstreams in parallel in the same worktree.
    ```bash
    cd zap-kb
    go build ./...
-   go test ./...
-   gofmt -l .        # must print nothing
+   go test -timeout 150s ./...   # always pass -timeout so a hang fails fast, not after 600s
    go vet ./...
    ```
-3. **All four commands above must pass before you commit.** If a pre-existing
+   Run `go test` with an explicit `-timeout` (120–150s). A pagination/retry bug
+   can spin a loop that otherwise burns the full default 600s before failing.
+3. **gofmt gate — beware CRLF.** On a Windows checkout with
+   `git config core.autocrlf = true`, every `.go` file has CRLF line endings and
+   `gofmt -l .` lists *all* of them — this is a line-ending artifact, NOT a
+   formatting error, and CI (Linux, LF) is unaffected. Do **not** "fix" it by
+   reformatting or changing line endings. To check real formatting, compare
+   gofmt's output to each file ignoring CRLF, e.g. PowerShell:
+   ```powershell
+   Get-ChildItem internal\output\forgejo -Recurse -Filter *.go | ForEach-Object {
+     $raw = (Get-Content $_.FullName -Raw) -replace "`r`n","`n"
+     $fmt = (& gofmt $_.FullName) -join "`n"
+     if ($fmt.TrimEnd("`n") -ne $raw.TrimEnd("`n")) { $_.Name }  # prints only genuinely unformatted files
+   }
+   ```
+   Empty output = clean. On a Linux/LF checkout, plain `gofmt -l .` printing
+   nothing is the equivalent gate.
+5. **build, test, and vet must pass before you commit.** If a pre-existing
    test fails before you change anything, stop and report — do not "fix" it.
-4. **Commits**: one commit per workstream, DCO sign-off required:
+6. **Commits**: one commit per workstream, DCO sign-off required:
    `git commit -s -m "<message from the plan>"`.
-5. **Determinism**: outputs (issue bodies, wiki pages) must be deterministic —
+7. **Determinism**: outputs (issue bodies, wiki pages) must be deterministic —
    no timestamps, random ordering, or map-iteration ordering in rendered text.
    When iterating a map to produce output, sort keys first.
-6. **Do not refactor beyond the plan.** If you see adjacent code you think is
+8. **Do not refactor beyond the plan.** If you see adjacent code you think is
    wrong, note it in your final report; do not change it.
-7. **Style**: tabs for Go (EditorConfig), match the surrounding comment voice.
+9. **Style**: tabs for Go (EditorConfig), match the surrounding comment voice.
    The package already explains *why* in comments; keep that habit for new
    tricky code, skip comments that narrate *what*.
-8. **Never commit generated data** (`out/` dirs, test scratch dirs).
+10. **Never commit generated data** (`out/` dirs, test scratch dirs).
 
 ## Architecture you need (2-minute version)
 

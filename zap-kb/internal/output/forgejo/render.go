@@ -3,6 +3,7 @@ package forgejo
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
@@ -23,8 +24,9 @@ func issueTitle(f entities.Finding) string {
 	if name == "" {
 		name = strings.TrimSpace(f.FindingID)
 	}
+	name = sanitizeUntrusted(name)
 	if len(name) > 255 {
-		name = name[:252] + "..."
+		name = truncate(name, 252)
 	}
 	return name
 }
@@ -40,7 +42,7 @@ func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.
 		titleCase(f.Risk), titleCase(f.Confidence), f.Occurrences)
 
 	if u := strings.TrimSpace(f.URL); u != "" {
-		fmt.Fprintf(&b, "**URL:** %s\n", u)
+		fmt.Fprintf(&b, "**URL:** %s\n", sanitizeUntrusted(u))
 	}
 	if m := strings.TrimSpace(f.Method); m != "" {
 		fmt.Fprintf(&b, "**Method:** %s\n", m)
@@ -196,22 +198,22 @@ func taxRefsMarkdown(refs []entities.TaxonomyRef) string {
 func evidenceMarkdown(occ *entities.Occurrence) string {
 	var b strings.Builder
 	if p := strings.TrimSpace(occ.Param); p != "" {
-		fmt.Fprintf(&b, "- **Parameter:** `%s`\n", p)
+		fmt.Fprintf(&b, "- **Parameter:** %s\n", inlineCode(sanitizeUntrusted(p)))
 	}
 	if a := strings.TrimSpace(occ.Attack); a != "" {
-		fmt.Fprintf(&b, "- **Attack:** `%s`\n", truncate(a, 300))
+		fmt.Fprintf(&b, "- **Attack:** %s\n", inlineCode(sanitizeUntrusted(truncate(a, 300))))
 	}
 	if e := strings.TrimSpace(occ.Evidence); e != "" {
-		b.WriteString("\n**Evidence snippet:**\n\n")
-		fmt.Fprintf(&b, "```\n%s\n```\n", truncate(e, 1000))
+		b.WriteString("\n**Evidence snippet:**\n")
+		writeFencedBlock(&b, "", sanitizeUntrusted(truncate(e, 1000)))
 	}
 	if occ.Request != nil && strings.TrimSpace(occ.Request.RawHeader) != "" {
-		b.WriteString("\n**Request:**\n\n")
-		fmt.Fprintf(&b, "```http\n%s\n```\n", truncate(occ.Request.RawHeader, 2000))
+		b.WriteString("\n**Request:**\n")
+		writeFencedBlock(&b, "http", sanitizeUntrusted(truncate(occ.Request.RawHeader, 2000)))
 	}
 	if occ.Response != nil && strings.TrimSpace(occ.Response.RawHeader) != "" {
-		b.WriteString("\n**Response:**\n\n")
-		fmt.Fprintf(&b, "```http\n%s\n```\n", truncate(occ.Response.RawHeader, 2000))
+		b.WriteString("\n**Response:**\n")
+		writeFencedBlock(&b, "http", sanitizeUntrusted(truncate(occ.Response.RawHeader, 2000)))
 	}
 	return b.String()
 }
@@ -224,11 +226,61 @@ func titleCase(s string) string {
 	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 }
 
+// truncate shortens s to at most n bytes without splitting a UTF-8 sequence,
+// appending an ellipsis when anything was cut.
 func truncate(s string, n int) string {
 	if n <= 0 || len(s) <= n {
 		return s
 	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
 	return s[:n] + "…"
+}
+
+// sanitizeUntrusted neutralizes HTML-comment openers in site-controlled text
+// so a scanned target can never smuggle a forged dedup marker (or any HTML
+// comment) into an issue body. Breaking "<!--" into "<!- -" destroys comment
+// syntax while keeping the snippet readable.
+func sanitizeUntrusted(s string) string {
+	return strings.ReplaceAll(s, "<!--", "<!- -")
+}
+
+// writeFencedBlock writes content as a fenced code block whose fence is longer
+// than any backtick run inside the content, so site-controlled snippets can
+// never terminate the fence early and inject markdown into the issue body
+// (CommonMark: a fence only closes on a run at least as long as the opener).
+func writeFencedBlock(b *strings.Builder, lang, content string) {
+	fenceLen := 3
+	run := 0
+	for _, r := range content {
+		if r == '`' {
+			run++
+			if run >= fenceLen {
+				fenceLen = run + 1
+			}
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", fenceLen)
+	b.WriteString("\n")
+	b.WriteString(fence)
+	b.WriteString(lang)
+	b.WriteString("\n")
+	b.WriteString(content)
+	b.WriteString("\n")
+	b.WriteString(fence)
+	b.WriteString("\n")
+}
+
+// inlineCode renders s as inline code, or plain text when s itself contains a
+// backtick (which would terminate the span early).
+func inlineCode(s string) string {
+	if strings.Contains(s, "`") {
+		return s
+	}
+	return "`" + s + "`"
 }
 
 func trimmedNonEmpty(vals []string) []string {

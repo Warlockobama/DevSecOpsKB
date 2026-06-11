@@ -244,6 +244,7 @@ type issueInfo struct {
 // The label stays attached for humans; correctness rides on the marker only.
 func (c *client) listFindingIssues(ctx context.Context) (map[string][]issueInfo, error) {
 	out := make(map[string][]issueInfo)
+	seen := make(map[int64]bool)
 	page := 1
 	for {
 		q := url.Values{}
@@ -269,15 +270,30 @@ func (c *client) listFindingIssues(ctx context.Context) (map[string][]issueInfo,
 			return nil, fmt.Errorf("decode issues: %w", err)
 		}
 		resp.Body.Close()
+		// Progress-based termination: stop when a page adds no issue numbers we
+		// have not already seen. This is robust both to servers that cap `limit`
+		// below our requested 50 (a "full" page can be short — the old
+		// len<50 break would stop early and blind the dedup index) and to
+		// servers that ignore `page` entirely (which would otherwise loop
+		// forever). Dedup is keyed on the issue number.
+		added := 0
 		for _, iss := range batch {
+			if seen[iss.Number] {
+				continue
+			}
+			seen[iss.Number] = true
+			added++
 			if fid := markerFindingID(iss.Body); fid != "" {
 				out[fid] = append(out[fid], issueInfo{Number: iss.Number, State: strings.ToLower(iss.State)})
 			}
 		}
-		if len(batch) < 50 {
+		if added == 0 {
 			break
 		}
 		page++
+		if page > 1000 {
+			return nil, fmt.Errorf("forgejo: issue pagination exceeded 1000 pages — aborting (server ignoring page param?)")
+		}
 	}
 	for fid := range out {
 		sort.Slice(out[fid], func(i, j int) bool { return out[fid][i].Number < out[fid][j].Number })
@@ -331,10 +347,14 @@ func (c *client) closeIssue(ctx context.Context, number int64) error {
 }
 
 // markerFindingID extracts the findingID from a body's hidden marker, or "".
+// The LAST marker wins: the sink appends the genuine marker at the very end of
+// every body it writes, after the Evidence section. Evidence is content
+// controlled by the scanned site, so an earlier (forged) marker embedded in a
+// response snippet must never shadow the real one.
 func markerFindingID(body string) string {
 	const open = "<!-- devsecopskb-finding:"
 	const closeTok = "-->"
-	idx := strings.Index(body, open)
+	idx := strings.LastIndex(body, open)
 	if idx < 0 {
 		return ""
 	}

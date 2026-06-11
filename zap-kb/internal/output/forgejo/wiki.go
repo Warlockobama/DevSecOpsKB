@@ -253,15 +253,26 @@ func (c *client) listWikiPages(ctx context.Context) (map[string]string, error) {
 			return nil, fmt.Errorf("decode wiki pages: %w", err)
 		}
 		resp.Body.Close()
+		// Progress-based termination (see listFindingIssues): stop when a page
+		// adds no page titles we have not already seen. Robust to servers that
+		// cap `limit` below 50 and to servers that ignore `page`.
+		added := 0
 		for _, p := range batch {
-			if p.Title != "" && p.SubURL != "" {
-				out[p.Title] = p.SubURL
+			if p.Title == "" || p.SubURL == "" {
+				continue
 			}
+			if _, ok := out[p.Title]; !ok {
+				added++
+			}
+			out[p.Title] = p.SubURL
 		}
-		if len(batch) < 50 {
+		if added == 0 {
 			return out, nil
 		}
 		page++
+		if page > 1000 {
+			return nil, fmt.Errorf("forgejo: wiki-page pagination exceeded 1000 pages — aborting (server ignoring page param?)")
+		}
 	}
 }
 
