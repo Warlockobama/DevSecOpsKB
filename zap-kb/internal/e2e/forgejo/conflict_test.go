@@ -17,12 +17,16 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 )
 
-// A5: issues are create-only — when a finding's evidence changes after the
-// issue exists, re-publish skips it and the issue body goes stale. This test
-// PINS the current (known, accepted-for-now) drift behavior; if someone adds
-// issue reconciliation later, this test flips and must be updated consciously.
-// Follow-up tracking: content updates would need a PATCH path in issues.go.
-func TestIssueContentFreezesAfterCreate(t *testing.T) {
+// A5 (updated): issue bodies are machine-owned and RECONCILE on re-publish.
+// When a finding's evidence changes after its issue exists, the next export
+// refreshes the issue body (a single PATCH on the existing issue — no
+// duplicate, no new issue) rather than freezing the content at create time.
+//
+// This flips the original pin-test, which documented the old create-only
+// "content freezes" drift and explicitly said to update it consciously once
+// reconciliation was added. The issue-lifecycle work added that PATCH path
+// (Summary.BodiesUpdated), so the assertion now pins the reconciling behavior.
+func TestIssueBodyRefreshesOnReexport(t *testing.T) {
 	env := harness.FromEnv(t)
 	repo := env.CreateRepo(t, true)
 	opts := forgejo.Options{BaseURL: env.BaseURL, Token: env.Token, Owner: env.Owner, Repo: repo, MinRisk: "medium"}
@@ -41,19 +45,18 @@ func TestIssueContentFreezesAfterCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second export: %v", err)
 	}
-	if sum.Created != 0 || sum.Skipped != 1 {
-		t.Fatalf("second export created=%d skipped=%d, want 0/1", sum.Created, sum.Skipped)
+	if sum.Created != 0 || sum.BodiesUpdated != 1 || sum.Skipped != 0 {
+		t.Fatalf("second export created=%d bodiesUpdated=%d skipped=%d, want 0/1/0 (body refresh)",
+			sum.Created, sum.BodiesUpdated, sum.Skipped)
 	}
 
 	issues := env.ListIssues(t, repo)
 	if len(issues) != 1 {
-		t.Fatalf("%d issues, want 1", len(issues))
+		t.Fatalf("%d issues, want 1 (refresh must reuse the existing issue, not duplicate)", len(issues))
 	}
 	body := issues[0].Body
-	if !strings.Contains(body, "evidence-v1") || strings.Contains(body, "evidence-v2-ESCALATED") {
-		t.Errorf("behavior changed: issue body no longer freezes at creation (found v2 content or lost v1). If reconciliation was added intentionally, update this pin-test.")
-	} else {
-		t.Logf("A5 documented: issue content frozen at create time; KB-side evidence changes do not reconcile (accepted drift, candidate follow-up)")
+	if !strings.Contains(body, "evidence-v2-ESCALATED") || strings.Contains(body, "evidence-v1") {
+		t.Errorf("issue body did not reconcile to v2 evidence: %q", body)
 	}
 }
 
