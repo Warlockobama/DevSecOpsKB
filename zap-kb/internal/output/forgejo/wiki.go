@@ -27,6 +27,7 @@ type WikiOptions struct {
 	Timeout       time.Duration
 	RequestDelay  time.Duration
 	CommitMessage string // default "DevSecOpsKB publish"
+	Prune         bool   // delete KB-owned entity pages absent from this publish
 }
 
 // WikiSummary reports what the wiki export did.
@@ -35,6 +36,7 @@ type WikiSummary struct {
 	Updated int
 	Skipped int
 	Errors  int
+	Pruned  int
 }
 
 // topLevelWikiPages maps known vault files to friendly wiki page names. INDEX.md
@@ -96,16 +98,21 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 	}
 
-	// Collect (pageName → file path) for every page to publish.
+	// Collect (pageName → file path) for every page to publish. pageNames maps
+	// each vault-relative file path to its published wiki page name, so internal
+	// links (which target FILE names) can be rewritten to PAGE names below.
 	type page struct {
-		name string
-		path string
+		name   string
+		path   string
+		relDir string // file's dir relative to vaultRoot ("." for top-level)
 	}
 	var pages []page
+	pageNames := make(map[string]string)
 	for _, tp := range topLevelWikiPages {
 		p := filepath.Join(vaultRoot, tp.file)
 		if _, err := os.Stat(p); err == nil {
-			pages = append(pages, page{name: tp.page, path: p})
+			pages = append(pages, page{name: tp.page, path: p, relDir: "."})
+			pageNames[tp.file] = tp.page
 		}
 	}
 	for _, sub := range wikiSubdirs {
@@ -119,10 +126,18 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 				continue
 			}
 			name := titleCaseWord(sub) + "/" + strings.TrimSuffix(e.Name(), ".md")
-			pages = append(pages, page{name: name, path: filepath.Join(dir, e.Name())})
+			pages = append(pages, page{name: name, path: filepath.Join(dir, e.Name()), relDir: sub})
+			pageNames[sub+"/"+e.Name()] = name
 		}
 	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].name < pages[j].name })
+
+	// Snapshot the set of page names published this run BEFORE the canary
+	// consumes pages[0] — used by the prune pass to spare current pages.
+	publishedNames := make(map[string]bool, len(pages))
+	for _, p := range pages {
+		publishedNames[p.name] = true
+	}
 
 	if opts.DryRun {
 		fmt.Printf("[forgejo wiki] dry-run: would upsert %d page(s)\n", len(pages))
@@ -162,6 +177,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			summary.Errors++
 			fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
 		} else {
+			content = rewriteVaultLinks(content, p.relDir, pageNames)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
 			switch {
 			case isWikiBranchBug(err):
@@ -194,6 +210,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 				fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
 				return
 			}
+			content = rewriteVaultLinks(content, p.relDir, pageNames)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
 			mu.Lock()
 			defer mu.Unlock()
@@ -211,7 +228,52 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}(p)
 	}
 	wg.Wait()
+
+	// Prune stale KB-owned entity pages. Only the three entity prefixes are
+	// KB-managed by convention; Home and any analyst-authored page are never
+	// touched. Candidates come from the pre-publish listing (pages created this
+	// run are current by definition). Sorted for deterministic output.
+	if opts.Prune {
+		var stale []string
+		for title := range existing {
+			if !publishedNames[title] && isEntityWikiPage(title) {
+				stale = append(stale, title)
+			}
+		}
+		sort.Strings(stale)
+		for _, title := range stale {
+			if derr := c.deleteWikiPage(ctx, existing[title]); derr != nil {
+				summary.Errors++
+				fmt.Printf("[forgejo wiki] error pruning %q: %v\n", title, derr)
+				continue
+			}
+			summary.Pruned++
+			fmt.Printf("[forgejo wiki] pruned stale page %q\n", title)
+		}
+	}
 	return summary, nil
+}
+
+// isEntityWikiPage reports whether a wiki page title is one of the KB-owned
+// entity pages (safe to prune). Matches the wikiSubdirs hierarchy prefixes.
+func isEntityWikiPage(title string) bool {
+	return strings.HasPrefix(title, "Definitions/") ||
+		strings.HasPrefix(title, "Findings/") ||
+		strings.HasPrefix(title, "Occurrences/")
+}
+
+// deleteWikiPage removes a wiki page via its server-issued sub_url.
+func (c *client) deleteWikiPage(ctx context.Context, subURL string) error {
+	req, err := c.newRequest(ctx, http.MethodDelete, c.repoAPI()+"/wiki/page/"+subURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	if err != nil {
+		return err
+	}
+	drain(resp)
+	return nil
 }
 
 // wikiBranchBugAdvice is the operator guidance attached to the hard error for

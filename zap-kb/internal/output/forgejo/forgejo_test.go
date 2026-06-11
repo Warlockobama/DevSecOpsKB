@@ -546,3 +546,106 @@ func TestEnsureLabelsCanonicalizesDuplicateNames(t *testing.T) {
 		t.Fatalf("deleted labels = %v, want exactly [9] (our duplicate)", deleted)
 	}
 }
+
+// WS04: internal vault links must be rewritten from file names to published
+// wiki page names, or every cross-link 404s on the live wiki.
+func TestExportWiki_RewritesLinks(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("see [Triage board](triage-board.md)"), 0o644)
+	os.WriteFile(filepath.Join(vault, "triage-board.md"), []byte("# Triage"), 0o644)
+
+	var homeContent string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true, "wiki_branch": "main"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wiki/new"):
+			body, _ := io.ReadAll(r.Body)
+			var p map[string]string
+			json.Unmarshal(body, &p)
+			if p["title"] == "Home" {
+				dec, _ := base64.StdEncoding.DecodeString(p["content_base64"])
+				mu.Lock()
+				homeContent = string(dec)
+				mu.Unlock()
+			}
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte("{}"))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"}); err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(homeContent, "](Triage%20Board)") {
+		t.Fatalf("link not rewritten to page name; Home content = %q", homeContent)
+	}
+	if strings.Contains(homeContent, "](triage-board.md)") {
+		t.Fatalf("stale file-name link survived; Home content = %q", homeContent)
+	}
+}
+
+// WS04: with -forgejo-wiki-prune, KB-owned entity pages absent from the publish
+// are deleted; non-entity pages (Home) are never touched.
+func TestExportWiki_PruneDeletesStaleEntityPages(t *testing.T) {
+	run := func(prune bool) []string {
+		vault := t.TempDir()
+		os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("# Home"), 0o644)
+
+		var deleted []string
+		var mu sync.Mutex
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+				json.NewEncoder(w).Encode(map[string]any{"has_wiki": true, "wiki_branch": "main"})
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+				json.NewEncoder(w).Encode([]map[string]any{
+					{"title": "Home", "sub_url": "Home"},
+					{"title": "Findings/fin-old", "sub_url": "Findings%2Ffin-old"},
+				})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/wiki/page/"):
+				// Home already exists with identical content → skipped.
+				json.NewEncoder(w).Encode(map[string]string{
+					"content_base64": base64.StdEncoding.EncodeToString([]byte("# Home")),
+				})
+			case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/wiki/page/"):
+				// Use RequestURI so the still-escaped sub_url (%2F) is preserved;
+				// r.URL.Path decodes %2F to '/'.
+				mu.Lock()
+				deleted = append(deleted, r.RequestURI[strings.LastIndex(r.RequestURI, "/")+1:])
+				mu.Unlock()
+				w.Write([]byte("{}"))
+			default:
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}))
+		defer srv.Close()
+
+		sum, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb", Prune: prune})
+		if err != nil {
+			t.Fatalf("ExportWiki: %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if prune && sum.Pruned != len(deleted) {
+			t.Fatalf("Pruned=%d but %d deletes", sum.Pruned, len(deleted))
+		}
+		return append([]string(nil), deleted...)
+	}
+
+	if got := run(true); len(got) != 1 || got[0] != "Findings%2Ffin-old" {
+		t.Fatalf("prune=true deleted = %v, want exactly [Findings%%2Ffin-old]", got)
+	}
+	if got := run(false); len(got) != 0 {
+		t.Fatalf("prune=false deleted = %v, want none", got)
+	}
+}

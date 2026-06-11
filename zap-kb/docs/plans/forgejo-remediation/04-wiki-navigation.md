@@ -88,15 +88,22 @@ func rewriteVaultLinks(content, relDir string, pageNames map[string]string) stri
 		if target == "" || strings.Contains(target, "://") {
 			return "", false
 		}
-		clean := path.Clean(path.Join(relDir, target))
-		name, ok := pageNames[clean]
-		if !ok && !strings.HasSuffix(clean, ".md") {
-			name, ok = pageNames[clean+".md"] // wikilinks may omit the extension
+		// Vault links come in two flavors: vault-root-relative (Obsidian
+		// wikilinks like "findings/fin-1.md" — obsidian.go emits these with the
+		// leading dirs already collapsed via filepath.Join) and file-relative
+		// (standard md links like "../INDEX.md"). Try root-relative first, then
+		// relative to the linking file's dir; accept whichever names a page.
+		for _, cand := range []string{path.Clean(target), path.Clean(path.Join(relDir, target))} {
+			if name, ok := pageNames[cand]; ok {
+				return url.PathEscape(name), true
+			}
+			if !strings.HasSuffix(cand, ".md") {
+				if name, ok := pageNames[cand+".md"]; ok { // wikilinks may omit .md
+					return url.PathEscape(name), true
+				}
+			}
 		}
-		if !ok {
-			return "", false
-		}
-		return url.PathEscape(name), true
+		return "", false
 	}
 
 	out := wikilinkRe.ReplaceAllStringFunc(content, func(m string) string {
@@ -199,7 +206,7 @@ File: `internal/output/forgejo/wikilinks_test.go` (new):
    |---|---|---|
    | `[Triage board](triage-board.md)` | `.` | `[Triage board](Triage%20Board)` |
    | `[[definitions/def-1.md\|XSS]]` | `.` | `[XSS](Definitions%2Fdef-1)` |
-   | `[[occurrences/../findings/fin-1.md\|fin-1]]` | `occurrences` | `[fin-1](Findings%2Ffin-1)` |
+   | `[[findings/fin-1.md\|fin-1]]` (root-relative, as obsidian.go emits) | `occurrences` | `[fin-1](Findings%2Ffin-1)` |
    | `[[../INDEX.md#issues\|see full list]]` | `findings` | `[see full list](Home#issues)` |
    | `[[tuning-candidates\|Tuning Candidates]]` | `.` | `[Tuning Candidates](Tuning%20Candidates)` |
    | `[[findings/fin-1.md]]` | `.` | `[fin-1](Findings%2Ffin-1)` |
@@ -219,7 +226,10 @@ wiki stub-server pattern):
    pages `Findings/fin-old` and `Home`; vault publishes only `INDEX.md`.
    With `Prune: true` assert exactly one DELETE (for `Findings/fin-old`'s
    sub_url), `Pruned == 1`, and no DELETE for `Home`. With `Prune: false`
-   assert zero DELETEs.
+   assert zero DELETEs. NOTE: read the deleted sub_url from `r.RequestURI`, not
+   `r.URL.Path` — net/http decodes the `%2F` in the escaped sub_url back to `/`
+   on `r.URL.Path`, so the last path segment would read `fin-old` instead of
+   `Findings%2Ffin-old`.
 
 ## Live-server caveat (record, don't solve)
 

@@ -37,6 +37,7 @@ type forgejoPublishOptions struct {
 	DryRun       bool
 	SyncKBStatus bool
 	Wiki         bool
+	WikiPrune    bool
 	Redact       string // redaction list for published content; "off"/"none" disables
 
 	// Vault / persistence context.
@@ -218,12 +219,13 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			Owner:       opts.Owner,
 			Repo:        opts.Repo,
 			Concurrency: opts.Concurrency,
+			Prune:       opts.WikiPrune,
 		})
 		if werr != nil {
 			log.Printf("error: forgejo wiki export failed: %v", werr)
 			failures++
 		} else {
-			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d errors=%d\n", wsum.Created, wsum.Updated, wsum.Skipped, wsum.Errors)
+			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d pruned=%d errors=%d\n", wsum.Created, wsum.Updated, wsum.Skipped, wsum.Pruned, wsum.Errors)
 			failures += wsum.Errors
 		}
 	}

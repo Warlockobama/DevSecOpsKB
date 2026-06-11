@@ -109,6 +109,7 @@ func main() {
 		forgejoDryRun       bool
 		forgejoSyncKBStatus bool
 		forgejoWiki         bool
+		forgejoWikiPrune    bool
 		forgejoRedact       string
 		allowAgentPublish   bool
 		allowCustomPublish  bool
@@ -199,6 +200,7 @@ func main() {
 	flag.BoolVar(&forgejoDryRun, "forgejo-dry-run", false, "Dry-run Forgejo export (log instead of POST).")
 	flag.BoolVar(&forgejoSyncKBStatus, "forgejo-sync-kb-status", false, "Write mapped Forgejo issue state/labels back into KB analyst status. By default Forgejo is the workflow source of truth and KB state is not mutated.")
 	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
+	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
 	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes; 'off' disables. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
@@ -873,6 +875,7 @@ func main() {
 			DryRun:        forgejoDryRun,
 			SyncKBStatus:  forgejoSyncKBStatus,
 			Wiki:          forgejoWiki,
+			WikiPrune:     forgejoWikiPrune,
 			Redact:        forgejoRedact,
 			Format:        format,
 			Vault:         vault,
