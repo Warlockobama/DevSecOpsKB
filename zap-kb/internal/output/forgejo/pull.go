@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -87,64 +88,59 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 		mapped string
 		raw    string
 		found  bool
+		err    error
 	}
-	statusCache := make(map[int64]cached)
+
+	// Fetch each DISTINCT issue number exactly once. Multiple findings and
+	// occurrences can carry the same ticket ref; the previous per-goroutine
+	// cache check raced (every goroutine missed the empty cache before any had
+	// populated it) and re-fetched the same issue N times.
+	uniq := make(map[int64]struct{}, len(refs))
+	for _, ref := range refs {
+		uniq[ref.number] = struct{}{}
+	}
+	numbers := make([]int64, 0, len(uniq))
+	for n := range uniq {
+		numbers = append(numbers, n)
+	}
+	sort.Slice(numbers, func(i, j int) bool { return numbers[i] < numbers[j] })
+
+	statusCache := make(map[int64]cached, len(numbers))
 	var cacheMu sync.Mutex
 	const concurrency = 3
 	sem := make(chan struct{}, concurrency)
-
-	type refResult struct {
-		ref    ticketRef
-		mapped string
-		raw    string
-		found  bool
-		err    error
-	}
-	results := make([]refResult, len(refs))
 	var wg sync.WaitGroup
-	for i, ref := range refs {
+	for _, n := range numbers {
 		wg.Add(1)
-		go func(i int, ref ticketRef) {
+		go func(n int64) {
 			defer wg.Done()
-			cacheMu.Lock()
-			if hit, ok := statusCache[ref.number]; ok {
-				cacheMu.Unlock()
-				results[i] = refResult{ref: ref, mapped: hit.mapped, raw: hit.raw, found: hit.found}
-				return
-			}
-			cacheMu.Unlock()
-
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			mapped, raw, found, err := c.fetchIssueStatus(ctx, ref.number)
-			if err != nil {
-				results[i] = refResult{ref: ref, err: err}
-				return
-			}
+			mapped, raw, found, err := c.fetchIssueStatus(ctx, n)
 			cacheMu.Lock()
-			statusCache[ref.number] = cached{mapped: mapped, raw: raw, found: found}
+			statusCache[n] = cached{mapped: mapped, raw: raw, found: found, err: err}
 			cacheMu.Unlock()
-			results[i] = refResult{ref: ref, mapped: mapped, raw: raw, found: found}
-		}(i, ref)
+		}(n)
 	}
 	wg.Wait()
 
 	var res PullResult
 	rawStatuses := make(map[string]string)
-	for _, r := range results {
-		if r.err != nil {
-			fmt.Printf("[forgejo pull] warning: #%d: %v\n", r.ref.number, r.err)
+	for _, ref := range refs {
+		hit := statusCache[ref.number]
+		if hit.err != nil {
+			fmt.Printf("[forgejo pull] warning: #%d: %v\n", ref.number, hit.err)
 			res.Errors++
 			continue
 		}
-		if !r.found {
+		if !hit.found {
 			res.NotFound++
 			continue
 		}
-		if r.raw != "" {
-			rawStatuses[c.issueRef(r.ref.number)] = r.raw
+		if hit.raw != "" {
+			rawStatuses[c.issueRef(ref.number)] = hit.raw
 		}
-		if r.mapped == "" {
+		if hit.mapped == "" {
 			res.Unmapped++
 			continue
 		}
@@ -152,27 +148,27 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			res.Unchanged++
 			continue
 		}
-		switch r.ref.kind {
+		switch ref.kind {
 		case "finding":
-			f := &ef.Findings[r.ref.idx]
+			f := &ef.Findings[ref.idx]
 			if f.Analyst == nil {
 				f.Analyst = &entities.Analyst{}
 			}
-			if f.Analyst.Status == r.mapped {
+			if f.Analyst.Status == hit.mapped {
 				res.Unchanged++
 			} else {
-				f.Analyst.Status = r.mapped
+				f.Analyst.Status = hit.mapped
 				res.Updated++
 			}
 		case "occurrence":
-			o := &ef.Occurrences[r.ref.idx]
+			o := &ef.Occurrences[ref.idx]
 			if o.Analyst == nil {
 				o.Analyst = &entities.Analyst{}
 			}
-			if o.Analyst.Status == r.mapped {
+			if o.Analyst.Status == hit.mapped {
 				res.Unchanged++
 			} else {
-				o.Analyst.Status = r.mapped
+				o.Analyst.Status = hit.mapped
 				res.Updated++
 			}
 		}
@@ -221,23 +217,34 @@ func (c *client) fetchIssueStatus(ctx context.Context, number int64) (string, st
 	return mapForgejoStatus(issue.State, labels), strings.TrimSpace(issue.State), true, nil
 }
 
+// ExtractIssueNumber reports whether ref denotes an issue of the repo
+// identified by repoPrefix ("owner/repo"), and its number. See
+// extractIssueNumber for the accepted forms.
+func ExtractIssueNumber(ref, repoPrefix string) (int64, bool) {
+	return extractIssueNumber(ref, repoPrefix)
+}
+
 // extractIssueNumber parses a Forgejo issue ref into its number. Accepts the
 // canonical "owner/repo#42" form (matching repoPrefix), a bare "#42", a bare
-// "42", or a browse URL ending in "/issues/42". Returns ok=false for refs that
-// don't belong to this repo (e.g. Jira keys) so cross-tracker KBs stay clean.
+// "42", or a browse URL ".../<owner>/<repo>/issues/42". Both the owner/repo#N
+// and the URL forms must name THIS repo (repoPrefix); refs for other repos or
+// other trackers (Jira keys, a pasted GitHub link) return ok=false so a
+// cross-tracker KB stays clean.
 func extractIssueNumber(ref, repoPrefix string) (int64, bool) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return 0, false
 	}
-	// Browse URL form: .../issues/42
-	if strings.Contains(ref, "/issues/") {
-		seg := ref[strings.LastIndex(ref, "/issues/")+len("/issues/"):]
-		seg = strings.TrimRight(seg, "/")
-		if n, ok := parsePositiveInt(seg); ok {
-			return n, true
+	// Browse URL form: …/<owner>/<repo>/issues/42 — only accepted when
+	// <owner>/<repo> matches this repo, so a URL pasted from another tracker
+	// is never misread as a local issue number.
+	if i := strings.LastIndex(ref, "/issues/"); i >= 0 {
+		head := strings.TrimRight(ref[:i], "/")
+		if !strings.HasSuffix(strings.ToLower(head), "/"+strings.ToLower(repoPrefix)) {
+			return 0, false
 		}
-		return 0, false
+		seg := strings.TrimRight(ref[i+len("/issues/"):], "/")
+		return parsePositiveInt(seg)
 	}
 	// owner/repo#42 form.
 	if i := strings.Index(ref, "#"); i >= 0 {

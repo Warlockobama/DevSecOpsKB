@@ -80,3 +80,42 @@ func TestRedactedCopyScrubsWithoutMutatingOriginal(t *testing.T) {
 		t.Errorf("findingID changed in copy: %q", cp.Findings[0].FindingID)
 	}
 }
+
+func TestMergeForgejoTicketRefs_ReplacesStaleSameRepoRef(t *testing.T) {
+	ent := &entities.EntitiesFile{
+		Findings: []entities.Finding{{
+			FindingID: "F",
+			Analyst:   &entities.Analyst{TicketRefs: []string{"owner/repo#5", "SEC-123"}},
+		}},
+	}
+	changed := mergeForgejoTicketRefs(ent, map[string]string{"F": "owner/repo#3"}, "owner/repo")
+	if changed != 1 {
+		t.Fatalf("changed=%d, want 1", changed)
+	}
+	got := ent.Findings[0].Analyst.TicketRefs
+	want := []string{"SEC-123", "owner/repo#3"}
+	if len(got) != len(want) {
+		t.Fatalf("refs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("refs = %v, want %v (foreign ref kept, stale same-repo ref replaced)", got, want)
+		}
+	}
+}
+
+func TestMergeForgejoTicketRefs_NoChangeWhenRefAlreadyCurrent(t *testing.T) {
+	ent := &entities.EntitiesFile{
+		Findings: []entities.Finding{{
+			FindingID: "F",
+			Analyst:   &entities.Analyst{TicketRefs: []string{"owner/repo#3"}},
+		}},
+	}
+	changed := mergeForgejoTicketRefs(ent, map[string]string{"F": "owner/repo#3"}, "owner/repo")
+	if changed != 0 {
+		t.Fatalf("changed=%d, want 0", changed)
+	}
+	if got := ent.Findings[0].Analyst.TicketRefs; len(got) != 1 || got[0] != "owner/repo#3" {
+		t.Fatalf("refs = %v, want [owner/repo#3] unchanged", got)
+	}
+}

@@ -137,7 +137,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 
 	addedTicketKeys := 0
 	if !opts.DryRun && len(sum.TicketRefs) > 0 {
-		addedTicketKeys = mergeFindingTicketKeys(ent, sum.TicketRefs)
+		addedTicketKeys = mergeForgejoTicketRefs(ent, sum.TicketRefs, opts.Owner+"/"+opts.Repo)
 	}
 
 	// Pull issue state back. By default this is read-only (Forgejo is the
@@ -228,4 +228,56 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		}
 	}
 	return failures
+}
+
+// mergeForgejoTicketRefs records this run's findingID→issueRef map on the
+// findings. Unlike the generic append-only Jira merge, any existing ref that
+// parses as an issue of the SAME Forgejo repo but differs from the new ref is
+// removed first: the new ref is always the reconcile winner, and a stale ref
+// left pointing at a closed duplicate would make the next status pull mark the
+// finding "fixed" while the winning issue is still open. Refs belonging to
+// other trackers (Jira keys, other repos) are preserved untouched. Returns the
+// number of findings whose refs changed.
+func mergeForgejoTicketRefs(ent *entities.EntitiesFile, ticketRefs map[string]string, repoPrefix string) int {
+	if ent == nil || len(ticketRefs) == 0 {
+		return 0
+	}
+	changed := 0
+	for i := range ent.Findings {
+		ref := strings.TrimSpace(ticketRefs[ent.Findings[i].FindingID])
+		if ref == "" {
+			continue
+		}
+		if ent.Findings[i].Analyst == nil {
+			ent.Findings[i].Analyst = &entities.Analyst{}
+		}
+		old := ent.Findings[i].Analyst.TicketRefs
+		kept := make([]string, 0, len(old)+1)
+		present := false
+		mutated := false
+		for _, existing := range old {
+			if existing == ref {
+				kept = append(kept, existing)
+				present = true
+				continue
+			}
+			if _, ok := forgejo.ExtractIssueNumber(existing, repoPrefix); ok {
+				// Some other ref into this repo — a stale duplicate (different
+				// number) or a different spelling of the same issue; the
+				// canonical new ref replaces it either way.
+				mutated = true
+				continue
+			}
+			kept = append(kept, existing) // foreign tracker ref — preserve
+		}
+		if !present {
+			kept = append(kept, ref)
+			mutated = true
+		}
+		ent.Findings[i].Analyst.TicketRefs = kept
+		if mutated {
+			changed++
+		}
+	}
+	return changed
 }
