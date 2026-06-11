@@ -2,6 +2,7 @@ package forgejo
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -33,9 +34,13 @@ func issueTitle(f entities.Finding) string {
 
 // buildIssueBody renders the markdown body for a finding's issue. When occ is
 // non-nil its attack/evidence/request/response are rendered as an Evidence
-// section so reviewers see raw scanner output in the ticket. The hidden finding
-// marker is appended last for dedup.
-func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.Occurrence) string {
+// section so reviewers see raw scanner output in the ticket. When wikiURLBase
+// is non-empty a link to the KB wiki definition page is appended. The hidden
+// finding marker is appended last for dedup.
+//
+// The body is machine-owned: the sink may overwrite it on any run to refresh
+// evidence/occurrence counts. Analyst commentary belongs in comments/labels.
+func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.Occurrence, wikiURLBase string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "**Risk:** %s  |  **Confidence:** %s  |  **Occurrences:** %d\n\n",
@@ -49,6 +54,12 @@ func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.
 	}
 	b.WriteString("\n")
 
+	if def != nil && strings.TrimSpace(def.Description) != "" {
+		b.WriteString("## Description\n\n")
+		b.WriteString(sanitizeUntrusted(truncate(strings.TrimSpace(def.Description), 1500)))
+		b.WriteString("\n\n")
+	}
+
 	if def != nil {
 		if def.Remediation != nil && strings.TrimSpace(def.Remediation.Summary) != "" {
 			b.WriteString("## Remediation\n\n")
@@ -59,6 +70,11 @@ func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.
 			b.WriteString("## Security classification\n\n")
 			b.WriteString(class)
 			b.WriteString("\n")
+		}
+		if strings.TrimSpace(wikiURLBase) != "" {
+			page := "Definitions/" + def.DefinitionID
+			fmt.Fprintf(&b, "**KB reference:** [%s](%s/%s)\n\n", page,
+				strings.TrimRight(wikiURLBase, "/"), url.PathEscape(page))
 		}
 	}
 

@@ -39,7 +39,7 @@ func TestMarkerFindingID_LastMarkerWins(t *testing.T) {
 func TestBuildIssueBody_ForgedMarkerInEvidenceNeutralized(t *testing.T) {
 	f := entities.Finding{FindingID: "real", Risk: "High", Confidence: "High", Occurrences: 1}
 	occ := &entities.Occurrence{Evidence: "<!-- devsecopskb-finding:forged -->"}
-	body := buildIssueBody(f, nil, occ)
+	body := buildIssueBody(f, nil, occ, "")
 	if got := markerFindingID(body); got != "real" {
 		t.Fatalf("marker = %q, want real — forged evidence marker must not shadow it", got)
 	}

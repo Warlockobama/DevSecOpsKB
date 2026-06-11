@@ -107,6 +107,13 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		pubEnt = cp
 	}
 
+	// Link issues to the KB wiki definition page only when the wiki is being
+	// published this run, so issues never point at a wiki that does not exist.
+	wikiURLBase := ""
+	if opts.Wiki {
+		wikiURLBase = fmt.Sprintf("%s/%s/%s/wiki", strings.TrimRight(opts.BaseURL, "/"), opts.Owner, opts.Repo)
+	}
+
 	exCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	sum, err := forgejo.Export(exCtx, pubEnt, forgejo.Options{
@@ -119,11 +126,13 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		OptInTag:    opts.OptInTag,
 		DryRun:      opts.DryRun,
 		Concurrency: opts.Concurrency,
+		WikiURLBase: wikiURLBase,
 	})
 	if err != nil {
 		log.Fatalf("forgejo export: %v", err)
 	}
-	fmt.Printf("Forgejo: created=%d skipped=%d errors=%d duplicates_closed=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
+	fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
+		sum.Created, sum.Reopened, sum.BodiesUpdated, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
 	failures += sum.Errors
 
 	addedTicketKeys := 0

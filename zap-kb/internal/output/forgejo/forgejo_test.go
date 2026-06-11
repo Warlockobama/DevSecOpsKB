@@ -101,6 +101,42 @@ func sampleEntities() entities.EntitiesFile {
 	}
 }
 
+// canonicalBody renders the exact issue body Export would write for the named
+// finding (mirroring its def + latest-occurrence selection), so dedup-index
+// stubs can store a body that Export sees as already current — letting the
+// body-refresh path skip rather than PATCH.
+func canonicalBody(ef entities.EntitiesFile, findingID string) string {
+	defByID := map[string]*entities.Definition{}
+	for i := range ef.Definitions {
+		defByID[ef.Definitions[i].DefinitionID] = &ef.Definitions[i]
+	}
+	var occ *entities.Occurrence
+	for i := range ef.Occurrences {
+		if ef.Occurrences[i].FindingID == findingID {
+			occ = &ef.Occurrences[i]
+			break
+		}
+	}
+	var f entities.Finding
+	for _, ff := range ef.Findings {
+		if ff.FindingID == findingID {
+			f = ff
+		}
+	}
+	return buildIssueBody(f, defByID[f.DefinitionID], occ, "")
+}
+
+// labelCreateStub handles POST /labels for stubs that don't otherwise care about
+// label creation (risk/<sev> labels are created on demand). Returns 201 with a
+// synthetic id echoing the requested name.
+func labelCreateStub(w http.ResponseWriter, r *http.Request) {
+	var in map[string]string
+	body, _ := io.ReadAll(r.Body)
+	json.Unmarshal(body, &in)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(forgejoLabel{ID: 99, Name: in["name"]})
+}
+
 func TestExportCreatesAndDedups(t *testing.T) {
 	var created int32
 	var nextNum int64
@@ -109,6 +145,8 @@ func TestExportCreatesAndDedups(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
 			json.NewEncoder(w).Encode([]forgejoLabel{{ID: 1, Name: "kb-finding"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			labelCreateStub(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
 			// Dedup index: no existing KB issues on first run.
 			json.NewEncoder(w).Encode([]map[string]any{})
@@ -143,17 +181,24 @@ func TestExportCreatesAndDedups(t *testing.T) {
 }
 
 func TestExportSkipsExisting(t *testing.T) {
+	// Existing open issue whose body is already exactly what Export would
+	// render — so the body-refresh path skips rather than PATCHing.
+	currentBody := canonicalBody(sampleEntities(), "fin-high")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/labels") && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode([]forgejoLabel{{ID: 1, Name: "kb-finding"}})
+		case strings.HasSuffix(r.URL.Path, "/labels") && r.Method == http.MethodPost:
+			labelCreateStub(w, r)
 		case strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet:
-			// Existing issue already carries the marker for fin-high.
 			json.NewEncoder(w).Encode([]map[string]any{
-				{"number": 5, "body": "old\n" + findingMarker("fin-high")},
+				{"number": 5, "state": "open", "body": currentBody},
 			})
 		case strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodPost:
 			t.Errorf("should not POST a new issue when one exists")
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.Contains(r.URL.Path, "/issues/") && r.Method == http.MethodPatch:
+			t.Errorf("should not PATCH an unchanged issue body")
 			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
@@ -217,13 +262,16 @@ func TestExportReconcilesDuplicateIssues(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
 			json.NewEncoder(w).Encode([]forgejoLabel{{ID: 1, Name: "kb-finding"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			labelCreateStub(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
 			// Duplicate pair for fin-high; list deliberately returns the
 			// HIGHER number first to prove winner choice is number-based,
-			// not order-based (A24).
+			// not order-based (A24). The winner (#5) already holds the canonical
+			// body so the only PATCH is the reconcile close of #9.
 			json.NewEncoder(w).Encode([]map[string]any{
 				{"number": 9, "state": "open", "body": "dup\n" + findingMarker("fin-high")},
-				{"number": 5, "state": "open", "body": "orig\n" + findingMarker("fin-high")},
+				{"number": 5, "state": "open", "body": canonicalBody(sampleEntities(), "fin-high")},
 			})
 		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/"):
 			mu.Lock()

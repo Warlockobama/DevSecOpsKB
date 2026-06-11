@@ -24,6 +24,31 @@ const (
 	defaultLabelColor = "#0366d6"
 )
 
+// riskLabelColors maps the per-risk labels to their colors; ensureLabels uses
+// these when it has to create one, falling back to defaultLabelColor.
+var riskLabelColors = map[string]string{
+	"risk/high":   "#d73a4a",
+	"risk/medium": "#e36209",
+	"risk/low":    "#dbab09",
+	"risk/info":   "#6a737d",
+}
+
+// riskLabel returns the severity label for a finding risk, or "" when the risk
+// is unknown.
+func riskLabel(risk string) string {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "high":
+		return "risk/high"
+	case "medium":
+		return "risk/medium"
+	case "low":
+		return "risk/low"
+	case "info", "informational":
+		return "risk/info"
+	}
+	return ""
+}
+
 type forgejoLabel struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
@@ -125,7 +150,11 @@ func (c *client) ensureLabels(ctx context.Context, names []string) (map[string]i
 			out[name] = id
 			continue
 		}
-		lbl, err := c.createLabel(ctx, name, defaultLabelColor)
+		color := defaultLabelColor
+		if rc, ok := riskLabelColors[strings.ToLower(name)]; ok {
+			color = rc
+		}
+		lbl, err := c.createLabel(ctx, name, color)
 		if err != nil {
 			// Two publishers can race the first-run create: both list an empty
 			// label set, both POST, one loses (409/422). Losing the race is
