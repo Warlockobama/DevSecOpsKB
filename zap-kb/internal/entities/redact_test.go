@@ -95,6 +95,20 @@ func TestRedactRawHeaderBlock_UnparsedLineFailsClosed(t *testing.T) {
 	}
 }
 
+// A non-start-line whose header name has whitespace before the colon is
+// malformed and must fail closed, not be passed through the name-based rules.
+func TestRedactRawHeaderBlock_MalformedHeaderNameFailsClosed(t *testing.T) {
+	block := "GET /a HTTP/1.1\n" +
+		"Authorization : Bearer leakedsecret\n" + // space before colon
+		"Foo Authorization: alsoleaked\n" // internal space in name
+	got := redactRawHeaderBlock(block, RedactOptions{Auth: true})
+	for _, secret := range []string{"leakedsecret", "alsoleaked"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("secret %q survived a malformed header line:\n%s", secret, got)
+		}
+	}
+}
+
 func TestRedactEntities_RawHeaderScrubsCookie(t *testing.T) {
 	ef := &EntitiesFile{
 		Occurrences: []Occurrence{

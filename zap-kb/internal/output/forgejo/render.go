@@ -239,7 +239,8 @@ func titleCase(s string) string {
 	if s == "" {
 		return "Unknown"
 	}
-	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
+	r, size := utf8.DecodeRuneInString(s)
+	return strings.ToUpper(string(r)) + strings.ToLower(s[size:])
 }
 
 // truncate shortens s to at most n bytes without splitting a UTF-8 sequence,

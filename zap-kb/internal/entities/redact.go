@@ -229,18 +229,25 @@ func redactRawHeaderBlock(raw string, ro RedactOptions) string {
 			continue
 		}
 		colon := strings.Index(trimmed, ":")
-		if i == 0 && (colon < 0 || strings.ContainsAny(trimmed[:colon], " \t")) {
-			// Request/status start-line, NOT a header — a header name has no
-			// whitespace before its colon, whereas "GET https://h/p HTTP/1.1"
-			// and "HTTP/1.1 200 OK" do (or have no colon). Reuse the _line rule
-			// via redactHeaders so URL host/query redaction stays in one place.
+		// A valid header name is a token with no whitespace before the colon.
+		// Whitespace before the colon (or no colon) means the line is not a
+		// clean "Name: value" header.
+		nameMalformed := colon < 0 || strings.ContainsAny(trimmed[:colon], " \t")
+		if i == 0 && nameMalformed {
+			// Request/status start-line, NOT a header — "GET https://h/p HTTP/1.1"
+			// and "HTTP/1.1 200 OK" have whitespace before any colon (or none).
+			// Reuse the _line rule via redactHeaders so URL host/query redaction
+			// stays in one place.
 			if ro.Domain || ro.Query {
 				scrubbed := redactHeaders([]Header{{Name: "_line", Value: trimmed}}, ro)
 				lines[i] = scrubbed[0].Value + suffix
 			}
 			continue
 		}
-		if colon <= 0 {
+		if nameMalformed {
+			// Fail closed: a non-start-line that does not parse as a clean header
+			// (no colon, or whitespace in the name) is replaced entirely rather
+			// than risk a sensitive value slipping past the name-based rules.
 			lines[i] = "<redacted: unparsed header line>" + suffix
 			continue
 		}

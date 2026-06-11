@@ -120,6 +120,23 @@ func TestTruncate_RuneSafe(t *testing.T) {
 	}
 }
 
+func TestTitleCase_RuneSafe(t *testing.T) {
+	// A multibyte first rune must not be split mid-sequence.
+	got := titleCase("élevé")
+	if !utf8.ValidString(got) {
+		t.Fatalf("titleCase produced invalid UTF-8: %q", got)
+	}
+	if got != "Élevé" {
+		t.Fatalf("titleCase(\"élevé\") = %q, want \"Élevé\"", got)
+	}
+	if titleCase("") != "Unknown" {
+		t.Fatalf("titleCase(\"\") should be Unknown")
+	}
+	if titleCase("high") != "High" {
+		t.Fatalf("titleCase(\"high\") = %q, want High", titleCase("high"))
+	}
+}
+
 func TestIssueTitle_LongMultibyteTitle(t *testing.T) {
 	f := entities.Finding{Name: strings.Repeat("é", 300)}
 	got := issueTitle(f)
