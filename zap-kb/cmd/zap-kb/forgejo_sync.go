@@ -37,6 +37,7 @@ type forgejoPublishOptions struct {
 	Concurrency  int
 	DryRun       bool
 	SyncKBStatus bool
+	Issues       bool // create/track one Forgejo issue per finding; off = wiki-only
 	Wiki         bool
 	WikiPrune    bool
 	Redact       string // redaction list for published content; "off"/"none" disables
@@ -140,81 +141,92 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		pubEnt = cp
 	}
 
-	// Link issues to the KB wiki definition page only when the wiki is being
-	// published this run, so issues never point at a wiki that does not exist.
-	wikiURLBase := ""
-	if opts.Wiki {
-		wikiURLBase = fmt.Sprintf("%s/%s/%s/wiki", strings.TrimRight(opts.BaseURL, "/"), opts.Owner, opts.Repo)
-	}
-
-	exCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	sum, err := forgejo.Export(exCtx, pubEnt, forgejo.Options{
-		BaseURL:     opts.BaseURL,
-		Token:       opts.Token,
-		Owner:       opts.Owner,
-		Repo:        opts.Repo,
-		ExtraLabels: opts.ExtraLabels,
-		MinRisk:     opts.MinRisk,
-		OptInTag:    opts.OptInTag,
-		DryRun:      opts.DryRun,
-		Concurrency: opts.Concurrency,
-		WikiURLBase: wikiURLBase,
-	})
-	if err != nil {
-		// A wholesale export failure (auth/connectivity) would fail the pull and
-		// wiki steps the same way; return early with a failure so CI/cron sees a
-		// non-zero exit, without aborting other sinks via log.Fatalf.
-		log.Printf("error: forgejo export: %v", err)
-		return failures + 1
-	}
-	fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
-		sum.Created, sum.Reopened, sum.BodiesUpdated, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
-	failures += sum.Errors
-
-	addedTicketKeys := 0
-	if !opts.DryRun && len(sum.TicketRefs) > 0 {
-		addedTicketKeys = mergeForgejoTicketRefs(ent, sum.TicketRefs, opts.Owner+"/"+opts.Repo)
-	}
-
-	// Pull issue state back. By default this is read-only (Forgejo is the
-	// workflow source of truth); -forgejo-sync-kb-status mutates KB status.
-	if !opts.DryRun && hasFindingTicketRefs(*ent) {
-		pullCtx, pcancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer pcancel()
-		pres, perr := forgejo.PullStatus(pullCtx, *ent, forgejo.PullOptions{
-			BaseURL:  opts.BaseURL,
-			Token:    opts.Token,
-			Owner:    opts.Owner,
-			Repo:     opts.Repo,
-			ReadOnly: !opts.SyncKBStatus,
-		})
-		if perr != nil {
-			log.Printf("warning: forgejo status pull failed: %v", perr)
-		} else if opts.SyncKBStatus {
-			*ent = pres.Updated
-			fmt.Printf("Forgejo pull: updated=%d unchanged=%d notfound=%d unmapped=%d errors=%d\n",
-				pres.Result.Updated, pres.Result.Unchanged, pres.Result.NotFound, pres.Result.Unmapped, pres.Result.Errors)
-		} else {
-			fmt.Printf("Forgejo pull: fetched=%d notfound=%d errors=%d (KB status write-back disabled)\n",
-				pres.Result.Unchanged+pres.Result.Unmapped, pres.Result.NotFound, pres.Result.Errors)
+	// Per-finding issue publishing. Skipped in wiki-only mode
+	// (-forgejo-issues=false), where the Forgejo Issues tab is reserved for
+	// other use (e.g. analyst-filed tuning requests) and the KB is published
+	// solely as the wiki.
+	if opts.Issues {
+		// Link issues to the KB wiki definition page only when the wiki is being
+		// published this run, so issues never point at a wiki that does not exist.
+		wikiURLBase := ""
+		if opts.Wiki {
+			wikiURLBase = fmt.Sprintf("%s/%s/%s/wiki", strings.TrimRight(opts.BaseURL, "/"), opts.Owner, opts.Repo)
 		}
-	}
 
-	// Persist ticket refs / status back to the entities file so the next run
-	// short-circuits dedup. Reuses the shared persistence helper.
-	if !opts.DryRun && (addedTicketKeys > 0 || (opts.SyncKBStatus && hasFindingTicketRefs(*ent))) {
-		savePath, werr := persistJiraEntities(jiraSyncContext{
-			Format:           opts.Format,
-			Out:              opts.Out,
-			EntitiesIn:       opts.EntitiesIn,
-			RunIn:            opts.RunIn,
-			RunInputArtifact: opts.RunInArtifact,
-		}, *ent)
-		if werr != nil {
-			log.Printf("warning: could not save Forgejo state to entities file: %v", werr)
-		} else if savePath != "" {
-			fmt.Printf("Forgejo: wrote current ticket/state data to %s\n", savePath)
+		exCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		sum, err := forgejo.Export(exCtx, pubEnt, forgejo.Options{
+			BaseURL:     opts.BaseURL,
+			Token:       opts.Token,
+			Owner:       opts.Owner,
+			Repo:        opts.Repo,
+			ExtraLabels: opts.ExtraLabels,
+			MinRisk:     opts.MinRisk,
+			OptInTag:    opts.OptInTag,
+			DryRun:      opts.DryRun,
+			Concurrency: opts.Concurrency,
+			WikiURLBase: wikiURLBase,
+		})
+		if err != nil {
+			// A wholesale export failure (auth/connectivity) would fail the pull
+			// and wiki steps the same way; return early with a failure so CI/cron
+			// sees a non-zero exit, without aborting other sinks via log.Fatalf.
+			log.Printf("error: forgejo export: %v", err)
+			return failures + 1
+		}
+		fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
+			sum.Created, sum.Reopened, sum.BodiesUpdated, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
+		failures += sum.Errors
+
+		addedTicketKeys := 0
+		if !opts.DryRun && len(sum.TicketRefs) > 0 {
+			addedTicketKeys = mergeForgejoTicketRefs(ent, sum.TicketRefs, opts.Owner+"/"+opts.Repo)
+			// Mirror the refs into the publish view so the wiki snapshot rendered
+			// below links each finding to its issue on the FIRST publish. Without
+			// this the wiki was rendered from a copy taken before issues existed,
+			// so issue cross-links only appeared on a subsequent run.
+			mergeForgejoTicketRefs(&pubEnt, sum.TicketRefs, opts.Owner+"/"+opts.Repo)
+		}
+
+		// Pull issue state back. By default this is read-only (Forgejo is the
+		// workflow source of truth); -forgejo-sync-kb-status mutates KB status.
+		if !opts.DryRun && hasFindingTicketRefs(*ent) {
+			pullCtx, pcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer pcancel()
+			pres, perr := forgejo.PullStatus(pullCtx, *ent, forgejo.PullOptions{
+				BaseURL:  opts.BaseURL,
+				Token:    opts.Token,
+				Owner:    opts.Owner,
+				Repo:     opts.Repo,
+				ReadOnly: !opts.SyncKBStatus,
+			})
+			if perr != nil {
+				log.Printf("warning: forgejo status pull failed: %v", perr)
+			} else if opts.SyncKBStatus {
+				*ent = pres.Updated
+				fmt.Printf("Forgejo pull: updated=%d unchanged=%d notfound=%d unmapped=%d errors=%d\n",
+					pres.Result.Updated, pres.Result.Unchanged, pres.Result.NotFound, pres.Result.Unmapped, pres.Result.Errors)
+			} else {
+				fmt.Printf("Forgejo pull: fetched=%d notfound=%d errors=%d (KB status write-back disabled)\n",
+					pres.Result.Unchanged+pres.Result.Unmapped, pres.Result.NotFound, pres.Result.Errors)
+			}
+		}
+
+		// Persist ticket refs / status back to the entities file so the next run
+		// short-circuits dedup. Reuses the shared persistence helper.
+		if !opts.DryRun && (addedTicketKeys > 0 || (opts.SyncKBStatus && hasFindingTicketRefs(*ent))) {
+			savePath, werr := persistJiraEntities(jiraSyncContext{
+				Format:           opts.Format,
+				Out:              opts.Out,
+				EntitiesIn:       opts.EntitiesIn,
+				RunIn:            opts.RunIn,
+				RunInputArtifact: opts.RunInArtifact,
+			}, *ent)
+			if werr != nil {
+				log.Printf("warning: could not save Forgejo state to entities file: %v", werr)
+			} else if savePath != "" {
+				fmt.Printf("Forgejo: wrote current ticket/state data to %s\n", savePath)
+			}
 		}
 	}
 

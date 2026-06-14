@@ -165,9 +165,33 @@ func TestRunForgejoPublish_ExportErrorReturnsFailure(t *testing.T) {
 		Owner:   "acme",
 		Repo:    "kb",
 		MinRisk: "medium",
+		Issues:  true,
 		Redact:  "off",
 	})
 	if failures < 1 {
 		t.Fatalf("failures=%d, want >=1 (returned, not exited)", failures)
+	}
+}
+
+// Wiki-only mode (Issues=false) must not contact the issues API at all: with an
+// unreachable host and the wiki step off, the publish is a clean no-op rather
+// than an export failure, proving per-finding issue creation is skipped.
+func TestRunForgejoPublish_WikiOnlySkipsIssues(t *testing.T) {
+	ent := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Findings:      []entities.Finding{{FindingID: "fin-1", URL: "https://t/a", Risk: "High", Occurrences: 1}},
+	}
+	failures := runForgejoPublish(ent, forgejoPublishOptions{
+		BaseURL: "http://127.0.0.1:1", // unreachable — would fail if contacted
+		Token:   "t",
+		Owner:   "acme",
+		Repo:    "kb",
+		MinRisk: "medium",
+		Issues:  false,
+		Wiki:    false,
+		Redact:  "off",
+	})
+	if failures != 0 {
+		t.Fatalf("failures=%d, want 0 (issues skipped, wiki off — nothing should be contacted)", failures)
 	}
 }
