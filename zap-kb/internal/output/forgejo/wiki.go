@@ -37,6 +37,10 @@ type WikiSummary struct {
 	Skipped int
 	Errors  int
 	Pruned  int
+	// LinkFixes counts pages re-PATCHed by the second pass because the
+	// server-issued sub_url for a linked page differed from the client-side
+	// escaping used on first publish.
+	LinkFixes int
 }
 
 // topLevelWikiPages maps known vault files to friendly wiki page names. INDEX.md
@@ -55,6 +59,11 @@ var topLevelWikiPages = []struct {
 	{"TRIAGE-GUIDE.md", "Triage Workflow Guide"},
 	{"EXECUTIVE-SUMMARY.md", "Executive Summary"},
 	{"latest-scan.md", "Latest Scan"},
+	// Section pages split out of INDEX — Home's quick-navigation links target
+	// these, so omitting them leaves dead links on the wiki landing page.
+	{"issues.md", "Issues"},
+	{"occurrences.md", "Occurrences"},
+	{"rules.md", "Rules"},
 }
 
 // wikiSubdirs are the entity directories nested as wiki subpages. Slashes in the
@@ -62,10 +71,18 @@ var topLevelWikiPages = []struct {
 var wikiSubdirs = []string{"definitions", "findings", "occurrences"}
 
 // ExportWiki walks the generated Obsidian vault at vaultRoot and upserts each
-// markdown file as a Forgejo wiki page. Because Forgejo renders markdown (and
-// [[wikilinks]]) natively, the vault content is pushed verbatim (frontmatter
-// stripped) — no XHTML conversion. Pages are upserted in parallel up to
-// opts.Concurrency.
+// markdown file as a Forgejo wiki page (frontmatter stripped — no XHTML
+// conversion). Forgejo renders plain markdown but NOT Obsidian [[wikilinks]],
+// so internal links are rewritten to standard markdown links between wiki
+// pages (see rewriteVaultLinks). Publishing is two-pass: pages are upserted
+// with link targets taken from the pre-publish listing's server-issued
+// sub_urls (client-side escaping only for pages that don't exist yet), then
+// the page list is re-fetched and any page whose links differ under the
+// post-publish sub_urls is PATCHed — the server's page-name escaping is the
+// only authoritative source for addressing hierarchical titles
+// ("Findings/fin-1"), and rendering with known sub_urls up front keeps
+// steady-state re-publishes byte-identical (skipped, no git churn). Pages are
+// upserted in parallel up to opts.Concurrency.
 func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSummary, error) {
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Token) == "" ||
 		strings.TrimSpace(opts.Owner) == "" || strings.TrimSpace(opts.Repo) == "" {
@@ -132,8 +149,10 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	}
 	sort.Slice(pages, func(i, j int) bool { return pages[i].name < pages[j].name })
 
-	// Snapshot the set of page names published this run BEFORE the canary
-	// consumes pages[0] — used by the prune pass to spare current pages.
+	// Snapshot the full page set BEFORE the canary consumes pages[0]: the prune
+	// pass needs the published names, and the link-repair pass revisits every
+	// page.
+	allPages := append([]page(nil), pages...)
 	publishedNames := make(map[string]bool, len(pages))
 	for _, p := range pages {
 		publishedNames[p.name] = true
@@ -165,6 +184,19 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		return summary, fmt.Errorf("forgejo wiki: list pages: %w", err)
 	}
 
+	// Render links with the server-issued sub_urls already known from the
+	// pre-publish listing, falling back to client-side escaping for pages that
+	// do not exist yet. On a steady-state re-publish every link target is a
+	// known sub_url, so rendered content matches the remote byte-for-byte and
+	// the upsert skips — using PathEscape here would diff against the repaired
+	// remote content and churn the wiki's git history on every run.
+	linkFor := func(name string) string {
+		if su := existing[name]; su != "" {
+			return su
+		}
+		return escapePageName(name)
+	}
+
 	// Canary: publish the first page serially. A server hit by the Gitea 1.22
 	// wiki_branch bug fails EVERY write the same way — one descriptive hard
 	// error beats N identical per-page 404s, and aborting here avoids
@@ -177,7 +209,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			summary.Errors++
 			fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
 		} else {
-			content = rewriteVaultLinks(content, p.relDir, pageNames)
+			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
 			switch {
 			case isWikiBranchBug(err):
@@ -210,7 +242,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 				fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
 				return
 			}
-			content = rewriteVaultLinks(content, p.relDir, pageNames)
+			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
 			mu.Lock()
 			defer mu.Unlock()
@@ -228,6 +260,46 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}(p)
 	}
 	wg.Wait()
+
+	// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
+	// pages just created, re-render every page's links against those tokens,
+	// and PATCH the pages whose content changed. On servers whose page-name
+	// escaping matches url.PathEscape this finds nothing and costs one listing
+	// call; on servers with a divergent scheme it is the only way hierarchical
+	// cross-links ("Findings/fin-1") resolve instead of 404ing.
+	subURLs, lerr := c.listWikiPages(ctx)
+	if lerr != nil {
+		summary.Errors++
+		fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %v\n", lerr)
+	} else {
+		linkForSub := func(name string) string {
+			if su := subURLs[name]; su != "" {
+				return su
+			}
+			return escapePageName(name)
+		}
+		for _, p := range allPages {
+			su := subURLs[p.name]
+			if su == "" {
+				continue // page never landed; already counted as an error
+			}
+			raw, rerr := readVaultMarkdown(p.path)
+			if rerr != nil {
+				continue // unreadable file was already counted in pass 1
+			}
+			pass1 := rewriteVaultLinks(raw, p.relDir, pageNames, linkFor)
+			pass2 := rewriteVaultLinks(raw, p.relDir, pageNames, linkForSub)
+			if pass2 == pass1 {
+				continue
+			}
+			if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
+				summary.Errors++
+				fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
+				continue
+			}
+			summary.LinkFixes++
+		}
+	}
 
 	// Prune stale KB-owned entity pages. Only the three entity prefixes are
 	// KB-managed by convention; Home and any analyst-authored page are never
@@ -355,6 +427,13 @@ func (c *client) upsertWikiPage(ctx context.Context, name, content, message stri
 			return "skipped", nil
 		}
 	}
+	if exists {
+		if err := c.patchWikiPage(ctx, subURL, name, content, message); err != nil {
+			return "", err
+		}
+		return "updated", nil
+	}
+
 	body, err := json.Marshal(map[string]string{
 		"title":          name,
 		"content_base64": base64.StdEncoding.EncodeToString([]byte(content)),
@@ -363,22 +442,6 @@ func (c *client) upsertWikiPage(ctx context.Context, name, content, message stri
 	if err != nil {
 		return "", err
 	}
-
-	if exists {
-		// sub_url is already escaped by the server — append verbatim.
-		u := c.repoAPI() + "/wiki/page/" + subURL
-		req, err := c.newRequest(ctx, http.MethodPatch, u, body)
-		if err != nil {
-			return "", err
-		}
-		resp, err := synccore.DoWithRetry(c.http, req, 3)
-		if err != nil {
-			return "", err
-		}
-		drain(resp)
-		return "updated", nil
-	}
-
 	req, err := c.newRequest(ctx, http.MethodPost, c.repoAPI()+"/wiki/new", body)
 	if err != nil {
 		return "", err
@@ -389,6 +452,29 @@ func (c *client) upsertWikiPage(ctx context.Context, name, content, message stri
 	}
 	drain(resp)
 	return "created", nil
+}
+
+// patchWikiPage overwrites a wiki page's content via its server-issued
+// sub_url (already escaped — appended verbatim).
+func (c *client) patchWikiPage(ctx context.Context, subURL, title, content, message string) error {
+	body, err := json.Marshal(map[string]string{
+		"title":          title,
+		"content_base64": base64.StdEncoding.EncodeToString([]byte(content)),
+		"message":        message,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := c.newRequest(ctx, http.MethodPatch, c.repoAPI()+"/wiki/page/"+subURL, body)
+	if err != nil {
+		return err
+	}
+	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	if err != nil {
+		return err
+	}
+	drain(resp)
+	return nil
 }
 
 // getWikiPageBySubURL fetches a wiki page's decoded content via its
