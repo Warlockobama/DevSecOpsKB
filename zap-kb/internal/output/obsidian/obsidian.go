@@ -72,6 +72,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	// Tracker display name used by workflow prose ("Jira" by default).
 	tracker := opts.trackerName()
 	noCase := "No " + tracker + " case"
+	// KB-finding label + section anchor (Issue/Issues for Jira, Finding/Findings
+	// otherwise — Forgejo's own Issues tab collides with the word).
+	findNounS, findNounP := opts.findingNoun()
+	findAnchor := opts.sectionAnchor()
 
 	// Optionally carry forward analyst status and timestamps from existing
 	// occurrence files BEFORE we clear the directories. Raw scanner publishes
@@ -585,7 +589,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				findingsBySeverity[sevKey] = append(findingsBySeverity[sevKey], f)
 			}
 
-			b.WriteString("## Issues\n\n")
+			fmt.Fprintf(&b, "## %s\n\n", findNounP)
 			severityOrder := []string{"high", "medium", "low", "info"}
 			for _, sev := range severityOrder {
 				group := findingsBySeverity[sev]
@@ -649,7 +653,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					}
 				}
 				if limit < len(group) {
-					fmt.Fprintf(&b, "- _%d additional findings — [[../INDEX.md#issues|see full list]]_\n", len(group)-limit)
+					fmt.Fprintf(&b, "- _%d additional findings — [[../INDEX.md#%s|see full list]]_\n", len(group)-limit, findAnchor)
 				}
 				b.WriteString("\n")
 			}
@@ -735,7 +739,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		addStatusToYAMLStrAny(kv, "status.", sc)
 		writeYAML(&b, kv)
 
-		fmt.Fprintf(&b, "# Issue %s — %s\n\n", f.FindingID, alias)
+		fmt.Fprintf(&b, "# %s %s — %s\n\n", findNounS, f.FindingID, alias)
 		// Severity callout
 		sevTxt, _ := deriveSeverity(f.Risk, f.RiskCode)
 		b.WriteString(calloutForSeverity(sevTxt, fmt.Sprintf("Risk: %s (%s) — Confidence: %s", f.Risk, f.RiskCode, f.Confidence)))
@@ -1132,7 +1136,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		} else {
 			fmt.Fprintf(&b, "- Definition: %s\n", o.DefinitionID)
 		}
-		fmt.Fprintf(&b, "- Issue: [[%s|%s]]\n\n", filepath.ToSlash(filepath.Join("occurrences", "..", "findings", o.FindingID+".md")), o.FindingID)
+		fmt.Fprintf(&b, "- %s: [[%s|%s]]\n\n", findNounS, filepath.ToSlash(filepath.Join("occurrences", "..", "findings", o.FindingID+".md")), o.FindingID)
 
 		fmt.Fprintf(&b, "**Endpoint:** %s %s\n\n", o.Method, o.URL)
 
@@ -1348,7 +1352,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				sevParts = append(sevParts, fmt.Sprintf("%s: %d", entry.Label, c))
 			}
 		}
-		summaryLine := fmt.Sprintf("Scan: %s (domain: %s) | Issues: %d | Occurrences: %d", scanName, domainLabel, totalIssues, totalOcc)
+		summaryLine := fmt.Sprintf("Scan: %s (domain: %s) | %s: %d | Occurrences: %d", scanName, domainLabel, findNounP, totalIssues, totalOcc)
 		if len(sevParts) > 0 {
 			summaryLine += " | " + strings.Join(sevParts, " ")
 		}
@@ -1357,7 +1361,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		b.WriteString("## Quick navigation\n")
 		b.WriteString("- [Triage board](triage-board.md)\n")
-		b.WriteString("- [Issues](issues.md)\n")
+		fmt.Fprintf(&b, "- [%s](issues.md)\n", findNounP)
 		b.WriteString("- [Occurrences](occurrences.md)\n")
 		b.WriteString("- [Rules](rules.md)\n")
 		b.WriteString("- [By domain](by-domain.md)\n")
@@ -1378,7 +1382,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		fmt.Fprintf(&triageSection, "## %s references\n\n", tracker)
 		fmt.Fprintf(&triageSection, "Analyst workflow status comes from %s. The KB lists linked analyst cases and keeps lifecycle status as a historical snapshot only.\n\n", tracker)
-		triageSection.WriteString("| Analyst cases | Issues | Occurrences |\n| --- | --- | --- |\n")
+		fmt.Fprintf(&triageSection, "| Analyst cases | %s | Occurrences |\n| --- | --- | --- |\n", findNounP)
 		for _, bucket := range sortedWorkflowBuckets(trackerIssueCounts, trackerOccurrenceCounts) {
 			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", escapeTable(bucket), trackerIssueCounts[bucket], trackerOccurrenceCounts[bucket])
 		}
@@ -1437,9 +1441,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		// Issues table — operational rules are excluded and shown separately below.
 		if len(issueSummaries) > 0 {
-			b.WriteString("## Issues\n")
+			fmt.Fprintf(&b, "## %s\n", findNounP)
 			b.WriteString("Sorted by severity, then endpoint.\n\n")
-			b.WriteString("| Severity | Issue | Endpoint | Analyst Cases | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&b, "| Severity | %s | Endpoint | Analyst Cases | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n", findNounS)
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
@@ -1492,7 +1496,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Occurrence table
 		if totalOcc > 0 {
 			b.WriteString("## Occurrences\n\n")
-			b.WriteString("| Occurrence | Endpoint | Param | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&b, "| Occurrence | Endpoint | Param | Severity | Analyst Cases | %s |\n| --- | --- | --- | --- | --- | --- |\n", findNounS)
 			tmpOccs := make([]entities.Occurrence, len(ef.Occurrences))
 			copy(tmpOccs, ef.Occurrences)
 			sort.Slice(tmpOccs, func(i, j int) bool {
@@ -1690,7 +1694,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if err := os.WriteFile(index, []byte(indexContent), 0o644); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "issues.md", "Issues", extractMarkdownSection(indexContent, "Issues")); err != nil {
+		if err := writeSectionPage(root, "issues.md", findNounP, extractMarkdownSection(indexContent, findNounP)); err != nil {
 			return err
 		}
 		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(indexContent, "Occurrences")); err != nil {
@@ -1840,7 +1844,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				tc.WriteString("Tag a finding with `tune-scan` (YAML `analyst.tags`) when a recurring false positive needs detection-tuning work, or let the recurring-FP heuristic promote it automatically.\n")
 			} else {
 				fmt.Fprintf(&tc, "Total: **%d**\n\n", len(tuningCandidates))
-				tc.WriteString("| Issue | Rule | Endpoint | Scans seen | `tune-scan` | Owner | Tickets |\n")
+				fmt.Fprintf(&tc, "| %s | Rule | Endpoint | Scans seen | `tune-scan` | Owner | Tickets |\n", findNounS)
 				tc.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 				for _, is := range tuningCandidates {
 					ruleTitle := fallbackString(is.RuleTitle, "Rule")
@@ -1889,7 +1893,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			var spot strings.Builder
 			spot.WriteString("# Latest scan spotlight\n\n")
 			spot.WriteString(fmt.Sprintf("Scan: %s\n\n", latestScanLabel))
-			spot.WriteString("| Occurrence | Endpoint | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&spot, "| Occurrence | Endpoint | Severity | Analyst Cases | %s |\n| --- | --- | --- | --- | --- |\n", findNounS)
 			for _, o := range newestOccs {
 				key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
 				if !seenByKey[key] {
@@ -3032,6 +3036,23 @@ func (o Options) trackerName() string {
 		return t
 	}
 	return "Jira"
+}
+
+// findingNoun returns the singular/plural KB-finding label used in generated
+// page text. On the default (Jira) tracker it stays "Issue"/"Issues" so the
+// Confluence path and its anchors are unchanged; on any other tracker (e.g.
+// Forgejo, whose own Issues tab collides with the word) it becomes
+// "Finding"/"Findings". sectionAnchor returns the matching lowercase anchor.
+func (o Options) findingNoun() (singular, plural string) {
+	if o.trackerName() == "Jira" {
+		return "Issue", "Issues"
+	}
+	return "Finding", "Findings"
+}
+
+func (o Options) sectionAnchor() string {
+	_, plural := o.findingNoun()
+	return strings.ToLower(plural)
 }
 
 func formatTicketRefsMarkdown(refs []string, opts Options, placeholder string) string {

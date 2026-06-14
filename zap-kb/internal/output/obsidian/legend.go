@@ -332,7 +332,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 			Title:     title,
 			Remedy:    remedy,
 			FindCount: len(fids),
-			FindLink:  "INDEX.md#issues",
+			FindLink:  "INDEX.md#" + opts.sectionAnchor(),
 		})
 	}
 	// Sort by find count desc, then title asc.

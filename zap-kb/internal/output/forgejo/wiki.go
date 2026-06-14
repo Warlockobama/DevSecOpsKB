@@ -60,8 +60,10 @@ var topLevelWikiPages = []struct {
 	{"EXECUTIVE-SUMMARY.md", "Executive Summary"},
 	{"latest-scan.md", "Latest Scan"},
 	// Section pages split out of INDEX — Home's quick-navigation links target
-	// these, so omitting them leaves dead links on the wiki landing page.
-	{"issues.md", "Issues"},
+	// these, so omitting them leaves dead links on the wiki landing page. The
+	// findings section file is issues.md (historical name) but the Forgejo vault
+	// titles the page "Findings" to avoid colliding with Forgejo's Issues tab.
+	{"issues.md", "Findings"},
 	{"occurrences.md", "Occurrences"},
 	{"rules.md", "Rules"},
 }

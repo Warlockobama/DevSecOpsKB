@@ -1369,6 +1369,10 @@ func TestWriteVault_ForgejoTrackerLinkifiesRepoRefs(t *testing.T) {
 	if !strings.Contains(body, "- Workflow source: Forgejo analyst case") {
 		t.Errorf("finding workflow prose should name Forgejo:\n%s", body)
 	}
+	// The KB-finding noun is renamed to avoid colliding with Forgejo's Issues tab.
+	if !strings.Contains(body, "# Finding find-fj") || strings.Contains(body, "# Issue find-fj") {
+		t.Errorf("finding page H1 should read 'Finding', not 'Issue':\n%s", body)
+	}
 
 	idxData, err := os.ReadFile(filepath.Join(root, "INDEX.md"))
 	if err != nil {
@@ -1380,6 +1384,21 @@ func TestWriteVault_ForgejoTrackerLinkifiesRepoRefs(t *testing.T) {
 	}
 	if strings.Contains(idx, "Jira") {
 		t.Errorf("INDEX must not mention Jira when the tracker is Forgejo:\n%s", idx)
+	}
+	if !strings.Contains(idx, "## Findings") || strings.Contains(idx, "## Issues") {
+		t.Errorf("INDEX section should be 'Findings', not 'Issues':\n%s", idx)
+	}
+	if !strings.Contains(idx, "[Findings](issues.md)") {
+		t.Errorf("INDEX quick-nav should link 'Findings':\n%s", idx)
+	}
+
+	// The findings section page must exist and be titled "Findings".
+	secData, err := os.ReadFile(filepath.Join(root, "issues.md"))
+	if err != nil {
+		t.Fatalf("ReadFile issues.md: %v", err)
+	}
+	if !strings.HasPrefix(string(secData), "# Findings") {
+		t.Errorf("section page should be titled Findings:\n%s", string(secData)[:40])
 	}
 }
 
