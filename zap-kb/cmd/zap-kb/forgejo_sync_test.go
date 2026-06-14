@@ -8,10 +8,10 @@ import (
 )
 
 func TestForgejoRedactOptions(t *testing.T) {
-	// Default (empty flag value) enables credential scrubbing.
+	// Default (empty flag value) enables credential + secrets scrubbing.
 	ro, on := forgejoRedactOptions("")
-	if !on || !ro.Auth || !ro.Cookies || !ro.Headers {
-		t.Fatalf("default = (%+v, %v), want auth/cookies/headers on", ro, on)
+	if !on || !ro.Auth || !ro.Cookies || !ro.Headers || !ro.Secrets {
+		t.Fatalf("default = (%+v, %v), want auth/cookies/headers/secrets on", ro, on)
 	}
 	if ro.Domain || ro.Body || ro.Notes {
 		t.Fatalf("default enabled extra modes: %+v", ro)

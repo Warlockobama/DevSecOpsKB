@@ -203,7 +203,7 @@ func main() {
 	flag.BoolVar(&forgejoIssues, "forgejo-issues", true, "Create/track one Forgejo issue per finding. Set false for wiki-only publishing, leaving the Issues tab free for other use (e.g. analyst-filed tuning requests).")
 	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
 	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
-	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes; 'off' disables. The local entities file keeps unredacted data.")
+	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes,secrets; 'off' disables. 'secrets' scrubs credential/PII patterns (hashes, emails, JWTs) from evidence. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")

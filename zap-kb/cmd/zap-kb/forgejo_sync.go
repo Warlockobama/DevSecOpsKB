@@ -17,11 +17,12 @@ import (
 
 // defaultForgejoRedact is the redaction list applied to data published to
 // Forgejo (issue bodies and wiki pages) unless overridden. It scrubs
-// credential-bearing fields (Authorization, cookies, API-key headers) while
-// leaving URLs and evidence intact so issues stay actionable. Forgejo is a
-// shared export surface, so redaction is on by default; pass
-// -forgejo-redact=off to disable.
-const defaultForgejoRedact = "auth,cookies,headers"
+// credential-bearing headers (Authorization, cookies, API-key headers) and
+// credential/PII patterns in scanner evidence (password hashes, emails, JWTs)
+// while leaving URLs and the rest of the evidence intact so issues stay
+// actionable. Forgejo is a shared export surface, so redaction is on by
+// default; pass -forgejo-redact=off to disable.
+const defaultForgejoRedact = "auth,cookies,headers,secrets"
 
 // forgejoPublishOptions bundles everything runForgejoPublish needs: the Forgejo
 // connection + filtering knobs plus the vault/persistence context shared with
