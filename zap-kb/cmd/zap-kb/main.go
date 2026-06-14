@@ -656,7 +656,12 @@ func main() {
 			log.Fatalf("write json entities: %v", err)
 		}
 	case "obsidian":
-		if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, nil, nil, ""); err != nil {
+		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+			ScanLabel:   scanLabel,
+			SiteLabel:   siteLabel,
+			ZapBaseURL:  zapBase,
+			JiraBaseURL: jiraURL,
+		}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
 	default:
@@ -796,7 +801,15 @@ func main() {
 			}
 		}
 		if format == "obsidian" && !jiraDryRun && hasFindingTicketRefs(ent) {
-			if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced); err != nil {
+			if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+				ScanLabel:         scanLabel,
+				SiteLabel:         siteLabel,
+				ZapBaseURL:        zapBase,
+				JiraBaseURL:       jiraURL,
+				JiraStatusByKey:   jiraStatusByKey,
+				JiraAssigneeByKey: jiraAssigneeByKey,
+				JiraStatusSynced:  jiraStatusSynced,
+			}); err != nil {
 				log.Fatalf("rewrite obsidian after jira: %v", err)
 			}
 		}

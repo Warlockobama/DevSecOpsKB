@@ -29,6 +29,36 @@ func TestForgejoRedactOptions(t *testing.T) {
 	}
 }
 
+func TestForgejoTicketURL(t *testing.T) {
+	fn := forgejoTicketURL("https://forge.example/", "acme", "kb")
+	cases := []struct {
+		ref  string
+		want string
+	}{
+		{"acme/kb#7", "https://forge.example/acme/kb/issues/7"},
+		{"#12", "https://forge.example/acme/kb/issues/12"},
+		{"SEC-42", ""},       // Jira key — decline so the Jira fallback applies
+		{"other/repo#3", ""}, // different repo — never claim foreign refs
+		{"https://forge.example/acme/kb/issues/9", "https://forge.example/acme/kb/issues/9"},
+	}
+	for _, c := range cases {
+		if got := fn(c.ref); got != c.want {
+			t.Errorf("forgejoTicketURL(%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+}
+
+func TestCountOccurrencesWithTraffic(t *testing.T) {
+	ent := entities.EntitiesFile{Occurrences: []entities.Occurrence{
+		{OccurrenceID: "a", Request: &entities.HTTPRequest{RawHeader: "GET / HTTP/1.1"}},
+		{OccurrenceID: "b", Response: &entities.HTTPResponse{RawHeader: "HTTP/1.1 200 OK"}},
+		{OccurrenceID: "c"},
+	}}
+	if got := countOccurrencesWithTraffic(ent); got != 2 {
+		t.Fatalf("countOccurrencesWithTraffic = %d, want 2", got)
+	}
+}
+
 func TestRedactedCopyScrubsWithoutMutatingOriginal(t *testing.T) {
 	const secret = "Bearer sup3r-s3cret-token"
 	ent := entities.EntitiesFile{

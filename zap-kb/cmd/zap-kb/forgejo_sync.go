@@ -11,6 +11,7 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 )
 
@@ -63,6 +64,34 @@ func forgejoRedactOptions(list string) (entities.RedactOptions, bool) {
 		v = defaultForgejoRedact
 	}
 	return entities.ParseRedactOptionList(v), true
+}
+
+// forgejoTicketURL returns an obsidian.Options.TicketURLFn that resolves this
+// repo's issue refs ("owner/repo#42", "#42", bare "42", or a pasted browse
+// URL) to live Forgejo issue links. Refs for other trackers (Jira keys, other
+// repos) return "" and fall through to the vault's default handling.
+func forgejoTicketURL(baseURL, owner, repo string) func(string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	repoPrefix := owner + "/" + repo
+	return func(ref string) string {
+		if n, ok := forgejo.ExtractIssueNumber(ref, repoPrefix); ok {
+			return fmt.Sprintf("%s/%s/%s/issues/%d", base, owner, repo, n)
+		}
+		return ""
+	}
+}
+
+// countOccurrencesWithTraffic reports how many occurrences carry a captured
+// request or response, so a publish without traffic is visible in the summary
+// instead of silently rendering placeholder evidence pages.
+func countOccurrencesWithTraffic(ent entities.EntitiesFile) int {
+	n := 0
+	for _, o := range ent.Occurrences {
+		if o.Request != nil || o.Response != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // redactedCopy deep-copies an EntitiesFile via JSON round-trip and applies the
@@ -200,6 +229,26 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			failures++
 			return failures
 		}
+
+		// Surface traffic coverage before publishing: a wiki full of
+		// placeholder evidence pages usually means the run skipped
+		// -include-traffic (or published from saved entities with no live ZAP
+		// session), not a sink bug — say so up front.
+		trafficN := countOccurrencesWithTraffic(pubEnt)
+		fmt.Printf("Forgejo wiki: occurrences with traffic: %d/%d\n", trafficN, len(pubEnt.Occurrences))
+		if trafficN == 0 && len(pubEnt.Occurrences) > 0 {
+			log.Printf("warning: no occurrences carry HTTP request/response data — occurrence pages will show evidence placeholders; capture traffic with -include-traffic against a live ZAP session")
+		}
+
+		// The Forgejo-branded vault options: prose names Forgejo instead of
+		// Jira, and this repo's issue refs ("owner/repo#N") become live links.
+		vaultOpts := obsidian.Options{
+			ScanLabel:   opts.ScanLabel,
+			SiteLabel:   opts.SiteLabel,
+			ZapBaseURL:  opts.ZapBaseURL,
+			Tracker:     "Forgejo",
+			TicketURLFn: forgejoTicketURL(opts.BaseURL, opts.Owner, opts.Repo),
+		}
 		if redactOn {
 			tmp, terr := os.MkdirTemp("", "forgejo-wiki-vault-")
 			if terr != nil {
@@ -207,13 +256,13 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				return failures + 1
 			}
 			defer os.RemoveAll(tmp)
-			if err := writeVaultSnapshot(tmp, pubEnt, opts.ScanLabel, opts.SiteLabel, opts.ZapBaseURL, "", nil, nil, ""); err != nil {
+			if err := writeVaultSnapshot(tmp, pubEnt, vaultOpts); err != nil {
 				log.Printf("warning: could not write redacted vault for forgejo wiki: %v", err)
 				return failures + 1
 			}
 			wikiVault = tmp
 		} else if strings.TrimSpace(opts.Format) != "obsidian" {
-			if err := writeVaultSnapshot(wikiVault, pubEnt, opts.ScanLabel, opts.SiteLabel, opts.ZapBaseURL, "", nil, nil, ""); err != nil {
+			if err := writeVaultSnapshot(wikiVault, pubEnt, vaultOpts); err != nil {
 				log.Printf("warning: could not write vault for forgejo wiki: %v", err)
 				return failures + 1
 			}
@@ -232,7 +281,8 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			log.Printf("error: forgejo wiki export failed: %v", werr)
 			failures++
 		} else {
-			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d pruned=%d errors=%d\n", wsum.Created, wsum.Updated, wsum.Skipped, wsum.Pruned, wsum.Errors)
+			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d pruned=%d link_fixes=%d errors=%d\n",
+				wsum.Created, wsum.Updated, wsum.Skipped, wsum.Pruned, wsum.LinkFixes, wsum.Errors)
 			failures += wsum.Errors
 		}
 	}
