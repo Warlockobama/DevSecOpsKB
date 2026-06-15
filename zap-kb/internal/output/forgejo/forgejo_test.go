@@ -593,6 +593,186 @@ func TestExportWiki_RewritesLinks(t *testing.T) {
 	}
 }
 
+// WS05: Forgejo does not render Obsidian [[wikilinks]]; any wikilink whose
+// target is not a published page must be degraded to plain text, never pushed
+// as literal [[..]] syntax.
+func TestExportWiki_NoLiteralWikilinkPublished(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"),
+		[]byte("see [[findings/fin-1.md|F1]] and [[scans/missing.md|old scan]]"), 0o644)
+	os.MkdirAll(filepath.Join(vault, "findings"), 0o755)
+	os.WriteFile(filepath.Join(vault, "findings", "fin-1.md"), []byte("# F1"), 0o644)
+
+	var mu sync.Mutex
+	published := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true, "wiki_branch": "main"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wiki/new"):
+			body, _ := io.ReadAll(r.Body)
+			var p map[string]string
+			json.Unmarshal(body, &p)
+			dec, _ := base64.StdEncoding.DecodeString(p["content_base64"])
+			mu.Lock()
+			published[p["title"]] = string(dec)
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte("{}"))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"}); err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	home := published["Home"]
+	if strings.Contains(home, "[[") {
+		t.Fatalf("literal wikilink syntax published:\n%s", home)
+	}
+	if !strings.Contains(home, "[F1](Findings%2Ffin-1)") {
+		t.Fatalf("resolved wikilink not rewritten:\n%s", home)
+	}
+	if !strings.Contains(home, "old scan") || strings.Contains(home, "missing.md") {
+		t.Fatalf("unresolved wikilink should degrade to its alias text:\n%s", home)
+	}
+}
+
+// WS06: the second pass must repair links whose server-issued sub_url differs
+// from client-side url.PathEscape — the only authoritative addressing for
+// hierarchical page names on servers with a divergent escaping scheme.
+func TestExportWiki_SecondPassRepairsLinksWithServerSubURLs(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("see [[findings/fin-1.md|F1]]"), 0o644)
+	os.MkdirAll(filepath.Join(vault, "findings"), 0o755)
+	os.WriteFile(filepath.Join(vault, "findings", "fin-1.md"), []byte("# F1"), 0o644)
+
+	var mu sync.Mutex
+	var listCalls int
+	patched := map[string]string{} // sub_url -> decoded content
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true, "wiki_branch": "main"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+			mu.Lock()
+			listCalls++
+			first := listCalls == 1
+			mu.Unlock()
+			if first {
+				// Pre-publish listing: nothing exists yet.
+				json.NewEncoder(w).Encode([]map[string]any{})
+				return
+			}
+			// Post-publish listing: the server escapes "Findings/fin-1" with
+			// its own scheme that PathEscape cannot reproduce.
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"title": "Home", "sub_url": "Home"},
+				{"title": "Findings/fin-1", "sub_url": "Findings%2Ffin-1.-"},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wiki/new"):
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte("{}"))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/wiki/page/"):
+			body, _ := io.ReadAll(r.Body)
+			var p map[string]string
+			json.Unmarshal(body, &p)
+			dec, _ := base64.StdEncoding.DecodeString(p["content_base64"])
+			sub := strings.TrimPrefix(r.RequestURI, "/api/v1/repos/acme/kb/wiki/page/")
+			mu.Lock()
+			patched[sub] = string(dec)
+			mu.Unlock()
+			w.Write([]byte("{}"))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	sum, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"})
+	if err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sum.LinkFixes != 1 {
+		t.Fatalf("LinkFixes = %d, want 1 (only Home links to the quirky page)", sum.LinkFixes)
+	}
+	home, ok := patched["Home"]
+	if !ok {
+		t.Fatalf("Home was not re-PATCHed; patched = %v", patched)
+	}
+	if !strings.Contains(home, "](Findings%2Ffin-1.-)") {
+		t.Fatalf("repaired Home must use the server sub_url:\n%s", home)
+	}
+	if _, ok := patched["Findings%2Ffin-1.-"]; ok {
+		t.Fatalf("fin-1 has no internal links and must not be re-PATCHed")
+	}
+}
+
+// WS07 (A3 for link repair): on a steady-state re-publish against a server
+// whose sub_url escaping differs from url.PathEscape, pass 1 must render with
+// the known sub_urls so every page compares equal to the remote and is
+// skipped — no PATCH, no wiki git churn from the repair pass.
+func TestExportWiki_RepublishWithQuirkySubURLsIsNoOp(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("see [[findings/fin-1.md|F1]]"), 0o644)
+	os.MkdirAll(filepath.Join(vault, "findings"), 0o755)
+	os.WriteFile(filepath.Join(vault, "findings", "fin-1.md"), []byte("# F1"), 0o644)
+
+	// Remote state after a previous publish + repair: Home already links via
+	// the server's quirky sub_url.
+	remote := map[string]string{
+		"Home":               "see [F1](Findings%2Ffin-1.-)",
+		"Findings%2Ffin-1.-": "# F1",
+	}
+	var mu sync.Mutex
+	var writes int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true, "wiki_branch": "main"})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"title": "Home", "sub_url": "Home"},
+				{"title": "Findings/fin-1", "sub_url": "Findings%2Ffin-1.-"},
+			})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/wiki/page/"):
+			sub := strings.TrimPrefix(r.RequestURI, "/api/v1/repos/acme/kb/wiki/page/")
+			mu.Lock()
+			content := remote[sub]
+			mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]string{
+				"content_base64": base64.StdEncoding.EncodeToString([]byte(content)),
+			})
+		case r.Method == http.MethodPost || r.Method == http.MethodPatch:
+			atomic.AddInt32(&writes, 1)
+			w.Write([]byte("{}"))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	sum, err := ExportWiki(context.Background(), vault, WikiOptions{BaseURL: srv.URL, Token: "t", Owner: "acme", Repo: "kb"})
+	if err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	if sum.Skipped != 2 || sum.Updated != 0 || sum.Created != 0 || sum.LinkFixes != 0 {
+		t.Fatalf("created=%d updated=%d skipped=%d link_fixes=%d, want 0/0/2/0",
+			sum.Created, sum.Updated, sum.Skipped, sum.LinkFixes)
+	}
+	if n := atomic.LoadInt32(&writes); n != 0 {
+		t.Fatalf("steady-state re-publish performed %d write(s); link repair must not churn the wiki", n)
+	}
+}
+
 // WS04: with -forgejo-wiki-prune, KB-owned entity pages absent from the publish
 // are deleted; non-entity pages (Home) are never touched.
 func TestExportWiki_PruneDeletesStaleEntityPages(t *testing.T) {

@@ -41,32 +41,36 @@ Findings and occurrences use short aliases for display in tables and links.
 _D1 and DZ prefixes appear when rule initials conflict or are unregistered — file a PR to expand this legend._
 `
 
-const triageGuideContent = `# Triage Workflow Guide
+// triageGuideContent renders the static analyst workflow guide for the
+// configured tracker and evidence surface (Jira/Confluence by default, e.g.
+// Forgejo/wiki for the Forgejo sink).
+func triageGuideContent(tracker, surface string) string {
+	return fmt.Sprintf(`# Triage Workflow Guide
 
 ## Workflow source of truth
 
-Jira is the source of truth for analyst workflow state, ownership, and closure.
+%[1]s is the source of truth for analyst workflow state, ownership, and closure.
 The KB is the evidence and reporting surface. It lists linked analyst cases and
 keeps KB lifecycle fields only as historical scan context.
 
 ## How to work the finding
 
-1. Review the finding and occurrence evidence in Confluence.
-2. Work the analyst case in Jira.
-3. Use the Jira status, assignee, comments, and linked work items for triage state.
-4. Use ` + "`case-ticket`" + ` for low/info findings that should still open an analyst case.
-5. Use ` + "`tune-scan`" + ` when a recurring false positive needs scan-tuning follow-up.
+1. Review the finding and occurrence evidence in %[2]s.
+2. Work the analyst case in %[1]s.
+3. Use the %[1]s status, assignee, comments, and linked work items for triage state.
+4. Use `+"`case-ticket`"+` for low/info findings that should still open an analyst case.
+5. Use `+"`tune-scan`"+` when a recurring false positive needs scan-tuning follow-up.
 6. Do not close work by editing generated KB-local status fields.
 
 ## Bulk triage
 
 1. Open the definition page (e.g., CDM).
 2. Review the **False Positive Conditions** section.
-3. For each affected finding, open the linked analyst case and update Jira.
+3. For each affected finding, open the linked analyst case and update %[1]s.
 
 ## Escalation
 
-- Use the analyst Jira project for case management and triage.
+- Use the analyst %[1]s project for case management and triage.
 - Keep analyst case IDs linked from the finding or occurrence.
 - If remediation is needed, track the downstream team ticket as a linked reference rather than replacing the analyst case.
 
@@ -74,8 +78,18 @@ keeps KB lifecycle fields only as historical scan context.
 
 Generated pages may show a KB lifecycle snapshot from imported or historical data.
 Treat it as context only unless the deployment is intentionally running a
-Confluence-driven workflow.
-`
+workflow driven from %[2]s.
+`, tracker, surface)
+}
+
+// workflowSurface names the evidence-rendering surface paired with the
+// tracker: Confluence for the default Jira wording, the repo wiki otherwise.
+func (o Options) workflowSurface() string {
+	if o.trackerName() == "Jira" {
+		return "Confluence"
+	}
+	return "the KB wiki"
+}
 
 // writeLegend writes LEGEND.md (static content — no entities data needed).
 func writeLegend(root string) error {
@@ -83,8 +97,9 @@ func writeLegend(root string) error {
 }
 
 // writeTriageGuide writes TRIAGE-GUIDE.md (static workflow guide for analysts).
-func writeTriageGuide(root string) error {
-	return os.WriteFile(filepath.Join(root, "TRIAGE-GUIDE.md"), []byte(triageGuideContent), 0o644)
+func writeTriageGuide(root string, opts Options) error {
+	content := triageGuideContent(opts.trackerName(), opts.workflowSurface())
+	return os.WriteFile(filepath.Join(root, "TRIAGE-GUIDE.md"), []byte(content), 0o644)
 }
 
 // writeByScan writes by-scan.md, grouping occurrences by ScanLabel.
@@ -317,7 +332,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 			Title:     title,
 			Remedy:    remedy,
 			FindCount: len(fids),
-			FindLink:  "INDEX.md#issues",
+			FindLink:  "INDEX.md#" + opts.sectionAnchor(),
 		})
 	}
 	// Sort by find count desc, then title asc.
@@ -356,8 +371,9 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		fmt.Fprintf(&b, "_Generated: %s_\n\n", ts)
 	}
 
+	tracker := opts.trackerName()
 	b.WriteString("## Risk posture\n\n")
-	b.WriteString("_Counts are KB evidence totals, not Jira workflow state. Jira remains the source of truth for open/done ownership and closure._\n\n")
+	fmt.Fprintf(&b, "_Counts are KB evidence totals, not %[1]s workflow state. %[1]s remains the source of truth for open/done ownership and closure._\n\n", tracker)
 	b.WriteString("| Severity | Findings | Occurrences |\n")
 	b.WriteString("|---|---|---|\n")
 	for _, r := range sevRows {
@@ -379,7 +395,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	}
 
 	b.WriteString("## Recommended immediate actions\n\n")
-	b.WriteString("_Top High-severity finding groups to review against Jira workflow state:_\n\n")
+	fmt.Fprintf(&b, "_Top High-severity finding groups to review against %s workflow state:_\n\n", tracker)
 	if len(actions) == 0 {
 		b.WriteString("_No High-severity findings._\n\n")
 	} else {

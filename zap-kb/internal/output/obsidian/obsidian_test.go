@@ -1274,6 +1274,134 @@ func TestWriteVault_FindingWorkflowUsesFindingAnalystData(t *testing.T) {
 	}
 }
 
+// The finding page's occurrence rollup must keep its wikilink intact when the
+// occurrence has a param: square brackets in the alias ("[q]") terminate the
+// wikilink early and break the rendered link.
+func TestWriteVault_OccurrenceCaptionWithParamStaysLinkable(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-sqli", PluginID: "40018", Alert: "SQL Injection"}
+	finding := entities.Finding{
+		FindingID:    "find-sqli",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/rest/products/search?q=x",
+		Method:       "GET",
+		Risk:         "High",
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-sqli",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       "GET",
+		Param:        "q",
+		Risk:         "High",
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, Options{}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "findings", "find-sqli.md"))
+	if err != nil {
+		t.Fatalf("ReadFile finding page: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[[occurrences/occ-sqli.md|GET /rest/products/search (q)]]") {
+		t.Errorf("occurrence rollup wikilink malformed or missing:\n%s", body)
+	}
+	if strings.Contains(body, "(q)]]]") || strings.Contains(body, "[q]]]") {
+		t.Errorf("alias still carries link-breaking brackets:\n%s", body)
+	}
+}
+
+// With Tracker "Forgejo" and a TicketURLFn, generated prose names Forgejo and
+// repo issue refs ("owner/repo#N") become live links instead of dead text.
+func TestWriteVault_ForgejoTrackerLinkifiesRepoRefs(t *testing.T) {
+	root := t.TempDir()
+	def := entities.Definition{DefinitionID: "def-fj", PluginID: "10038", Alert: "CSP Header Not Set"}
+	finding := entities.Finding{
+		FindingID:    "find-fj",
+		DefinitionID: def.DefinitionID,
+		PluginID:     def.PluginID,
+		URL:          "https://example.com/api/login",
+		Method:       "GET",
+		Risk:         "Medium",
+		Analyst:      &entities.Analyst{TicketRefs: []string{"acme/kb#7"}},
+	}
+	occ := entities.Occurrence{
+		OccurrenceID: "occ-fj",
+		FindingID:    finding.FindingID,
+		DefinitionID: def.DefinitionID,
+		URL:          finding.URL,
+		Method:       finding.Method,
+		Risk:         "Medium",
+	}
+	opts := Options{
+		Tracker: "Forgejo",
+		TicketURLFn: func(ref string) string {
+			if ref == "acme/kb#7" {
+				return "https://forge.example/acme/kb/issues/7"
+			}
+			return ""
+		},
+	}
+	if err := WriteVault(root, entities.EntitiesFile{
+		SchemaVersion: "1",
+		Definitions:   []entities.Definition{def},
+		Findings:      []entities.Finding{finding},
+		Occurrences:   []entities.Occurrence{occ},
+	}, opts); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "findings", "find-fj.md"))
+	if err != nil {
+		t.Fatalf("ReadFile finding page: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "[acme/kb#7](https://forge.example/acme/kb/issues/7)") {
+		t.Errorf("Forgejo issue ref not linkified:\n%s", body)
+	}
+	if !strings.Contains(body, "- Workflow source: Forgejo analyst case") {
+		t.Errorf("finding workflow prose should name Forgejo:\n%s", body)
+	}
+	// The KB-finding noun is renamed to avoid colliding with Forgejo's Issues tab.
+	if !strings.Contains(body, "# Finding find-fj") || strings.Contains(body, "# Issue find-fj") {
+		t.Errorf("finding page H1 should read 'Finding', not 'Issue':\n%s", body)
+	}
+
+	idxData, err := os.ReadFile(filepath.Join(root, "INDEX.md"))
+	if err != nil {
+		t.Fatalf("ReadFile INDEX.md: %v", err)
+	}
+	idx := string(idxData)
+	if !strings.Contains(idx, "## Forgejo references") {
+		t.Errorf("INDEX should carry the Forgejo references section:\n%s", idx)
+	}
+	if strings.Contains(idx, "Jira") {
+		t.Errorf("INDEX must not mention Jira when the tracker is Forgejo:\n%s", idx)
+	}
+	if !strings.Contains(idx, "## Findings") || strings.Contains(idx, "## Issues") {
+		t.Errorf("INDEX section should be 'Findings', not 'Issues':\n%s", idx)
+	}
+	if !strings.Contains(idx, "[Findings](issues.md)") {
+		t.Errorf("INDEX quick-nav should link 'Findings':\n%s", idx)
+	}
+
+	// The findings section page must exist and be titled "Findings".
+	secData, err := os.ReadFile(filepath.Join(root, "issues.md"))
+	if err != nil {
+		t.Fatalf("ReadFile issues.md: %v", err)
+	}
+	if !strings.HasPrefix(string(secData), "# Findings") {
+		t.Errorf("section page should be titled Findings:\n%s", string(secData)[:40])
+	}
+}
+
 func TestWriteVault_OccurrenceTrafficRendersHTTPBlocks(t *testing.T) {
 	root := t.TempDir()
 	def := entities.Definition{DefinitionID: "def-traffic", PluginID: "10001", Alert: "Traffic Alert"}
@@ -1472,7 +1600,7 @@ func TestWriteVault_ByDomainOmitsLocalStatusBuckets(t *testing.T) {
 
 func TestWriteTriageGuideUsesJiraAsWorkflowSource(t *testing.T) {
 	root := t.TempDir()
-	if err := writeTriageGuide(root); err != nil {
+	if err := writeTriageGuide(root, Options{}); err != nil {
 		t.Fatalf("writeTriageGuide: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "TRIAGE-GUIDE.md"))
@@ -1485,6 +1613,26 @@ func TestWriteTriageGuideUsesJiraAsWorkflowSource(t *testing.T) {
 	}
 	if strings.Contains(guide, "| open | New, not yet reviewed |") || strings.Contains(guide, "Status values") {
 		t.Fatalf("triage guide should not document generated KB status as the workflow:\n%s", guide)
+	}
+}
+
+// With a non-Jira tracker configured the guide must not mention Jira or
+// Confluence at all — the prose follows the configured tracker/surface.
+func TestWriteTriageGuideTrackerAgnostic(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTriageGuide(root, Options{Tracker: "Forgejo"}); err != nil {
+		t.Fatalf("writeTriageGuide: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "TRIAGE-GUIDE.md"))
+	if err != nil {
+		t.Fatalf("ReadFile TRIAGE-GUIDE.md: %v", err)
+	}
+	guide := string(data)
+	if !strings.Contains(guide, "Forgejo is the source of truth") {
+		t.Fatalf("triage guide should direct analysts to Forgejo:\n%s", guide)
+	}
+	if strings.Contains(guide, "Jira") || strings.Contains(guide, "Confluence") {
+		t.Fatalf("Forgejo triage guide must not reference the Atlassian stack:\n%s", guide)
 	}
 }
 

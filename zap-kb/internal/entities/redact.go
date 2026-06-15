@@ -3,6 +3,7 @@ package entities
 import (
 	neturl "net/url"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -18,6 +19,12 @@ import (
 //	notes    - zero analyst-authored free text (Analyst.Notes, Analyst.Rationale)
 //	           and scanner-supplied reproduction steps (Reproduce.Steps[]) that
 //	           can inadvertently carry pasted credentials or PII.
+//	secrets  - scrub credential/PII patterns (password hashes, emails, JWTs)
+//	           OUT OF the free-text scanner evidence (Occurrence.Evidence,
+//	           Attack, Name, Reproduce.Curl) while leaving the rest of the
+//	           snippet intact — unlike body, which drops the whole field. Keeps
+//	           captured secrets off a shared KB without gutting actionable
+//	           evidence (e.g. "SQLITE_ERROR: incomplete input" survives).
 type RedactOptions struct {
 	Domain  bool
 	Query   bool
@@ -26,6 +33,32 @@ type RedactOptions struct {
 	Headers bool
 	Body    bool
 	Notes   bool
+	Secrets bool
+}
+
+var (
+	// reSecretEmail matches email addresses captured in evidence (PII).
+	reSecretEmail = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
+	// reSecretJWT matches a JWT (header.payload.signature, base64url) — these
+	// carry session/identity material and, in Juice Shop's case, a password hash.
+	reSecretJWT = regexp.MustCompile(`eyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]+`)
+	// reSecretHash matches a contiguous hex run the length of a common digest
+	// (MD5/SHA-1/SHA-256/…), i.e. a captured password/credential hash. Bounded
+	// by \b so occurrence IDs and short scan tokens are not caught.
+	reSecretHash = regexp.MustCompile(`\b[a-fA-F0-9]{32,128}\b`)
+)
+
+// redactSecretsText scrubs credential/PII patterns from a free-text scanner
+// string, replacing each match with a labeled placeholder. JWT is scrubbed
+// before the hash rule so its base64url segments are not partially masked.
+func redactSecretsText(s string) string {
+	if s == "" {
+		return s
+	}
+	s = reSecretJWT.ReplaceAllString(s, "<redacted-token>")
+	s = reSecretEmail.ReplaceAllString(s, "<redacted-email>")
+	s = reSecretHash.ReplaceAllString(s, "<redacted-hash>")
+	return s
 }
 
 func ParseRedactOptionList(list string) RedactOptions {
@@ -46,6 +79,8 @@ func ParseRedactOptionList(list string) RedactOptions {
 			ro.Body = true
 		case "notes", "note":
 			ro.Notes = true
+		case "secrets", "secret", "pii", "credentials":
+			ro.Secrets = true
 		}
 	}
 	return ro
@@ -59,6 +94,9 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 		if ro.Notes && e.Findings[i].Analyst != nil {
 			e.Findings[i].Analyst.Notes = ""
 			e.Findings[i].Analyst.Rationale = ""
+		}
+		if ro.Secrets {
+			e.Findings[i].Name = redactSecretsText(e.Findings[i].Name)
 		}
 		if ro.Domain || ro.Query {
 			e.Findings[i].URL = redactURL(e.Findings[i].URL, ro)
@@ -116,6 +154,16 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 			e.Occurrences[i].Evidence = ""
 			if e.Occurrences[i].Reproduce != nil {
 				e.Occurrences[i].Reproduce.Curl = ""
+			}
+		}
+		// secrets mode: surgically scrub credential/PII patterns from the
+		// free-text scanner fields, keeping the rest of the evidence usable.
+		if ro.Secrets {
+			e.Occurrences[i].Evidence = redactSecretsText(e.Occurrences[i].Evidence)
+			e.Occurrences[i].Attack = redactSecretsText(e.Occurrences[i].Attack)
+			e.Occurrences[i].Name = redactSecretsText(e.Occurrences[i].Name)
+			if e.Occurrences[i].Reproduce != nil {
+				e.Occurrences[i].Reproduce.Curl = redactSecretsText(e.Occurrences[i].Reproduce.Curl)
 			}
 		}
 		// auth mode: scrub auth headers embedded in Reproduce.Curl

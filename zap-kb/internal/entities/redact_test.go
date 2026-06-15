@@ -31,6 +31,49 @@ func makeOccurrenceWithRawHeaders(cookie, auth string) Occurrence {
 	}
 }
 
+// TestRedactSecrets_ScrubsCredentialPatternsKeepsEvidence verifies the secrets
+// mode removes captured password hashes, emails, and JWTs from free-text
+// evidence while leaving the actionable parts of the snippet intact.
+func TestRedactSecrets_ScrubsCredentialPatternsKeepsEvidence(t *testing.T) {
+	e := &EntitiesFile{
+		Occurrences: []Occurrence{{
+			OccurrenceID: "occ-1",
+			Evidence:     "user_id=23 received user id=1 email=admin@juice-sh.op role=admin hash=dd00510c9c75a85d9e43e1920b31d8e4",
+			Attack:       "token eyJhbGciOiJIUzI1Ni9.eyJzdWIiOiIxIn0.abc123",
+		}},
+	}
+	RedactEntities(e, RedactOptions{Secrets: true})
+	ev := e.Occurrences[0].Evidence
+	if strings.Contains(ev, "dd00510c9c75a85d9e43e1920b31d8e4") {
+		t.Errorf("password hash survived: %q", ev)
+	}
+	if strings.Contains(ev, "admin@juice-sh.op") {
+		t.Errorf("email survived: %q", ev)
+	}
+	// Useful, non-secret context must survive.
+	if !strings.Contains(ev, "role=admin") || !strings.Contains(ev, "user_id=23") {
+		t.Errorf("redaction gutted useful evidence: %q", ev)
+	}
+	if strings.Contains(e.Occurrences[0].Attack, "eyJhbGci") {
+		t.Errorf("JWT survived in attack: %q", e.Occurrences[0].Attack)
+	}
+}
+
+// A non-secret hex token shorter than a digest must NOT be scrubbed (no
+// false-positive masking of scan/occurrence IDs).
+func TestRedactSecrets_LeavesShortHexAndPlainEvidence(t *testing.T) {
+	e := &EntitiesFile{
+		Occurrences: []Occurrence{{
+			OccurrenceID: "occ-1",
+			Evidence:     "SQLITE_ERROR: incomplete input (run 20cbbd98)",
+		}},
+	}
+	RedactEntities(e, RedactOptions{Secrets: true})
+	if e.Occurrences[0].Evidence != "SQLITE_ERROR: incomplete input (run 20cbbd98)" {
+		t.Errorf("plain evidence wrongly altered: %q", e.Occurrences[0].Evidence)
+	}
+}
+
 // Raw header blocks are now scrubbed line-by-line (not blanked): the targeted
 // secret is removed while the rest of the evidence survives. These tests assert
 // the not-contains-secret invariant per redaction category.

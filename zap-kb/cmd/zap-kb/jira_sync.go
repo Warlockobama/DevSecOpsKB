@@ -160,19 +160,14 @@ func shouldCarryForwardOccurrenceMeta(sourceTool string) bool {
 	}
 }
 
-func writeVaultSnapshot(root string, ent entities.EntitiesFile, scanLabel, siteLabel, zapBase, jiraBase string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string) error {
-	return obsidian.WriteVault(root, ent, obsidian.Options{
-		ScanLabel:                  scanLabel,
-		SiteLabel:                  siteLabel,
-		ZapBaseURL:                 zapBase,
-		JiraBaseURL:                jiraBase,
-		JiraStatusByKey:            jiraStatusByKey,
-		JiraAssigneeByKey:          jiraAssigneeByKey,
-		JiraStatusSynced:           jiraStatusSynced,
-		TriageGuidanceFn:           zapmeta.TriageGuidance,
-		CarryForwardOccurrenceMeta: shouldCarryForwardOccurrenceMeta(ent.SourceTool),
-		CarryForwardFindingMeta:    shouldCarryForwardOccurrenceMeta(ent.SourceTool),
-	})
+// writeVaultSnapshot writes the Obsidian vault with the pipeline's standard
+// triage guidance and carry-forward policy applied on top of the caller's
+// sink-specific options (Jira fields, tracker name, ticket linkifier, …).
+func writeVaultSnapshot(root string, ent entities.EntitiesFile, opts obsidian.Options) error {
+	opts.TriageGuidanceFn = zapmeta.TriageGuidance
+	opts.CarryForwardOccurrenceMeta = shouldCarryForwardOccurrenceMeta(ent.SourceTool)
+	opts.CarryForwardFindingMeta = shouldCarryForwardOccurrenceMeta(ent.SourceTool)
+	return obsidian.WriteVault(root, ent, opts)
 }
 
 func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opts confluencePublishOptions) (confluence.VaultSummary, error) {
@@ -183,7 +178,15 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		return confluence.VaultSummary{}, fmt.Errorf("vault path is required for Confluence export")
 	}
 	if strings.TrimSpace(format) != "obsidian" {
-		if err := writeVaultSnapshot(vault, ent, opts.ScanLabel, opts.SiteLabel, opts.ZapBaseURL, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced); err != nil {
+		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+			ScanLabel:         opts.ScanLabel,
+			SiteLabel:         opts.SiteLabel,
+			ZapBaseURL:        opts.ZapBaseURL,
+			JiraBaseURL:       opts.JiraBaseURL,
+			JiraStatusByKey:   opts.JiraStatusByKey,
+			JiraAssigneeByKey: opts.JiraAssigneeByKey,
+			JiraStatusSynced:  opts.JiraStatusSynced,
+		}); err != nil {
 			return confluence.VaultSummary{}, fmt.Errorf("write obsidian for confluence: %w", err)
 		}
 	}

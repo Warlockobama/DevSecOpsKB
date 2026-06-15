@@ -108,6 +108,7 @@ func main() {
 		forgejoConcurrency  int
 		forgejoDryRun       bool
 		forgejoSyncKBStatus bool
+		forgejoIssues       bool
 		forgejoWiki         bool
 		forgejoWikiPrune    bool
 		forgejoRedact       string
@@ -199,9 +200,10 @@ func main() {
 	flag.IntVar(&forgejoConcurrency, "forgejo-concurrency", 3, "Max parallel Forgejo API requests (default: 3, max: 5).")
 	flag.BoolVar(&forgejoDryRun, "forgejo-dry-run", false, "Dry-run Forgejo export (log instead of POST).")
 	flag.BoolVar(&forgejoSyncKBStatus, "forgejo-sync-kb-status", false, "Write mapped Forgejo issue state/labels back into KB analyst status. By default Forgejo is the workflow source of truth and KB state is not mutated.")
+	flag.BoolVar(&forgejoIssues, "forgejo-issues", true, "Create/track one Forgejo issue per finding. Set false for wiki-only publishing, leaving the Issues tab free for other use (e.g. analyst-filed tuning requests).")
 	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
 	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
-	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes; 'off' disables. The local entities file keeps unredacted data.")
+	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes,secrets; 'off' disables. 'secrets' scrubs credential/PII patterns (hashes, emails, JWTs) from evidence. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
@@ -656,7 +658,12 @@ func main() {
 			log.Fatalf("write json entities: %v", err)
 		}
 	case "obsidian":
-		if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, nil, nil, ""); err != nil {
+		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+			ScanLabel:   scanLabel,
+			SiteLabel:   siteLabel,
+			ZapBaseURL:  zapBase,
+			JiraBaseURL: jiraURL,
+		}); err != nil {
 			log.Fatalf("write obsidian: %v", err)
 		}
 	default:
@@ -796,7 +803,15 @@ func main() {
 			}
 		}
 		if format == "obsidian" && !jiraDryRun && hasFindingTicketRefs(ent) {
-			if err := writeVaultSnapshot(vault, ent, scanLabel, siteLabel, zapBase, jiraURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced); err != nil {
+			if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+				ScanLabel:         scanLabel,
+				SiteLabel:         siteLabel,
+				ZapBaseURL:        zapBase,
+				JiraBaseURL:       jiraURL,
+				JiraStatusByKey:   jiraStatusByKey,
+				JiraAssigneeByKey: jiraAssigneeByKey,
+				JiraStatusSynced:  jiraStatusSynced,
+			}); err != nil {
 				log.Fatalf("rewrite obsidian after jira: %v", err)
 			}
 		}
@@ -853,6 +868,9 @@ func main() {
 	// model, so any detection source feeding the KB publishes through it.
 	var forgejoFailures int
 	if strings.TrimSpace(forgejoURL) != "" {
+		if !forgejoIssues && !forgejoWiki {
+			log.Fatalf("-forgejo-issues=false with -forgejo-wiki unset leaves nothing to publish; enable one")
+		}
 		var extraLabels []string
 		for _, l := range strings.Split(forgejoLabels, ",") {
 			if l = strings.TrimSpace(l); l != "" {
@@ -874,6 +892,7 @@ func main() {
 			Concurrency:   forgejoConcurrency,
 			DryRun:        forgejoDryRun,
 			SyncKBStatus:  forgejoSyncKBStatus,
+			Issues:        forgejoIssues,
 			Wiki:          forgejoWiki,
 			WikiPrune:     forgejoWikiPrune,
 			Redact:        forgejoRedact,

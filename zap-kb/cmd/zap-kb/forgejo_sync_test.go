@@ -8,10 +8,10 @@ import (
 )
 
 func TestForgejoRedactOptions(t *testing.T) {
-	// Default (empty flag value) enables credential scrubbing.
+	// Default (empty flag value) enables credential + secrets scrubbing.
 	ro, on := forgejoRedactOptions("")
-	if !on || !ro.Auth || !ro.Cookies || !ro.Headers {
-		t.Fatalf("default = (%+v, %v), want auth/cookies/headers on", ro, on)
+	if !on || !ro.Auth || !ro.Cookies || !ro.Headers || !ro.Secrets {
+		t.Fatalf("default = (%+v, %v), want auth/cookies/headers/secrets on", ro, on)
 	}
 	if ro.Domain || ro.Body || ro.Notes {
 		t.Fatalf("default enabled extra modes: %+v", ro)
@@ -26,6 +26,36 @@ func TestForgejoRedactOptions(t *testing.T) {
 	ro, on = forgejoRedactOptions("domain,body")
 	if !on || !ro.Domain || !ro.Body || ro.Auth {
 		t.Fatalf("custom = (%+v, %v), want domain+body only", ro, on)
+	}
+}
+
+func TestForgejoTicketURL(t *testing.T) {
+	fn := forgejoTicketURL("https://forge.example/", "acme", "kb")
+	cases := []struct {
+		ref  string
+		want string
+	}{
+		{"acme/kb#7", "https://forge.example/acme/kb/issues/7"},
+		{"#12", "https://forge.example/acme/kb/issues/12"},
+		{"SEC-42", ""},       // Jira key — decline so the Jira fallback applies
+		{"other/repo#3", ""}, // different repo — never claim foreign refs
+		{"https://forge.example/acme/kb/issues/9", "https://forge.example/acme/kb/issues/9"},
+	}
+	for _, c := range cases {
+		if got := fn(c.ref); got != c.want {
+			t.Errorf("forgejoTicketURL(%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+}
+
+func TestCountOccurrencesWithTraffic(t *testing.T) {
+	ent := entities.EntitiesFile{Occurrences: []entities.Occurrence{
+		{OccurrenceID: "a", Request: &entities.HTTPRequest{RawHeader: "GET / HTTP/1.1"}},
+		{OccurrenceID: "b", Response: &entities.HTTPResponse{RawHeader: "HTTP/1.1 200 OK"}},
+		{OccurrenceID: "c"},
+	}}
+	if got := countOccurrencesWithTraffic(ent); got != 2 {
+		t.Fatalf("countOccurrencesWithTraffic = %d, want 2", got)
 	}
 }
 
@@ -135,9 +165,33 @@ func TestRunForgejoPublish_ExportErrorReturnsFailure(t *testing.T) {
 		Owner:   "acme",
 		Repo:    "kb",
 		MinRisk: "medium",
+		Issues:  true,
 		Redact:  "off",
 	})
 	if failures < 1 {
 		t.Fatalf("failures=%d, want >=1 (returned, not exited)", failures)
+	}
+}
+
+// Wiki-only mode (Issues=false) must not contact the issues API at all: with an
+// unreachable host and the wiki step off, the publish is a clean no-op rather
+// than an export failure, proving per-finding issue creation is skipped.
+func TestRunForgejoPublish_WikiOnlySkipsIssues(t *testing.T) {
+	ent := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Findings:      []entities.Finding{{FindingID: "fin-1", URL: "https://t/a", Risk: "High", Occurrences: 1}},
+	}
+	failures := runForgejoPublish(ent, forgejoPublishOptions{
+		BaseURL: "http://127.0.0.1:1", // unreachable — would fail if contacted
+		Token:   "t",
+		Owner:   "acme",
+		Repo:    "kb",
+		MinRisk: "medium",
+		Issues:  false,
+		Wiki:    false,
+		Redact:  "off",
+	})
+	if failures != 0 {
+		t.Fatalf("failures=%d, want 0 (issues skipped, wiki off — nothing should be contacted)", failures)
 	}
 }

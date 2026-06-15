@@ -27,6 +27,14 @@ type Options struct {
 	ZapBaseURL string
 	// JiraBaseURL, when set, turns analyst ticket refs into live Jira browse links.
 	JiraBaseURL string
+	// Tracker names the external issue tracker referenced by generated prose
+	// ("Forgejo" for the Forgejo sink). Empty means "Jira" so existing
+	// Jira/Confluence deployments keep their wording unchanged.
+	Tracker string
+	// TicketURLFn, when non-nil, resolves an analyst ticket ref to a browse
+	// URL before the Jira-key fallback is tried (e.g. Forgejo "owner/repo#42"
+	// refs, which are not Jira keys). Return "" to decline a ref.
+	TicketURLFn func(ref string) string
 	// JiraStatusByKey carries raw Jira workflow statuses fetched at publish time.
 	JiraStatusByKey map[string]string
 	// JiraAssigneeByKey carries Jira assignee display names fetched at publish time.
@@ -60,6 +68,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	defDir := filepath.Join(root, "definitions")
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
+
+	// Tracker display name used by workflow prose ("Jira" by default).
+	tracker := opts.trackerName()
+	noCase := "No " + tracker + " case"
+	// KB-finding label + section anchor (Issue/Issues for Jira, Finding/Findings
+	// otherwise — Forgejo's own Issues tab collides with the word).
+	findNounS, findNounP := opts.findingNoun()
+	findAnchor := opts.sectionAnchor()
 
 	// Optionally carry forward analyst status and timestamps from existing
 	// occurrence files BEFORE we clear the directories. Raw scanner publishes
@@ -573,7 +589,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				findingsBySeverity[sevKey] = append(findingsBySeverity[sevKey], f)
 			}
 
-			b.WriteString("## Issues\n\n")
+			fmt.Fprintf(&b, "## %s\n\n", findNounP)
 			severityOrder := []string{"high", "medium", "low", "info"}
 			for _, sev := range severityOrder {
 				group := findingsBySeverity[sev]
@@ -637,7 +653,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					}
 				}
 				if limit < len(group) {
-					fmt.Fprintf(&b, "- _%d additional findings — [[../INDEX.md#issues|see full list]]_\n", len(group)-limit)
+					fmt.Fprintf(&b, "- _%d additional findings — [[../INDEX.md#%s|see full list]]_\n", len(group)-limit, findAnchor)
 				}
 				b.WriteString("\n")
 			}
@@ -723,7 +739,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		addStatusToYAMLStrAny(kv, "status.", sc)
 		writeYAML(&b, kv)
 
-		fmt.Fprintf(&b, "# Issue %s — %s\n\n", f.FindingID, alias)
+		fmt.Fprintf(&b, "# %s %s — %s\n\n", findNounS, f.FindingID, alias)
 		// Severity callout
 		sevTxt, _ := deriveSeverity(f.Risk, f.RiskCode)
 		b.WriteString(calloutForSeverity(sevTxt, fmt.Sprintf("Risk: %s (%s) — Confidence: %s", f.Risk, f.RiskCode, f.Confidence)))
@@ -803,8 +819,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					caption = urlBasename(o.URL)
 				}
 				if strings.TrimSpace(o.Param) != "" {
-					caption += " [" + strings.TrimSpace(o.Param) + "]"
+					// Parentheses, not square brackets: "[q]" inside a link alias
+					// terminates the wikilink early and the rendered markdown nests
+					// a bogus inner link ("[GET /search [q](url)]").
+					caption += " (" + strings.TrimSpace(o.Param) + ")"
 				}
+				caption = linkAliasSafe(caption)
 				ev := strings.TrimSpace(o.Evidence)
 				if ev != "" {
 					ev = truncate(ev, 60)
@@ -878,9 +898,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		b.WriteString("## Workflow\n\n")
 		fmt.Fprintf(&b, "- Tags: %s\n", formatListOrPlaceholder(tags, "_None_"))
-		fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(tickets, opts.JiraBaseURL, "_None_"))
+		fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(tickets, opts, "_None_"))
 		if len(tickets) > 0 {
-			b.WriteString("- Workflow source: Jira analyst case\n")
+			fmt.Fprintf(&b, "- Workflow source: %s analyst case\n", tracker)
 		}
 		fmt.Fprintf(&b, "- KB lifecycle snapshot: %s\n", titleASCII(workflowStatus))
 		if len(owners) > 0 {
@@ -938,10 +958,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		b.WriteString("### Quick triage shortcuts\n\n")
 		b.WriteString("- Set `analyst.status` to: open | triaged | fp | accepted | fixed\n")
-		b.WriteString("- Add `case-ticket` to `analyst.tags` to export low/info findings to the analyst Jira project\n")
+		fmt.Fprintf(&b, "- Add `case-ticket` to `analyst.tags` to export low/info findings to the analyst %s project\n", tracker)
 		b.WriteString("- Add ticket IDs under `analyst.ticketRefs` (YAML list)\n")
 		b.WriteString("- Add `tune-scan` to `analyst.tags` when a recurring false positive needs detection tuning follow-up\n")
-		b.WriteString("- Assign Jira cases in Jira; `analyst.owner` is retained only as a KB snapshot field\n\n")
+		fmt.Fprintf(&b, "- Assign %s cases in %s; `analyst.owner` is retained only as a KB snapshot field\n\n", tracker, tracker)
 
 		b.WriteString("### Analyst notebook\n\n")
 		b.WriteString("- Notes:\n")
@@ -1116,7 +1136,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		} else {
 			fmt.Fprintf(&b, "- Definition: %s\n", o.DefinitionID)
 		}
-		fmt.Fprintf(&b, "- Issue: [[%s|%s]]\n\n", filepath.ToSlash(filepath.Join("occurrences", "..", "findings", o.FindingID+".md")), o.FindingID)
+		fmt.Fprintf(&b, "- %s: [[%s|%s]]\n\n", findNounS, filepath.ToSlash(filepath.Join("occurrences", "..", "findings", o.FindingID+".md")), o.FindingID)
 
 		fmt.Fprintf(&b, "**Endpoint:** %s %s\n\n", o.Method, o.URL)
 
@@ -1231,8 +1251,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			fmt.Fprintf(&b, "- Tags: %s\n", strings.Join(aTags, ", "))
 		}
 		if len(workflowTickets) > 0 {
-			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(workflowTickets, opts.JiraBaseURL, "_None_"))
-			b.WriteString("- Workflow source: Jira analyst case\n")
+			fmt.Fprintf(&b, "- Analyst cases: %s\n", formatTicketRefsMarkdown(workflowTickets, opts, "_None_"))
+			fmt.Fprintf(&b, "- Workflow source: %s analyst case\n", tracker)
 		}
 		if aUpdated != "" {
 			fmt.Fprintf(&b, "- Updated: %s\n", aUpdated)
@@ -1245,7 +1265,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("_Add `analyst.notes` in front matter for findings, evidence pointers, and next steps._\n\n")
 		}
 
-		b.WriteString("\n> **Workflow note:** use Jira for analyst workflow state. This page is the evidence view; keep `analyst.ticketRefs`, notes, and tags aligned with the linked analyst case. Pull-based workflow writeback is legacy-only.\n")
+		fmt.Fprintf(&b, "\n> **Workflow note:** use %s for analyst workflow state. This page is the evidence view; keep `analyst.ticketRefs`, notes, and tags aligned with the linked analyst case. Pull-based workflow writeback is legacy-only.\n", tracker)
 		// Governance prompts
 		b.WriteString("\n### Governance\n\n")
 		b.WriteString("- False positive reason: \n")
@@ -1332,7 +1352,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				sevParts = append(sevParts, fmt.Sprintf("%s: %d", entry.Label, c))
 			}
 		}
-		summaryLine := fmt.Sprintf("Scan: %s (domain: %s) | Issues: %d | Occurrences: %d", scanName, domainLabel, totalIssues, totalOcc)
+		summaryLine := fmt.Sprintf("Scan: %s (domain: %s) | %s: %d | Occurrences: %d", scanName, domainLabel, findNounP, totalIssues, totalOcc)
 		if len(sevParts) > 0 {
 			summaryLine += " | " + strings.Join(sevParts, " ")
 		}
@@ -1341,7 +1361,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		b.WriteString("## Quick navigation\n")
 		b.WriteString("- [Triage board](triage-board.md)\n")
-		b.WriteString("- [Issues](issues.md)\n")
+		fmt.Fprintf(&b, "- [%s](issues.md)\n", findNounP)
 		b.WriteString("- [Occurrences](occurrences.md)\n")
 		b.WriteString("- [Rules](rules.md)\n")
 		b.WriteString("- [By domain](by-domain.md)\n")
@@ -1351,22 +1371,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString("- [Executive Summary](EXECUTIVE-SUMMARY.md)\n")
 		b.WriteString("\n")
 
-		jiraIssueCounts := map[string]int{}
+		trackerIssueCounts := map[string]int{}
 		for _, is := range issueSummaries {
-			jiraIssueCounts[jiraWorkflowBucket(is.Tickets, opts.JiraStatusByKey)]++
+			trackerIssueCounts[workflowBucket(is.Tickets, opts.JiraStatusByKey, tracker)]++
 		}
-		jiraOccurrenceCounts := map[string]int{}
+		trackerOccurrenceCounts := map[string]int{}
 		for _, o := range ef.Occurrences {
-			jiraOccurrenceCounts[jiraWorkflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey)]++
+			trackerOccurrenceCounts[workflowBucket(occurrenceTicketRefs(o, findByID), opts.JiraStatusByKey, tracker)]++
 		}
 
-		triageSection.WriteString("## Jira references\n\n")
-		triageSection.WriteString("Analyst workflow status comes from Jira. The KB lists linked analyst cases and keeps lifecycle status as a historical snapshot only.\n\n")
-		triageSection.WriteString("| Analyst cases | Issues | Occurrences |\n| --- | --- | --- |\n")
-		for _, bucket := range sortedWorkflowBuckets(jiraIssueCounts, jiraOccurrenceCounts) {
-			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", bucket, jiraIssueCounts[bucket], jiraOccurrenceCounts[bucket])
+		fmt.Fprintf(&triageSection, "## %s references\n\n", tracker)
+		fmt.Fprintf(&triageSection, "Analyst workflow status comes from %s. The KB lists linked analyst cases and keeps lifecycle status as a historical snapshot only.\n\n", tracker)
+		fmt.Fprintf(&triageSection, "| Analyst cases | %s | Occurrences |\n| --- | --- | --- |\n", findNounP)
+		for _, bucket := range sortedWorkflowBuckets(trackerIssueCounts, trackerOccurrenceCounts) {
+			fmt.Fprintf(&triageSection, "| %s | %d | %d |\n", escapeTable(bucket), trackerIssueCounts[bucket], trackerOccurrenceCounts[bucket])
 		}
-		triageSection.WriteString("\n_No Jira case_ means no linked analyst case was present in `analyst.ticketRefs`. Low and informational findings need the `case-ticket` tag when they should open a Jira case.\n")
+		fmt.Fprintf(&triageSection, "\n_%s_ means no linked analyst case was present in `analyst.ticketRefs`. Low and informational findings need the `case-ticket` tag when they should open a %s case.\n", noCase, tracker)
 		triageSection.WriteString("\n")
 		b.WriteString(triageSection.String())
 
@@ -1402,7 +1422,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					rule = "Rule"
 				}
 				endpoint := fmt.Sprintf("%s %s", strings.TrimSpace(is.Method), neuterURL(is.URL))
-				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Cases: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, formatTicketRefsMarkdown(is.Tickets, opts.JiraBaseURL, "No Jira case"))
+				fmt.Fprintf(&b, "- [%s](%s) - %s | %s | Cases: %s\n", is.Alias, is.Link, titleASCII(is.Severity), endpoint, formatTicketRefsMarkdown(is.Tickets, opts, noCase))
 				fmt.Fprintf(&b, "  Rule: %s\n", rule)
 			}
 			b.WriteString("\n")
@@ -1421,9 +1441,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 
 		// Issues table — operational rules are excluded and shown separately below.
 		if len(issueSummaries) > 0 {
-			b.WriteString("## Issues\n")
+			fmt.Fprintf(&b, "## %s\n", findNounP)
 			b.WriteString("Sorted by severity, then endpoint.\n\n")
-			b.WriteString("| Severity | Issue | Endpoint | Analyst Cases | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&b, "| Severity | %s | Endpoint | Analyst Cases | Occurrences | Rule |\n| --- | --- | --- | --- | --- | --- |\n", findNounS)
 			allIssues := append([]issueSummary(nil), issueSummaries...)
 			sortIssues(allIssues)
 			for _, is := range allIssues {
@@ -1433,10 +1453,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				rule := fallbackString(is.RuleTitle, "Rule")
 				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | %s | %d | %s |\n",
 					titleASCII(is.Severity), is.Alias, is.Link,
-					strings.TrimSpace(is.Method), strings.TrimSpace(is.URL),
-					formatTicketRefsMarkdown(is.Tickets, opts.JiraBaseURL, "No Jira case"),
+					strings.TrimSpace(is.Method), escapeTable(is.URL),
+					formatTicketRefsMarkdown(is.Tickets, opts, noCase),
 					is.Occurrences,
-					rule,
+					escapeTable(rule),
 				)
 			}
 			b.WriteString("\n")
@@ -1476,7 +1496,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Occurrence table
 		if totalOcc > 0 {
 			b.WriteString("## Occurrences\n\n")
-			b.WriteString("| Occurrence | Endpoint | Param | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&b, "| Occurrence | Endpoint | Param | Severity | Analyst Cases | %s |\n| --- | --- | --- | --- | --- | --- |\n", findNounS)
 			tmpOccs := make([]entities.Occurrence, len(ef.Occurrences))
 			copy(tmpOccs, ef.Occurrences)
 			sort.Slice(tmpOccs, func(i, j int) bool {
@@ -1507,13 +1527,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				if is, ok := issueByID[o.FindingID]; ok {
 					issueLabel = fallbackString(is.Alias, issueLabel)
 				}
-				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts.JiraBaseURL, "No Jira case")
+				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts, noCase)
 				fmt.Fprintf(&b, "| [%s](%s) | %s %s | %s | %s | %s | [%s](%s) |\n",
 					alias,
 					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
 					strings.TrimSpace(o.Method),
-					strings.TrimSpace(o.URL),
-					param,
+					escapeTable(o.URL),
+					escapeTable(param),
 					titleASCII(sevTxt),
 					analystCases,
 					issueLabel,
@@ -1545,7 +1565,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					break
 				}
 				fmt.Fprintf(&b, "| [%s (Plugin %s)](%s) | %d | %d | %d | %d | %d |\n",
-					ds.Title, ds.Plugin, ds.Link,
+					escapeTable(ds.Title), ds.Plugin, ds.Link,
 					ds.Severity["high"], ds.Severity["medium"], ds.Severity["low"], ds.Severity["info"],
 					ds.Total,
 				)
@@ -1556,7 +1576,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		// Domain table (this run)
 		if len(domainTotals) > 0 {
 			domainSection.WriteString("## By domain\n\n")
-			domainSection.WriteString("Workflow status comes from Jira. This page groups exposure by domain and severity only.\n\n")
+			fmt.Fprintf(&domainSection, "Workflow status comes from %s. This page groups exposure by domain and severity only.\n\n", tracker)
 			domainSection.WriteString("| Domain | Occurrences | High | Medium | Low | Info |\n| --- | --- | --- | --- | --- | --- |\n")
 			var doms []string
 			for d := range domainTotals {
@@ -1566,7 +1586,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			for _, d := range doms {
 				ss := domainSeverityCounts[d]
 				fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d |\n",
-					d, domainTotals[d],
+					escapeTable(d), domainTotals[d],
 					ss["high"], ss["medium"], ss["low"], ss["info"],
 				)
 			}
@@ -1645,7 +1665,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 							dateRange = st.minDate + " \u2192 " + st.maxDate
 						}
 						fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d | %s |\n",
-							sn, st.count, st.high, st.med, st.low, st.info, dateRange,
+							escapeTable(sn), st.count, st.high, st.med, st.low, st.info, dateRange,
 						)
 					}
 					domainSection.WriteString("\n")
@@ -1665,7 +1685,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			sort.Strings(scans)
 			for _, s := range scans {
-				fmt.Fprintf(&b, "| %s | %d |\n", s, histScanTotals[s])
+				fmt.Fprintf(&b, "| %s | %d |\n", escapeTable(s), histScanTotals[s])
 			}
 			b.WriteString("\n")
 		}
@@ -1674,7 +1694,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		if err := os.WriteFile(index, []byte(indexContent), 0o644); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "issues.md", "Issues", extractMarkdownSection(indexContent, "Issues")); err != nil {
+		if err := writeSectionPage(root, "issues.md", findNounP, extractMarkdownSection(indexContent, findNounP)); err != nil {
 			return err
 		}
 		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(indexContent, "Occurrences")); err != nil {
@@ -1716,7 +1736,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			if len(openFindings) > 0 {
 				var qb strings.Builder
 				qb.WriteString("## Priority evidence queue\n\n")
-				qb.WriteString("_Severity-sorted KB evidence. Jira remains the source of truth for open/done workflow state._\n\n")
+				fmt.Fprintf(&qb, "_Severity-sorted KB evidence. %s remains the source of truth for open/done workflow state._\n\n", tracker)
 				sevBands := []struct {
 					Label string
 					Key   string
@@ -1824,7 +1844,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				tc.WriteString("Tag a finding with `tune-scan` (YAML `analyst.tags`) when a recurring false positive needs detection-tuning work, or let the recurring-FP heuristic promote it automatically.\n")
 			} else {
 				fmt.Fprintf(&tc, "Total: **%d**\n\n", len(tuningCandidates))
-				tc.WriteString("| Issue | Rule | Endpoint | Scans seen | `tune-scan` | Owner | Tickets |\n")
+				fmt.Fprintf(&tc, "| %s | Rule | Endpoint | Scans seen | `tune-scan` | Owner | Tickets |\n", findNounS)
 				tc.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 				for _, is := range tuningCandidates {
 					ruleTitle := fallbackString(is.RuleTitle, "Rule")
@@ -1845,8 +1865,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					if len(is.Tickets) > 0 {
 						tickets = strings.Join(is.Tickets, ", ")
 					}
-					fmt.Fprintf(&tc, "| [[%s|%s]] | %s | %s | %s | %s | %s | %s |\n",
-						is.Link, fallbackString(is.Alias, is.PluginID), ruleTitle, endpoint, scans, tuneTag, owner, tickets)
+					// Standard md link, not a wikilink: the "|" inside [[link|alias]]
+					// splits the table cell in any CommonMark renderer (Forgejo wiki,
+					// GitHub) and needs escaping even in Obsidian.
+					fmt.Fprintf(&tc, "| [%s](%s) | %s | %s | %s | %s | %s | %s |\n",
+						fallbackString(is.Alias, is.PluginID), is.Link, escapeTable(ruleTitle), escapeTable(endpoint), scans, tuneTag, escapeTable(owner), escapeTable(tickets))
 				}
 				tc.WriteString("\nWorkflow: investigate the rule (threshold, strength, or scope), open a detection-tuning task in your normal queue, and clear the `tune-scan` tag once the scanner config is updated.\n")
 			}
@@ -1870,14 +1893,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			var spot strings.Builder
 			spot.WriteString("# Latest scan spotlight\n\n")
 			spot.WriteString(fmt.Sprintf("Scan: %s\n\n", latestScanLabel))
-			spot.WriteString("| Occurrence | Endpoint | Severity | Analyst Cases | Issue |\n| --- | --- | --- | --- | --- |\n")
+			fmt.Fprintf(&spot, "| Occurrence | Endpoint | Severity | Analyst Cases | %s |\n| --- | --- | --- | --- | --- |\n", findNounS)
 			for _, o := range newestOccs {
 				key := strings.Join([]string{strings.TrimSpace(o.FindingID), strings.TrimSpace(o.URL), strings.TrimSpace(o.Param), strings.TrimSpace(o.Attack)}, "|")
 				if !seenByKey[key] {
 					continue
 				}
 				sevTxt, _ := deriveSeverity(o.Risk, o.RiskCode)
-				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts.JiraBaseURL, "No Jira case")
+				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts, noCase)
 				issueLink := filepath.ToSlash(filepath.Join("findings", o.FindingID+".md"))
 				issueLabel := strings.TrimSpace(o.FindingID)
 				if is, ok := issueByID[o.FindingID]; ok {
@@ -1886,7 +1909,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				fmt.Fprintf(&spot, "| [%s](%s) | %s %s | %s | %s | [%s](%s) |\n",
 					occAliasUltraCompact(o, ""),
 					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
-					strings.TrimSpace(o.Method), strings.TrimSpace(o.URL),
+					strings.TrimSpace(o.Method), escapeTable(o.URL),
 					titleASCII(sevTxt),
 					analystCases,
 					issueLabel, issueLink)
@@ -1900,7 +1923,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	if err := writeLegend(root); err != nil {
 		return err
 	}
-	if err := writeTriageGuide(root); err != nil {
+	if err := writeTriageGuide(root, opts); err != nil {
 		return err
 	}
 	if err := writeByScan(root, ef, opts); err != nil {
@@ -2120,6 +2143,14 @@ func findAliasUltraCompact(f entities.Finding, ruleName string) string {
 		return acro + "-" + code
 	}
 	return acro + " " + base + "-" + code
+}
+
+// linkAliasSafe makes a string safe to use as link display text (wikilink
+// alias or markdown link text): square brackets nest/terminate link syntax in
+// both Obsidian and CommonMark, so they are swapped for parentheses.
+func linkAliasSafe(s string) string {
+	s = strings.ReplaceAll(s, "[", "(")
+	return strings.ReplaceAll(s, "]", ")")
 }
 
 func occAliasUltraCompact(o entities.Occurrence, ruleName string) string {
@@ -2998,19 +3029,45 @@ func formatListOrPlaceholder(items []string, placeholder string) string {
 	return strings.Join(items, ", ")
 }
 
-func formatTicketRefsMarkdown(refs []string, jiraBaseURL, placeholder string) string {
+// trackerName returns the display name of the external issue tracker for
+// generated prose, defaulting to Jira for backward compatibility.
+func (o Options) trackerName() string {
+	if t := strings.TrimSpace(o.Tracker); t != "" {
+		return t
+	}
+	return "Jira"
+}
+
+// findingNoun returns the singular/plural KB-finding label used in generated
+// page text. On the default (Jira) tracker it stays "Issue"/"Issues" so the
+// Confluence path and its anchors are unchanged; on any other tracker (e.g.
+// Forgejo, whose own Issues tab collides with the word) it becomes
+// "Finding"/"Findings". sectionAnchor returns the matching lowercase anchor.
+func (o Options) findingNoun() (singular, plural string) {
+	if o.trackerName() == "Jira" {
+		return "Issue", "Issues"
+	}
+	return "Finding", "Findings"
+}
+
+func (o Options) sectionAnchor() string {
+	_, plural := o.findingNoun()
+	return strings.ToLower(plural)
+}
+
+func formatTicketRefsMarkdown(refs []string, opts Options, placeholder string) string {
 	items := trimStrings(refs)
 	if len(items) == 0 {
 		return placeholder
 	}
 	formatted := make([]string, 0, len(items))
 	for _, ref := range items {
-		formatted = append(formatted, formatTicketRefMarkdown(ref, jiraBaseURL))
+		formatted = append(formatted, formatTicketRefMarkdown(ref, opts))
 	}
 	return strings.Join(formatted, ", ")
 }
 
-func formatTicketRefMarkdown(ref, jiraBaseURL string) string {
+func formatTicketRefMarkdown(ref string, opts Options) string {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return ""
@@ -3018,8 +3075,13 @@ func formatTicketRefMarkdown(ref, jiraBaseURL string) string {
 	if isHTTPURL(ref) {
 		return fmt.Sprintf("[%s](%s)", ref, ref)
 	}
-	if isJiraIssueKey(ref) && strings.TrimSpace(jiraBaseURL) != "" {
-		base := strings.TrimRight(strings.TrimSpace(jiraBaseURL), "/")
+	if opts.TicketURLFn != nil {
+		if u := strings.TrimSpace(opts.TicketURLFn(ref)); u != "" {
+			return fmt.Sprintf("[%s](%s)", ref, u)
+		}
+	}
+	if isJiraIssueKey(ref) && strings.TrimSpace(opts.JiraBaseURL) != "" {
+		base := strings.TrimRight(strings.TrimSpace(opts.JiraBaseURL), "/")
 		return fmt.Sprintf("[%s](%s/browse/%s)", ref, base, ref)
 	}
 	return ref
@@ -3045,10 +3107,10 @@ func primaryJiraStatus(refs []string, statusByKey map[string]string) string {
 	return ""
 }
 
-func jiraWorkflowBucket(refs []string, statusByKey map[string]string) string {
+func workflowBucket(refs []string, statusByKey map[string]string, tracker string) string {
 	cleanRefs := trimStrings(refs)
 	if len(cleanRefs) == 0 {
-		return "No Jira case"
+		return "No " + tracker + " case"
 	}
 	var labels []string
 	for _, ref := range cleanRefs {
@@ -3062,7 +3124,7 @@ func jiraWorkflowBucket(refs []string, statusByKey map[string]string) string {
 		}
 	}
 	if len(labels) == 0 {
-		return "Linked Jira case"
+		return "Linked " + tracker + " case"
 	}
 	return strings.Join(labels, ", ")
 }
@@ -3128,10 +3190,13 @@ func sortedWorkflowBuckets(countMaps ...map[string]int) []string {
 }
 
 func workflowBucketRank(bucket string) int {
-	switch strings.ToLower(strings.TrimSpace(bucket)) {
-	case "jira status unavailable":
+	// Tracker-agnostic: "No <tracker> case" sorts last, "<tracker> status
+	// unavailable" second-to-last, real case buckets first.
+	b := strings.ToLower(strings.TrimSpace(bucket))
+	switch {
+	case strings.HasSuffix(b, "status unavailable"):
 		return 90
-	case "no jira case":
+	case strings.HasPrefix(b, "no ") && strings.HasSuffix(b, " case"):
 		return 100
 	default:
 		return 10
