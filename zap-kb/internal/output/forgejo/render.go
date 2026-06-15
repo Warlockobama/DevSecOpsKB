@@ -108,7 +108,9 @@ func classificationMarkdown(def *entities.Definition) string {
 				url = fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", t.CWEID)
 			}
 			label := fmt.Sprintf("CWE-%d", t.CWEID)
-			if n := strings.TrimSpace(t.CWEName); n != "" {
+			// Skip the name when it is unresolved and merely echoes the id
+			// (e.g. CWEName "CWE-552"), which would render "CWE-552: CWE-552".
+			if n := strings.TrimSpace(t.CWEName); n != "" && n != label {
 				label += ": " + n
 			}
 			lines = append(lines, fmt.Sprintf("- **CWE:** [%s](%s)", label, url))

@@ -2273,8 +2273,10 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 	// 4. CWE
 	if def.Taxonomy != nil && def.Taxonomy.CWEID > 0 {
 		label := fmt.Sprintf("CWE-%d", def.Taxonomy.CWEID)
-		if strings.TrimSpace(def.Taxonomy.CWEName) != "" {
-			label += ": " + def.Taxonomy.CWEName
+		// Skip the name when it is unresolved and merely echoes the id
+		// (e.g. CWEName "CWE-552"), which would render "CWE-552: CWE-552".
+		if n := strings.TrimSpace(def.Taxonomy.CWEName); n != "" && n != label {
+			label += ": " + n
 		}
 		link := fmt.Sprintf(`<a href="%s">%s</a>`, escapeAttr(cweURL(def.Taxonomy)), escapeHTML(label))
 		props = append(props, [2]string{"CWE", link})
