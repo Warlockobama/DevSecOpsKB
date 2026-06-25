@@ -195,11 +195,11 @@ func writeByScan(root string, ef entities.EntitiesFile, opts Options) error {
 		}
 
 		fmt.Fprintf(&b, "| %s | %s | %d | %d | %s | %d | %d | %d | %d |\n",
-			label,
-			domainsStr,
+			escapeTable(label),
+			escapeTable(domainsStr),
 			len(g.findings),
 			g.occCount,
-			dateRange,
+			escapeTable(dateRange),
 			g.sevCounts["high"],
 			g.sevCounts["medium"],
 			g.sevCounts["low"],
@@ -377,7 +377,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 	b.WriteString("| Severity | Findings | Occurrences |\n")
 	b.WriteString("|---|---|---|\n")
 	for _, r := range sevRows {
-		fmt.Fprintf(&b, "| %s | %d | %d |\n", r.Label, r.findings, r.occs)
+		fmt.Fprintf(&b, "| %s | %d | %d |\n", escapeTable(r.Label), r.findings, r.occs)
 	}
 	fmt.Fprintf(&b, "| **Total** | **%d** | **%d** |\n", totalFinds, totalOccs)
 	b.WriteString("\n")
@@ -388,7 +388,7 @@ func writeExecutiveSummary(root string, ef entities.EntitiesFile, opts Options, 
 		b.WriteString("|---|---|\n")
 		for _, cat := range owaspCats {
 			if owaspCounts[cat] > 0 {
-				fmt.Fprintf(&b, "| %s | %d |\n", cat, owaspCounts[cat])
+				fmt.Fprintf(&b, "| %s | %d |\n", escapeTable(cat), owaspCounts[cat])
 			}
 		}
 		b.WriteString("\n_Categories with 0 findings are omitted._\n\n")

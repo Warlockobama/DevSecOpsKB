@@ -1,0 +1,34 @@
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: kb-demo-juice-shop
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+
+  zap-kb:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: devsecopskb/zap-kb-zap:local
+    container_name: kb-demo-zap-kb
+    ports:
+      - "8090:8090"
+    command: [
+      "zap.sh", "-daemon",
+      "-host", "0.0.0.0",
+      "-port", "8090",
+      "-config", "api.disablekey=false",
+      "-config", "api.key=${ZAP_API_KEY:-changeme}",
+      "-config", "api.addrs.addr.name=.*",
+      "-config", "api.addrs.addr.regex=true"
+    ]
+    environment:
+      - JAVA_OPTS=-Xmx1g
+      - ZAP_URL=http://127.0.0.1:8090
+      - ZAP_API_KEY=${ZAP_API_KEY:-changeme}
+    volumes:
+      - ../out:/zap/wrk/out
+    depends_on:
+      - juice-shop

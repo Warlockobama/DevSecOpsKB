@@ -34,6 +34,162 @@ func minimalEF(occurrenceID string) entities.EntitiesFile {
 	}
 }
 
+func TestWriteVault_TableCellsEscapePipesForForgejo(t *testing.T) {
+	root := t.TempDir()
+	ef := entities.EntitiesFile{
+		SchemaVersion: "1",
+		GeneratedAt:   "2024-01-01T00:00:00Z",
+		Definitions: []entities.Definition{
+			{
+				DefinitionID: "def-pipe",
+				PluginID:     "10001",
+				Alert:        "Rule | Name",
+				Taxonomy:     &entities.Taxonomy{OWASPTop10: []string{"A01 | Broken Access Control"}},
+			},
+		},
+		Findings: []entities.Finding{
+			{
+				FindingID:    "find-pipe",
+				DefinitionID: "def-pipe",
+				PluginID:     "10001",
+				URL:          "http://redacted.test/path|segment",
+				Method:       "GET",
+				Risk:         "High",
+				RiskCode:     "3",
+				Analyst: &entities.Analyst{
+					Status:     "fp",
+					Owner:      "owner|team",
+					Tags:       []string{"tune-scan"},
+					TicketRefs: []string{"SEC-1|A"},
+				},
+			},
+		},
+		Occurrences: []entities.Occurrence{
+			{
+				OccurrenceID: "occ-pipe-1",
+				ScanLabel:    "scan|a",
+				ObservedAt:   "2024-01-02T00:00:00Z",
+				DefinitionID: "def-pipe",
+				FindingID:    "find-pipe",
+				URL:          "http://redacted.test/path|segment",
+				Method:       "GET",
+				Param:        "param|name",
+				Risk:         "High",
+				RiskCode:     "3",
+				Analyst:      &entities.Analyst{TicketRefs: []string{"OCC-1|B"}},
+			},
+			{
+				OccurrenceID: "occ-pipe-2",
+				ScanLabel:    "scan|b",
+				ObservedAt:   "2024-01-03T00:00:00Z",
+				DefinitionID: "def-pipe",
+				FindingID:    "find-pipe",
+				URL:          "http://redacted.test/path|segment",
+				Method:       "GET",
+				Param:        "param|name",
+				Risk:         "High",
+				RiskCode:     "3",
+			},
+		},
+	}
+
+	if err := WriteVault(root, ef, Options{SiteLabel: "domain|name"}); err != nil {
+		t.Fatalf("WriteVault: %v", err)
+	}
+
+	for _, rel := range []string{
+		"INDEX.md",
+		"DASHBOARD.md",
+		"EXECUTIVE-SUMMARY.md",
+		"by-domain.md",
+		"by-scan.md",
+		"latest-scan.md",
+		"occurrences.md",
+		"rules.md",
+		"triage-board.md",
+		"tuning-candidates.md",
+	} {
+		body := readOptionalVaultFile(t, root, rel)
+		if body == "" {
+			continue
+		}
+		assertMarkdownTablesWellFormed(t, rel, body)
+	}
+
+	index := readOptionalVaultFile(t, root, "INDEX.md")
+	for _, want := range []string{
+		"Rule \\| Name",
+		"http://redacted.test/path\\|segment",
+		"param\\|name",
+		"SEC-1\\|A",
+		"OCC-1\\|B",
+		"domain\\|name",
+		"scan\\|a",
+	} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("INDEX.md missing escaped table value %q:\n%s", want, index)
+		}
+	}
+
+	tuning := readOptionalVaultFile(t, root, "tuning-candidates.md")
+	if strings.Contains(tuning, "| [[") {
+		t.Fatalf("tuning-candidates.md should use Markdown table links, not wikilinks:\n%s", tuning)
+	}
+}
+
+func readOptionalVaultFile(t *testing.T, root, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		t.Fatalf("ReadFile %s: %v", rel, err)
+	}
+	return string(data)
+}
+
+func assertMarkdownTablesWellFormed(t *testing.T, rel, body string) {
+	t.Helper()
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	lines := strings.Split(body, "\n")
+	inTable := false
+	wantPipes := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+			inTable = false
+			wantPipes = 0
+			continue
+		}
+		gotPipes := countUnescapedTablePipes(line)
+		if !inTable {
+			inTable = true
+			wantPipes = gotPipes
+			continue
+		}
+		if gotPipes != wantPipes {
+			t.Fatalf("%s:%d table row has %d unescaped pipes, want %d:\n%s", rel, i+1, gotPipes, wantPipes, line)
+		}
+	}
+}
+
+func countUnescapedTablePipes(line string) int {
+	count := 0
+	for i := 0; i < len(line); i++ {
+		if line[i] != '|' {
+			continue
+		}
+		backslashes := 0
+		for j := i - 1; j >= 0 && line[j] == '\\'; j-- {
+			backslashes++
+		}
+		if backslashes%2 == 0 {
+			count++
+		}
+	}
+	return count
+}
+
 func TestTaxonomyRefsToStringsURLOnlyDoesNotDuplicateURL(t *testing.T) {
 	got := taxonomyRefsToStrings([]entities.TaxonomyRef{{URL: "https://example.test/ref"}})
 	if len(got) != 1 {

@@ -71,6 +71,7 @@ The project has a full agile team as Claude Code subagents. Each agent has acces
 | `dev-lead` | Code review, architecture, pattern enforcement | sonnet | Yes |
 | `qa` | Write tests, validate acceptance criteria, run suites | sonnet | Yes |
 | `security-sme` | Security review, taxonomy validation, analyst perspective | sonnet | No (read-only) |
+| `forgejo-triager` | Browses the Forgejo sink in Chrome and triages findings (label-state verdicts) | sonnet | No (drives browser) |
 | `groq-fast` | Quick lookups, explanations, boilerplate via Groq | haiku | No |
 | `groq-batch` | Batch-process multiple items via Groq | haiku | No |
 
@@ -85,6 +86,8 @@ The project has a full agile team as Claude Code subagents. Each agent has acces
 **Feature development**: Dev-lead designs → user implements → QA validates → security-sme reviews.
 
 **Backlog grooming**: Spawn `product-owner` — reviews open issues, re-prioritizes, writes new stories.
+
+**Forgejo triage**: Publish findings as Forgejo issues, then spawn `forgejo-triager` (Chrome) to browse the Issues board and triage each finding into a label-state verdict (`triaged`/`fp`/`accepted`). Default mode is `recommend` (read-only); `apply` enacts the verdicts. Full loop: [`docs/forgejo-triage-pipeline.md`](zap-kb/docs/forgejo-triage-pipeline.md).
 
 ### Parallel spawn patterns
 

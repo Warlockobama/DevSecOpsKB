@@ -1,0 +1,46 @@
+# Local Forgejo "sink" for the browse-and-triage pipeline.
+#
+# This is the human/agent-facing sink the forgejo-triager agent drives in
+# Chrome. (The Go e2e suite uses an in-process httptest mock, not this — this
+# compose exists so there is a *real* Forgejo web UI to browse and triage.)
+#
+# Quick start:
+#   docker compose -f zap-kb/docker/docker-compose.forgejo.yml up -d
+#   # wait for http://localhost:3000 to answer, then create an admin + token:
+#   docker compose -f zap-kb/docker/docker-compose.forgejo.yml exec forgejo \
+#     forgejo admin user create --admin --username analyst \
+#       --password 'analyst-pw' --email analyst@example.com
+#   docker compose -f zap-kb/docker/docker-compose.forgejo.yml exec forgejo \
+#     forgejo admin user generate-access-token --username analyst --raw \
+#       --scopes 'write:issue,write:repository'
+#
+# Then create a repo (UI at http://localhost:3000 or the API) and publish
+# findings into it with `zap-kb ... -forgejo-issues`. See
+# zap-kb/docs/forgejo-triage-pipeline.md for the full runbook.
+#
+# NOTE: port 3000 collides with the juice-shop service in
+# docker-compose.zap-kb.yml — don't run both on 3000 at once (or remap one).
+
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:11
+    container_name: kb-forgejo
+    restart: unless-stopped
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - FORGEJO__database__DB_TYPE=sqlite3
+      - FORGEJO__server__DOMAIN=localhost
+      - FORGEJO__server__ROOT_URL=http://localhost:3000/
+      - FORGEJO__server__HTTP_PORT=3000
+      # Skip the web installer so the instance is API/CLI-ready immediately.
+      - FORGEJO__security__INSTALL_LOCK=true
+      # Admin provisions analyst accounts; no open self-registration.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+    ports:
+      - "3000:3000"
+    volumes:
+      - forgejo-data:/data
+
+volumes:
+  forgejo-data:

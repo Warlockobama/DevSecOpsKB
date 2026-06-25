@@ -1,0 +1,16 @@
+bin/
+dist/
+out/
+tmp/
+.gocache-test/
+.go-telemetry/
+
+docs/data/*.json
+docs/obsidian/
+kb-new/
+
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+
+*.log

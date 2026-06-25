@@ -28,6 +28,19 @@ func TestLookupSubcommandTaxonomy(t *testing.T) {
 	}
 }
 
+func TestLookupSubcommandAtlassian(t *testing.T) {
+	handler, args, ok := lookupSubcommand([]string{"atlassian", "check"})
+	if !ok {
+		t.Fatal("expected atlassian to resolve as a subcommand")
+	}
+	if handler == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	if len(args) != 1 || args[0] != "check" {
+		t.Fatalf("unexpected remaining args: %#v", args)
+	}
+}
+
 func TestLookupSubcommandUnknown(t *testing.T) {
 	handler, args, ok := lookupSubcommand([]string{"unknown", "-flag"})
 	if ok {
