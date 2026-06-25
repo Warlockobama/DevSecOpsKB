@@ -166,7 +166,7 @@ func GenerateDashboard(root string) error {
 		sort.Strings(scans)
 		for _, s := range scans {
 			sev := scanSeverity[s]
-			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", s, scanTotals[s], sev["high"], sev["medium"], sev["low"], sev["info"])
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", escapeTable(s), scanTotals[s], sev["high"], sev["medium"], sev["low"], sev["info"])
 		}
 		b.WriteString("\n")
 	}
@@ -191,7 +191,7 @@ func GenerateDashboard(root string) error {
 		b.WriteString("| Domain | Occurrences | High | Medium | Low | Info |\n| --- | --- | --- | --- | --- | --- |\n")
 		for _, item := range items {
 			sev := domainSeverity[item.K]
-			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", item.K, item.V, sev["high"], sev["medium"], sev["low"], sev["info"])
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", escapeTable(item.K), item.V, sev["high"], sev["medium"], sev["low"], sev["info"])
 		}
 		b.WriteString("\n")
 	}
@@ -229,9 +229,9 @@ func GenerateDashboard(root string) error {
 			title = rs.ID
 		}
 		if strings.TrimSpace(rs.Info.Path) != "" {
-			fmt.Fprintf(&b, "| [%s](%s) | %d | %d | %d | %d | %d |\n", title, rs.Info.Path, rs.Severity["high"], rs.Severity["medium"], rs.Severity["low"], rs.Severity["info"], rs.Total)
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", markdownTableLink(title, rs.Info.Path), rs.Severity["high"], rs.Severity["medium"], rs.Severity["low"], rs.Severity["info"], rs.Total)
 		} else {
-			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", title, rs.Severity["high"], rs.Severity["medium"], rs.Severity["low"], rs.Severity["info"], rs.Total)
+			fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n", escapeTable(title), rs.Severity["high"], rs.Severity["medium"], rs.Severity["low"], rs.Severity["info"], rs.Total)
 		}
 	}
 	b.WriteString("\n")

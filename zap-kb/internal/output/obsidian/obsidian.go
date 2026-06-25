@@ -1451,10 +1451,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					continue
 				}
 				rule := fallbackString(is.RuleTitle, "Rule")
-				fmt.Fprintf(&b, "| %s | [%s](%s) | %s %s | %s | %d | %s |\n",
-					titleASCII(is.Severity), is.Alias, is.Link,
-					strings.TrimSpace(is.Method), escapeTable(is.URL),
-					formatTicketRefsMarkdown(is.Tickets, opts, noCase),
+				endpoint := strings.TrimSpace(strings.TrimSpace(is.Method) + " " + strings.TrimSpace(is.URL))
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %d | %s |\n",
+					escapeTable(titleASCII(is.Severity)),
+					markdownTableLink(is.Alias, is.Link),
+					escapeTable(endpoint),
+					escapeTable(formatTicketRefsMarkdown(is.Tickets, opts, noCase)),
 					is.Occurrences,
 					escapeTable(rule),
 				)
@@ -1476,9 +1478,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				b.WriteString("_Findings from tool-health rules — not actionable for the target application._\n\n")
 				b.WriteString("| Finding | Risk | Occurrences |\n|---|---|---|\n")
 				for _, is := range opIssues {
-					fmt.Fprintf(&b, "| [%s](%s) | %s | %d |\n",
-						is.Alias, is.Link,
-						titleASCII(is.Severity),
+					fmt.Fprintf(&b, "| %s | %s | %d |\n",
+						markdownTableLink(is.Alias, is.Link),
+						escapeTable(titleASCII(is.Severity)),
 						is.Occurrences,
 					)
 				}
@@ -1528,16 +1530,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					issueLabel = fallbackString(is.Alias, issueLabel)
 				}
 				analystCases := formatTicketRefsMarkdown(occurrenceTicketRefs(o, findByID), opts, noCase)
-				fmt.Fprintf(&b, "| [%s](%s) | %s %s | %s | %s | %s | [%s](%s) |\n",
-					alias,
-					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
-					strings.TrimSpace(o.Method),
-					escapeTable(o.URL),
+				endpoint := strings.TrimSpace(strings.TrimSpace(o.Method) + " " + strings.TrimSpace(o.URL))
+				fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n",
+					markdownTableLink(alias, filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md"))),
+					escapeTable(endpoint),
 					escapeTable(param),
-					titleASCII(sevTxt),
-					analystCases,
-					issueLabel,
-					issueLink,
+					escapeTable(titleASCII(sevTxt)),
+					escapeTable(analystCases),
+					markdownTableLink(issueLabel, issueLink),
 				)
 			}
 			b.WriteString("\n")
@@ -1564,8 +1564,8 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					// Remaining rows are zero due to sorting; avoid noisy blanks.
 					break
 				}
-				fmt.Fprintf(&b, "| [%s (Plugin %s)](%s) | %d | %d | %d | %d | %d |\n",
-					escapeTable(ds.Title), ds.Plugin, ds.Link,
+				fmt.Fprintf(&b, "| %s | %d | %d | %d | %d | %d |\n",
+					markdownTableLink(fmt.Sprintf("%s (Plugin %s)", ds.Title, ds.Plugin), ds.Link),
 					ds.Severity["high"], ds.Severity["medium"], ds.Severity["low"], ds.Severity["info"],
 					ds.Total,
 				)
@@ -1665,7 +1665,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 							dateRange = st.minDate + " \u2192 " + st.maxDate
 						}
 						fmt.Fprintf(&domainSection, "| %s | %d | %d | %d | %d | %d | %s |\n",
-							escapeTable(sn), st.count, st.high, st.med, st.low, st.info, dateRange,
+							escapeTable(sn), st.count, st.high, st.med, st.low, st.info, escapeTable(dateRange),
 						)
 					}
 					domainSection.WriteString("\n")
@@ -1868,8 +1868,14 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 					// Standard md link, not a wikilink: the "|" inside [[link|alias]]
 					// splits the table cell in any CommonMark renderer (Forgejo wiki,
 					// GitHub) and needs escaping even in Obsidian.
-					fmt.Fprintf(&tc, "| [%s](%s) | %s | %s | %s | %s | %s | %s |\n",
-						fallbackString(is.Alias, is.PluginID), is.Link, escapeTable(ruleTitle), escapeTable(endpoint), scans, tuneTag, escapeTable(owner), escapeTable(tickets))
+					fmt.Fprintf(&tc, "| %s | %s | %s | %s | %s | %s | %s |\n",
+						markdownTableLink(fallbackString(is.Alias, is.PluginID), is.Link),
+						escapeTable(ruleTitle),
+						escapeTable(endpoint),
+						escapeTable(scans),
+						escapeTable(tuneTag),
+						escapeTable(owner),
+						escapeTable(tickets))
 				}
 				tc.WriteString("\nWorkflow: investigate the rule (threshold, strength, or scope), open a detection-tuning task in your normal queue, and clear the `tune-scan` tag once the scanner config is updated.\n")
 			}
@@ -1906,13 +1912,13 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 				if is, ok := issueByID[o.FindingID]; ok {
 					issueLabel = fallbackString(is.Alias, issueLabel)
 				}
-				fmt.Fprintf(&spot, "| [%s](%s) | %s %s | %s | %s | [%s](%s) |\n",
-					occAliasUltraCompact(o, ""),
-					filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md")),
-					strings.TrimSpace(o.Method), escapeTable(o.URL),
-					titleASCII(sevTxt),
-					analystCases,
-					issueLabel, issueLink)
+				endpoint := strings.TrimSpace(strings.TrimSpace(o.Method) + " " + strings.TrimSpace(o.URL))
+				fmt.Fprintf(&spot, "| %s | %s | %s | %s | %s |\n",
+					markdownTableLink(occAliasUltraCompact(o, ""), filepath.ToSlash(filepath.Join("occurrences", o.OccurrenceID+".md"))),
+					escapeTable(endpoint),
+					escapeTable(titleASCII(sevTxt)),
+					escapeTable(analystCases),
+					markdownTableLink(issueLabel, issueLink))
 			}
 			if err := os.WriteFile(filepath.Join(root, "latest-scan.md"), []byte(spot.String()), 0o644); err != nil {
 				return err

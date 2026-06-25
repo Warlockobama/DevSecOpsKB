@@ -209,7 +209,3 @@ func normalizeReportBucket(s string) string {
 	}
 	return strings.ToLower(s)
 }
-
-func escapeTable(s string) string {
-	return strings.ReplaceAll(strings.TrimSpace(s), "|", "\\|")
-}
