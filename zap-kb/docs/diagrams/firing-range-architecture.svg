@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="880" viewBox="0 0 1320 880" role="img" aria-labelledby="title desc">
+  <title id="title">Firing Range to DevSecOps KB architecture</title>
+  <desc id="desc">A data-flow diagram showing a controlled vulnerable firing range, OWASP ZAP scan execution, zap-kb processing, and analyst publishing outputs.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/>
+    </marker>
+    <style>
+      .page { fill: #f8fafc; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 30px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 400; fill: #475569; }
+      .lane { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .lane-title { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 700; fill: #0f172a; letter-spacing: 0; }
+      .lane-note { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #64748b; }
+      .box { fill: #ffffff; stroke-width: 1.5; }
+      .box-title { font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .box-text { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #334155; }
+      .chip { font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; fill: #ffffff; }
+      .section { font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; fill: #334155; }
+      .arrow-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; fill: #1e293b; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 400; fill: #475569; }
+      .footer { fill: #0f172a; stroke: #0f172a; }
+      .footer-title { font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; fill: #ffffff; }
+      .footer-text { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #dbeafe; }
+      .blue { stroke: #3b82f6; }
+      .green { stroke: #22c55e; }
+      .amber { stroke: #f59e0b; }
+      .red { stroke: #ef4444; }
+      .violet { stroke: #8b5cf6; }
+      .soft-blue { fill: #eff6ff; }
+      .soft-green { fill: #f0fdf4; }
+      .soft-amber { fill: #fffbeb; }
+      .soft-red { fill: #fef2f2; }
+      .soft-violet { fill: #f5f3ff; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1320" height="880"/>
+  <text class="title" x="44" y="48">Firing Range to DevSecOps KB</text>
+  <text class="subtitle" x="44" y="76">Controlled vulnerable targets become ZAP evidence, normalized run artifacts, and analyst workflow outputs.</text>
+
+  <rect class="lane" x="36" y="106" width="306" height="610" rx="14"/>
+  <text class="lane-title" x="58" y="134">1. Firing Range Function</text>
+  <text class="lane-note" x="58" y="154">Reproducible vulnerable target surface</text>
+
+  <rect class="lane" x="374" y="106" width="270" height="610" rx="14"/>
+  <text class="lane-title" x="396" y="134">2. Scan Execution</text>
+  <text class="lane-note" x="396" y="154">ZAP spider, passive scan, active scan</text>
+
+  <rect class="lane" x="676" y="106" width="306" height="610" rx="14"/>
+  <text class="lane-title" x="698" y="134">3. zap-kb Processing</text>
+  <text class="lane-note" x="698" y="154">Stable entities model and run artifacts</text>
+
+  <rect class="lane" x="1014" y="106" width="270" height="610" rx="14"/>
+  <text class="lane-title" x="1036" y="134">4. Analyst Outputs</text>
+  <text class="lane-note" x="1036" y="154">Evidence, cases, reports, feedback</text>
+
+  <rect class="box soft-red red" x="58" y="184" width="252" height="116" rx="10"/>
+  <text class="box-title" x="78" y="211">Vulnerable Targets</text>
+  <text class="box-text" x="78" y="235">OWASP Juice Shop or public</text>
+  <text class="box-text" x="78" y="253">firing range endpoints expose</text>
+  <text class="box-text" x="78" y="271">known-bad app behavior safely.</text>
+
+  <rect class="box soft-amber amber" x="58" y="328" width="252" height="116" rx="10"/>
+  <text class="box-title" x="78" y="355">Range Controls</text>
+  <text class="box-text" x="78" y="379">Target URL, fixtures, auth state,</text>
+  <text class="box-text" x="78" y="397">scan label, and local Compose or</text>
+  <text class="box-text" x="78" y="415">Kubernetes deployment shape.</text>
+
+  <rect class="box soft-green green" x="58" y="472" width="252" height="134" rx="10"/>
+  <text class="box-title" x="78" y="499">Why It Exists</text>
+  <text class="box-text" x="78" y="523">Validate scanner coverage, KB</text>
+  <text class="box-text" x="78" y="541">normalization, evidence retention,</text>
+  <text class="box-text" x="78" y="559">and triage rules before production</text>
+  <text class="box-text" x="78" y="577">pipelines rely on them.</text>
+
+  <rect class="box soft-blue blue" x="402" y="184" width="214" height="104" rx="10"/>
+  <text class="box-title" x="422" y="211">OWASP ZAP</text>
+  <text class="box-text" x="422" y="235">API at ZAP_URL drives crawl,</text>
+  <text class="box-text" x="422" y="253">passive analysis, and active</text>
+  <text class="box-text" x="422" y="271">attack probes.</text>
+
+  <rect class="box soft-violet violet" x="402" y="326" width="214" height="116" rx="10"/>
+  <text class="box-title" x="422" y="353">Scan Orchestration</text>
+  <text class="box-text" x="422" y="377">scripts/scan-zap.sh, demo</text>
+  <text class="box-text" x="422" y="395">scripts, or CI wait for scan</text>
+  <text class="box-text" x="422" y="413">completion and collect results.</text>
+
+  <rect class="box soft-amber amber" x="402" y="480" width="214" height="116" rx="10"/>
+  <text class="box-title" x="422" y="507">Alert Export</text>
+  <text class="box-text" x="422" y="531">Live ZAP API, ZAP report JSON,</text>
+  <text class="box-text" x="422" y="549">or flattened alerts plus optional</text>
+  <text class="box-text" x="422" y="567">request/response snippets.</text>
+
+  <rect class="box soft-blue blue" x="704" y="174" width="250" height="92" rx="10"/>
+  <text class="box-title" x="724" y="201">Ingest</text>
+  <text class="box-text" x="724" y="225">Fetch or read alerts, filter by</text>
+  <text class="box-text" x="724" y="243">base URL, attach traffic evidence.</text>
+
+  <rect class="box soft-green green" x="704" y="298" width="250" height="106" rx="10"/>
+  <text class="box-title" x="724" y="325">Normalize and Dedup</text>
+  <text class="box-text" x="724" y="349">Definitions: rule metadata</text>
+  <text class="box-text" x="724" y="367">Findings: analyst-facing issues</text>
+  <text class="box-text" x="724" y="385">Occurrences: scan-specific proof</text>
+
+  <rect class="box soft-violet violet" x="704" y="436" width="250" height="120" rx="10"/>
+  <text class="box-title" x="724" y="463">Enrich and Protect</text>
+  <text class="box-text" x="724" y="487">MITRE, CWE, CAPEC, ATT&amp;CK,</text>
+  <text class="box-text" x="724" y="505">CVSS estimates, detection links,</text>
+  <text class="box-text" x="724" y="523">FP guidance, and redaction.</text>
+
+  <rect class="box soft-amber amber" x="704" y="588" width="250" height="92" rx="10"/>
+  <text class="box-title" x="724" y="615">Portable Contract</text>
+  <text class="box-text" x="724" y="639">entities.json, run.json, kb.zip</text>
+  <text class="box-text" x="724" y="657">carry normalized evidence forward.</text>
+
+  <rect class="box soft-green green" x="1042" y="174" width="214" height="108" rx="10"/>
+  <text class="box-title" x="1062" y="201">Obsidian Vault</text>
+  <text class="box-text" x="1062" y="221">INDEX, DASHBOARD,</text>
+  <text class="box-text" x="1062" y="239">triage board, by-domain,</text>
+  <text class="box-text" x="1062" y="257">definition, finding, occurrence</text>
+  <text class="box-text" x="1062" y="275">pages.</text>
+
+  <rect class="box soft-blue blue" x="1042" y="302" width="214" height="100" rx="10"/>
+  <text class="box-title" x="1062" y="329">Confluence</text>
+  <text class="box-text" x="1062" y="353">Evidence publishing surface with</text>
+  <text class="box-text" x="1062" y="371">preserved analyst notes and scan</text>
+  <text class="box-text" x="1062" y="389">history pages.</text>
+
+  <rect class="box soft-red red" x="1042" y="434" width="214" height="100" rx="10"/>
+  <text class="box-title" x="1062" y="461">Jira</text>
+  <text class="box-text" x="1062" y="485">Medium and high cases, optional</text>
+  <text class="box-text" x="1062" y="503">detection Epics, and live workflow</text>
+  <text class="box-text" x="1062" y="521">status source.</text>
+
+  <rect class="box soft-amber amber" x="1042" y="566" width="214" height="96" rx="10"/>
+  <text class="box-title" x="1062" y="593">Reports and Feedback</text>
+  <text class="box-text" x="1062" y="617">Markdown reports, handoff memos,</text>
+  <text class="box-text" x="1062" y="635">and triage/classifier tuning input.</text>
+
+  <path d="M 310 242 C 350 242 360 236 402 236" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="320" y="225">HTTP crawl and probes</text>
+
+  <path d="M 509 288 L 509 326" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="523" y="312">API control</text>
+
+  <path d="M 509 442 L 509 480" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="523" y="466">alerts</text>
+
+  <path d="M 616 538 C 650 538 660 220 704 220" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="626" y="350">ZAP API or JSON</text>
+
+  <path d="M 829 266 L 829 298" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text class="arrow-label" x="843" y="286">stable IDs</text>
+
+  <path d="M 829 404 L 829 436" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text class="arrow-label" x="843" y="424">context</text>
+
+  <path d="M 829 556 L 829 588" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="843" y="576">artifact</text>
+
+  <path d="M 954 634 C 988 634 1000 222 1042 222" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <path d="M 954 634 C 988 634 1000 352 1042 352" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <path d="M 954 634 C 990 634 1002 484 1042 484" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <path d="M 954 634 C 990 634 1002 614 1042 614" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="966" y="604">publish views</text>
+
+  <path d="M 1042 386 C 1010 386 994 494 954 494" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-blue)"/>
+  <path d="M 1042 502 C 1010 502 994 504 954 504" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-blue)"/>
+  <text class="small" x="970" y="470">pull status/notes</text>
+
+  <path d="M 1042 614 C 920 724 220 720 184 606" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-amber)"/>
+  <text class="small" x="420" y="700">triage gaps feed range scenarios and classifier rules</text>
+
+  <rect class="footer" x="36" y="740" width="1248" height="112" rx="14"/>
+  <text class="footer-title" x="60" y="770">Data Contracts</text>
+  <text class="footer-text" x="60" y="796">Inputs: TARGET_BASE, ZAP_URL, ZAP_API_KEY, scan.label, optional alert JSON/report.</text>
+  <text class="footer-text" x="60" y="820">Core model: definitions, findings, occurrences, and the analyst workflow overlay.</text>
+  <text class="footer-text" x="60" y="844">Outputs: entities.json, run.json, kb.zip, Obsidian, Confluence, Jira, and reports.</text>
+  <text class="footer-title" x="718" y="770">Operational Rule</text>
+  <text class="footer-text" x="718" y="796">The firing range proves coverage and workflow behavior.</text>
+  <text class="footer-text" x="718" y="820">Production pipelines consume the same normalized artifact shape.</text>
+</svg>

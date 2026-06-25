@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Position=0)] [ValidateSet('init','ingest','publish','enrich','prune','all')] [string]$Task = 'init',
+    [Parameter(Position=0)] [ValidateSet('init','ingest','publish','publish-atlassian','enrich','prune','all')] [string]$Task = 'init',
     [string]$Entities = 'docs\data\entities.json',
     [string]$Vault = 'docs\obsidian',
     [string]$ZapUrl = $env:ZAP_URL,
@@ -16,7 +16,14 @@ param(
     [int]$TrafficMax = 2048,
     [string]$GeneratedAt = '',
     [string]$PruneScan = '',
-    [string]$PruneSite = ''
+    [string]$PruneSite = '',
+    [string]$ConfluenceUrl = $env:CONFLUENCE_URL,
+    [string]$ConfluenceSpace = $env:CONFLUENCE_SPACE,
+    [string]$JiraUrl = $env:JIRA_URL,
+    [string]$JiraProject = $env:JIRA_PROJECT,
+    [string]$PublishSummaryOut = '',
+    [switch]$ConfluenceDryRun,
+    [switch]$JiraDryRun
 )
 
 function Invoke-ZapKb {
@@ -68,6 +75,25 @@ function Publish-Obsidian {
     Invoke-ZapKb -ArgList $argList
 }
 
+function Publish-Atlassian {
+    param()
+    $summary = $PublishSummaryOut
+    if (-not $summary) {
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $summary = Join-Path 'exports\kb-publish\runs' ("publish-summary-$stamp.json")
+    }
+    $argList = @('-format','obsidian','-obsidian-dir', $Vault, '-entities-in', $Entities, '-confluence-full', '-publish-summary-out', $summary)
+    if ($ConfluenceUrl) { $argList += @('-confluence-url', $ConfluenceUrl) }
+    if ($ConfluenceSpace) { $argList += @('-confluence-space', $ConfluenceSpace) }
+    if ($JiraUrl) { $argList += @('-jira-url', $JiraUrl) }
+    if ($JiraProject) { $argList += @('-jira-project', $JiraProject) }
+    if ($IncludeDetection) { $argList += @('-include-detection','-detection-details', $Detection) }
+    if ($GeneratedAt) { $argList += @('-generated-at', $GeneratedAt) }
+    if ($ConfluenceDryRun) { $argList += '-confluence-dry-run' }
+    if ($JiraDryRun) { $argList += '-jira-dry-run' }
+    Invoke-ZapKb -ArgList $argList
+}
+
 function Enrich-Detection {
     param()
     $argList = @('-init','-format','entities','-out', $Entities, '-entities-in', $Entities, '-include-detection','-detection-details', $Detection)
@@ -91,6 +117,7 @@ switch ($Task) {
     'init'    { New-KBEntities }
     'ingest'  { Ingest-ZAPAlerts }
     'publish' { Publish-Obsidian }
+    'publish-atlassian' { Publish-Atlassian }
     'enrich'  { Enrich-Detection }
     'all'     { New-KBEntities; Ingest-ZAPAlerts; Publish-Obsidian }
     'prune'   { Prune-Run }

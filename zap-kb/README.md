@@ -14,6 +14,10 @@ The module can:
    - Run: `go run ./cmd/zap-kb -format entities -out docs/data/entities.json`
    - Or use the PowerShell helper: `./scripts/kb.ps1 -Task all`
 
+Container usage is documented in `docs/container.md`. The container image uses a
+multi-stage build: Go compiles `zap-kb`, then the final runtime is based on the
+ZAP image and does not include the Go toolchain.
+
 ## CLI Overview
 `go run ./cmd/zap-kb [flags]`
 

@@ -115,6 +115,7 @@ func main() {
 		allowAgentPublish   bool
 		allowCustomPublish  bool
 		zapAlertsOnly       bool
+		publishSummaryOut   string
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
@@ -163,19 +164,19 @@ func main() {
 	flag.StringVar(&reportLookback, "report-lookback", "", "Lookback window (e.g., 30d, 12w, 3m, 1y) when -report-since is not provided; defaults to 30d when -report-out is set.")
 	flag.StringVar(&reportTitle, "report-title", "", "Optional title for the generated report.")
 	flag.StringVar(&reportScanLabel, "report-scan", "", "Optional scan.label filter for the report.")
-	flag.StringVar(&confURL, "confluence-url", "", "Confluence base URL (enables export of INDEX.md to Confluence).")
+	flag.StringVar(&confURL, "confluence-url", "", "Confluence base URL (env: CONFLUENCE_URL; enables export of INDEX.md to Confluence).")
 	flag.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER).")
 	flag.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN).")
-	flag.StringVar(&confSpace, "confluence-space", "", "Confluence space key.")
+	flag.StringVar(&confSpace, "confluence-space", "", "Confluence space key (env: CONFLUENCE_SPACE).")
 	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
 	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
 	flag.BoolVar(&confDryRun, "confluence-dry-run", false, "Dry-run Confluence export (log instead of POST).")
 	flag.BoolVar(&confFull, "confluence-full", false, "Export full vault to Confluence (INDEX, Dashboard, Triage Board, all definitions).")
 	flag.IntVar(&confConcurrency, "confluence-concurrency", 3, "Max parallel Confluence API requests for full export (default: 3, max: 5).")
-	flag.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables export of findings as Jira issues).")
-	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER).")
-	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN).")
-	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (e.g. SEC).")
+	flag.StringVar(&jiraURL, "jira-url", "", "Jira base URL (env: JIRA_URL; enables export of findings as Jira issues).")
+	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER, fallback: CONFLUENCE_USER).")
+	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN, fallback: CONFLUENCE_TOKEN).")
+	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (env: JIRA_PROJECT; e.g. SEC).")
 	flag.StringVar(&jiraServerID, "jira-server-id", "", "Confluence application-link UUID for the Jira instance (e.g. 6ee9717b-54c7-35fc-8b8c-517e863e5ce4). Enables a live Jira Issues macro on the Triage Board page when combined with -jira-server-name and -jira-project.")
 	flag.StringVar(&jiraServerName, "jira-server-name", "", "Display name of the linked Jira application (as configured on the Confluence side). Required alongside -jira-server-id and -jira-project to render the Triage Board live macro.")
 	flag.StringVar(&jiraUserMap, "jira-user-map", "", "Comma-separated KB-owner→Jira-accountId map for setting Jira assignee from analyst.owner on issue create (e.g. \"alice=5e3f...,bob=602a...\"). Owners with no mapping are logged and the issue is created unassigned.")
@@ -207,6 +208,7 @@ func main() {
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
+	flag.StringVar(&publishSummaryOut, "publish-summary-out", "", "Write a redacted Atlassian publish summary JSON to this path.")
 	// Subcommands own their flag sets, so dispatch before parsing global flags.
 	if handler, args, ok := lookupSubcommand(os.Args[1:]); ok {
 		handler(args)
@@ -227,13 +229,29 @@ func main() {
 	}
 	envFallback(&zapURL, "ZAP_URL")
 	envFallback(&apiKey, "ZAP_API_KEY")
-	envFallback(&confUser, "CONFLUENCE_USER")
-	envFallback(&confToken, "CONFLUENCE_TOKEN")
-	envFallback(&jiraUser, "JIRA_USER")
-	envFallback(&jiraToken, "JIRA_API_TOKEN")
 	envFallback(&jiraServerID, "JIRA_SERVER_ID")
 	envFallback(&jiraServerName, "JIRA_SERVER_NAME")
 	envFallback(&forgejoToken, "FORGEJO_TOKEN")
+
+	atlassianCfg := resolveAtlassianConfig(atlassianConfigInput{
+		ConfluenceURL:   confURL,
+		ConfluenceSpace: confSpace,
+		ConfluenceUser:  confUser,
+		ConfluenceToken: confToken,
+		JiraURL:         jiraURL,
+		JiraProject:     jiraProject,
+		JiraUser:        jiraUser,
+		JiraToken:       jiraToken,
+	}, os.Getenv)
+	confURL = atlassianCfg.ConfluenceURL
+	confSpace = atlassianCfg.ConfluenceSpace
+	confUser = atlassianCfg.ConfluenceUser
+	confToken = atlassianCfg.ConfluenceToken
+	jiraURL = atlassianCfg.JiraURL
+	jiraProject = atlassianCfg.JiraProject
+	jiraUser = atlassianCfg.JiraUser
+	jiraToken = atlassianCfg.JiraToken
+	publishSummary := newAtlassianPublishSummary(atlassianCfg)
 
 	// Load operator-tunable triage policy once at startup. This drives the
 	// auto-reopen gate, auto-suppression cadence, and rule-tune-scan tagging
@@ -329,11 +347,8 @@ func main() {
 	}
 
 	if includeTraffic {
-		if strings.TrimSpace(trafficMinRisk) == "" || strings.EqualFold(trafficMinRisk, "info") {
-			trafficMinRisk = "medium"
-		}
-		if trafficTotalMax <= 0 {
-			trafficTotalMax = 50
+		if strings.TrimSpace(trafficMinRisk) == "" {
+			trafficMinRisk = "info"
 		}
 	}
 
@@ -677,7 +692,7 @@ func main() {
 	// Optional Confluence export - when Jira is also enabled, publish after Jira
 	// keys are merged so finding pages and evidence pages stay in sync.
 	if strings.TrimSpace(confURL) != "" && strings.TrimSpace(jiraURL) == "" {
-		if _, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
+		confSum, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
 			BaseURL:          confURL,
 			Username:         confUser,
 			APIToken:         confToken,
@@ -696,8 +711,15 @@ func main() {
 			JiraServerID:     jiraServerID,
 			JiraServerName:   jiraServerName,
 			JiraProjectKey:   jiraProject,
-		}); err != nil {
+		})
+		if err != nil {
 			log.Fatalf("%v", err)
+		}
+		publishSummary.Confluence = &publishConfluenceSummary{
+			Created: confSum.Created,
+			Updated: confSum.Updated,
+			Skipped: confSum.Skipped,
+			Errors:  confSum.Errors,
 		}
 	}
 
@@ -742,6 +764,12 @@ func main() {
 			log.Fatalf("jira export: %v", err)
 		}
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
+		publishSummary.Jira = &publishJiraSummary{
+			Created:  sum.Created,
+			Skipped:  sum.Skipped,
+			Errors:   sum.Errors,
+			Relinked: sum.Relinked,
+		}
 
 		addedTicketKeys := 0
 		updatedEpicRefs := 0
@@ -841,6 +869,12 @@ func main() {
 			if err != nil {
 				log.Fatalf("%v", err)
 			}
+			publishSummary.Confluence = &publishConfluenceSummary{
+				Created: confSum.Created,
+				Updated: confSum.Updated,
+				Skipped: confSum.Skipped,
+				Errors:  confSum.Errors,
+			}
 			if !jiraDryRun && len(confSum.FindingLinks) > 0 {
 				ticketRefs := collectFindingTicketRefs(ent)
 				if len(ticketRefs) > 0 {
@@ -856,6 +890,11 @@ func main() {
 						log.Printf("warning: jira evidence link sync failed: %v", lerr)
 					} else {
 						fmt.Printf("Jira evidence links: added=%d skipped=%d errors=%d\n", linkSum.Added, linkSum.Skipped, linkSum.Errors)
+						publishSummary.EvidenceLinks = &publishEvidenceLinkSummary{
+							Added:   linkSum.Added,
+							Skipped: linkSum.Skipped,
+							Errors:  linkSum.Errors,
+						}
 					}
 				}
 			}
@@ -930,6 +969,13 @@ func main() {
 		}
 	}
 
+	if strings.TrimSpace(publishSummaryOut) != "" {
+		if err := writeAtlassianPublishSummary(publishSummaryOut, publishSummary); err != nil {
+			log.Fatalf("%v", err)
+		}
+		fmt.Printf("Wrote Atlassian publish summary to %s\n", publishSummaryOut)
+	}
+
 	// Optionally write a run artifact (entities + meta [+alerts]) for pipelines
 	if strings.TrimSpace(runOut) != "" {
 		meta := runartifact.Meta{
@@ -963,6 +1009,9 @@ func main() {
 		}
 		if format == "obsidian" && strings.TrimSpace(vault) != "" {
 			ins = append(ins, vault)
+		}
+		if strings.TrimSpace(publishSummaryOut) != "" {
+			ins = append(ins, publishSummaryOut)
 		}
 		if len(ins) == 0 && strings.TrimSpace(out) != "" {
 			ins = append(ins, out)
@@ -1186,32 +1235,36 @@ func runPullCommand(args []string) {
 	)
 	fs.StringVar(&entitiesIn, "entities-in", "", "Entities JSON file to read and update (required)")
 	fs.StringVar(&outPath, "out", "", "Output path for updated entities JSON (required)")
-	fs.StringVar(&confURL, "confluence-url", "", "Confluence base URL")
-	fs.StringVar(&confSpace, "confluence-space", "", "Confluence space key")
+	fs.StringVar(&confURL, "confluence-url", "", "Confluence base URL (env: CONFLUENCE_URL)")
+	fs.StringVar(&confSpace, "confluence-space", "", "Confluence space key (env: CONFLUENCE_SPACE)")
 	fs.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER)")
 	fs.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN)")
 	fs.BoolVar(&confPullWorkflow, "confluence-pull-workflow", false, "Allow Confluence workflow fields to overwrite local analyst data during pull")
-	fs.StringVar(&jiraURL, "jira-url", "", "Jira base URL (enables Jira status pull)")
-	fs.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER)")
-	fs.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN)")
+	fs.StringVar(&jiraURL, "jira-url", "", "Jira base URL (env: JIRA_URL; enables Jira status pull)")
+	fs.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER, fallback: CONFLUENCE_USER)")
+	fs.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN, fallback: CONFLUENCE_TOKEN)")
 	fs.BoolVar(&jiraPullStatus, "jira-pull-status", false, "Pull Jira ticket status into analyst.Status (Jira wins)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Environment variable fallbacks for credentials.
-	envFallback := func(p *string, envKey string) {
-		if strings.TrimSpace(*p) == "" {
-			if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
-				*p = v
-			}
-		}
-	}
-	envFallback(&confUser, "CONFLUENCE_USER")
-	envFallback(&confToken, "CONFLUENCE_TOKEN")
-	envFallback(&jiraUser, "JIRA_USER")
-	envFallback(&jiraToken, "JIRA_API_TOKEN")
+	atlassianCfg := resolveAtlassianConfig(atlassianConfigInput{
+		ConfluenceURL:   confURL,
+		ConfluenceSpace: confSpace,
+		ConfluenceUser:  confUser,
+		ConfluenceToken: confToken,
+		JiraURL:         jiraURL,
+		JiraUser:        jiraUser,
+		JiraToken:       jiraToken,
+	}, os.Getenv)
+	confURL = atlassianCfg.ConfluenceURL
+	confSpace = atlassianCfg.ConfluenceSpace
+	confUser = atlassianCfg.ConfluenceUser
+	confToken = atlassianCfg.ConfluenceToken
+	jiraURL = atlassianCfg.JiraURL
+	jiraUser = atlassianCfg.JiraUser
+	jiraToken = atlassianCfg.JiraToken
 
 	if strings.TrimSpace(entitiesIn) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -entities-in is required")

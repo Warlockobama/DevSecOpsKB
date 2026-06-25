@@ -3,13 +3,14 @@ package main
 type subcommandHandler func([]string)
 
 var subcommands = map[string]subcommandHandler{
-	"config":   runConfigCommand,
-	"expired":  runExpiredCommand,
-	"merge":    runMergeCommand,
-	"onboard":  runOnboardCommand,
-	"pull":     runPullCommand,
-	"report":   runReportCommand,
-	"taxonomy": runTaxonomyCommand,
+	"atlassian": runAtlassianCommand,
+	"config":    runConfigCommand,
+	"expired":   runExpiredCommand,
+	"merge":     runMergeCommand,
+	"onboard":   runOnboardCommand,
+	"pull":      runPullCommand,
+	"report":    runReportCommand,
+	"taxonomy":  runTaxonomyCommand,
 }
 
 func lookupSubcommand(args []string) (subcommandHandler, []string, bool) {
