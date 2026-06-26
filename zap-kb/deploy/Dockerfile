@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1
 #
-# Standalone, sink-agnostic zap-kb image.
+# zap-kb — ZAP → Atlassian (Jira + Confluence) publisher image.
 #
-# Unlike ../Dockerfile (a fat OWASP ZAP runtime) and ../../deploy/k8s/Dockerfile
-# (the Forgejo-coupled publisher), this image is JUST the zap-kb CLI on a minimal
-# base. It carries no scanner and no sink wiring — every behaviour is chosen at
-# run time via args/env, so the same image normalizes, enriches, dumps, or
-# publishes to any sink (Forgejo, Jira, Confluence, JSON).
+# A minimal image of the zap-kb CLI for one job: run after a ZAP scan, pull the
+# results, and init/update the Jira + Confluence sinks. Unlike ../Dockerfile (a
+# fat OWASP ZAP runtime), it carries no scanner — point it at a live ZAP API or a
+# saved ZAP report. Targets/credentials are supplied at run time via env.
 #
 # Build context is the module dir (zap-kb/):
-#   docker build -f deploy/Dockerfile -t zap-kb:standalone .
+#   docker build -f deploy/Dockerfile -t zap-kb:atlassian .
 ARG GO_VERSION=1.24
 
 FROM golang:${GO_VERSION}-alpine AS build
@@ -23,11 +22,13 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zap-kb ./cmd/zap-kb
 
 FROM alpine:3.20
-LABEL org.opencontainers.image.title="zap-kb"
-LABEL org.opencontainers.image.description="DevSecOps KB normalizer/publisher CLI — sink-agnostic, standalone"
+LABEL org.opencontainers.image.title="zap-kb-atlassian"
+LABEL org.opencontainers.image.description="ZAP → Atlassian (Jira + Confluence) KB publisher — post-scan"
 LABEL org.opencontainers.image.source="https://github.com/Warlockobama/DevSecOpsKB"
+LABEL org.opencontainers.image.documentation="https://github.com/Warlockobama/DevSecOpsKB/blob/main/zap-kb/deploy/README.md"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
-# ca-certificates: outbound HTTPS to trackers (Jira/Confluence/Forgejo).
+# ca-certificates: outbound HTTPS to Jira/Confluence Cloud.
 # tzdata: stable RFC3339 timestamps. A non-root user owns the /work dir so the
 # CLI can write outputs there both under `docker run` and in a pod.
 RUN apk add --no-cache ca-certificates tzdata \

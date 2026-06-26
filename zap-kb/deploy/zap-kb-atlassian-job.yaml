@@ -1,0 +1,140 @@
+# Post-scan publisher for an existing ZAP pipeline.
+#
+# Run this AFTER a ZAP scan completes, while the ZAP daemon is still reachable.
+# It pulls the scan's alerts from the live ZAP API, normalizes + enriches them
+# into the KB entities model, and inits/updates the Atlassian sinks:
+#   - Jira       — findings become issues (idempotent: dedup + reconcile)
+#   - Confluence — the full KB vault (INDEX, Dashboard, Triage Board, definitions)
+#
+# Wire it into your pipeline as the step that fires once the scan is done, e.g.
+#   kubectl create job --from=job/zap-kb-publish zap-kb-publish-$(date +%s)
+# or apply it as the next stage in your orchestrator. ZAP must answer at $ZAP_URL.
+#
+# Image: docker build -f deploy/Dockerfile -t zap-kb:standalone .  (see README.md)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zap-kb-atlassian-config
+  labels:
+    app.kubernetes.io/name: zap-kb
+data:
+  # The live ZAP daemon reachable when this Job runs (Service DNS, not the Job).
+  ZAP_URL: "http://zap.zap.svc.cluster.local:8090"
+  # Atlassian targets. URLs/space/project are read from env by zap-kb directly.
+  JIRA_URL: "https://your-tenant.atlassian.net"
+  JIRA_PROJECT: "SEC"
+  JIRA_MIN_RISK: "medium" # info|low|medium|high
+  CONFLUENCE_URL: "https://your-tenant.atlassian.net/wiki"
+  CONFLUENCE_SPACE: "KB"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zap-kb-atlassian-secrets
+  labels:
+    app.kubernetes.io/name: zap-kb
+type: Opaque
+stringData:
+  # One Atlassian token serves both sinks — Jira falls back to the Confluence
+  # user/token when JIRA_USER/JIRA_API_TOKEN are unset. REPLACE these; never
+  # commit real tokens (prefer an external secret manager / sealed-secrets).
+  CONFLUENCE_USER: "REPLACE_ME@example.com"
+  CONFLUENCE_TOKEN: "REPLACE_ME"
+  # ZAP API key, if your daemon enforces one (else leave empty):
+  ZAP_API_KEY: ""
+  # Optional split Jira creds (otherwise the Confluence pair is used):
+  # JIRA_USER: "REPLACE_ME@example.com"
+  # JIRA_API_TOKEN: "REPLACE_ME"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: zap-kb-publish
+  labels:
+    app.kubernetes.io/name: zap-kb
+    app.kubernetes.io/component: atlassian-publisher
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600 # auto-clean 10 min after finishing
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zap-kb
+        app.kubernetes.io/component: atlassian-publisher
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Fail fast with a redacted readiness report if creds/targets are missing,
+      # before any publish call is made.
+      initContainers:
+        - name: atlassian-check
+          image: zap-kb:atlassian
+          imagePullPolicy: IfNotPresent
+          args: ["atlassian", "check"]
+          envFrom:
+            - configMapRef:
+                name: zap-kb-atlassian-config
+            - secretRef:
+                name: zap-kb-atlassian-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: zap-kb
+          image: zap-kb:atlassian
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: zap-kb-atlassian-config
+            - secretRef:
+                name: zap-kb-atlassian-secrets
+          # Pull the just-finished scan from the live ZAP daemon (ZAP_URL /
+          # ZAP_API_KEY come from env), enrich, then init/update Jira + Confluence.
+          # Re-runs are idempotent: Jira issues dedup, Confluence pages that are
+          # unchanged are skipped. Published content is redacted by default.
+          args:
+            - "-out=/work/entities.json"
+            - "-format=obsidian"
+            - "-obsidian-dir=/work/vault"
+            - "-include-mitre"
+            - "-include-traffic"
+            - "-confluence-full"
+            - "-jira-min-risk=$(JIRA_MIN_RISK)"
+            - "-publish-summary-out=/work/publish-summary.json"
+            # Jira export auto-enables because JIRA_URL is set; Confluence export
+            # because CONFLUENCE_URL is set. Add -jira-detection-epic to group
+            # findings under a per-rule Epic. Add -jira-dry-run / -confluence-dry-run
+            # for a no-write rehearsal.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true # writes go only to the mounted volumes
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp # a redacted vault is staged here during publish
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+      volumes:
+        # Mount a PVC instead to retain the entities.json / vault / publish summary
+        # across runs; emptyDir is fine for fire-and-forget publishing.
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

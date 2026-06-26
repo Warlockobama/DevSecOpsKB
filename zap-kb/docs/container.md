@@ -1,8 +1,9 @@
 # Container Image
 
-> **Just need `zap-kb` in a pod?** For a minimal, sink-agnostic image (no ZAP)
-> plus a portable Kubernetes Job manifest, see [`../deploy/README.md`](../deploy/README.md).
-> This page covers the fuller ZAP-based runtime image below.
+> **Publishing a ZAP scan to Jira + Confluence in a pipeline?** For the minimal
+> ZAP→Atlassian publisher image (no scanner) plus its Kubernetes Job, see
+> [`../deploy/README.md`](../deploy/README.md). This page covers the fuller
+> ZAP-based runtime image below.
 
 `zap-kb/Dockerfile` builds a ZAP-based runtime image that includes:
 
