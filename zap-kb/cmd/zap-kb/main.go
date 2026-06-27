@@ -598,6 +598,15 @@ func main() {
 			}
 		}
 
+		// Apply curated taxonomy overrides for custom/internal plugin IDs first so
+		// they pre-empt the generic CWE→OWASP derivation below — always runs.
+		// Custom rules without a curated mapping are blanked (not given the
+		// scanner's placeholder CWE); surface them so they can be curated.
+		entities.EnrichCustomTaxonomy(ent.Definitions)
+		if unmapped := entities.UnmappedCustomRules(ent.Definitions); len(unmapped) > 0 {
+			fmt.Printf("Custom rules with no curated taxonomy (left blank — add to customTaxonomyMap): %s\n",
+				strings.Join(unmapped, ", "))
+		}
 		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
 		entities.EnrichTaxonomy(ent.Definitions)
 		if includeMITRE {

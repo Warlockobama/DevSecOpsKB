@@ -428,8 +428,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			lines := []string{}
 			if d.Taxonomy.CWEID > 0 {
 				cweLine := fmt.Sprintf("CWE-%d", d.Taxonomy.CWEID)
-				if strings.TrimSpace(d.Taxonomy.CWEName) != "" {
-					cweLine += ": " + d.Taxonomy.CWEName
+				// Skip the name when it is unresolved and merely echoes the id
+				// (e.g. CWEName "CWE-552"), which would render "CWE-552: CWE-552".
+				if n := strings.TrimSpace(d.Taxonomy.CWEName); n != "" && n != cweLine {
+					cweLine += ": " + n
 				}
 				lines = append(lines, cweLine)
 			}

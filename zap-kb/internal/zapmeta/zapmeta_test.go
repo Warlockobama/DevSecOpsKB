@@ -5,6 +5,57 @@ import (
 	"testing"
 )
 
+func TestCanonicalPluginID(t *testing.T) {
+	cases := map[string]string{
+		"zap-10098":                               "10098",
+		"nuclei-missing-hsts-header":              "missing-hsts-header",
+		"zap-missing-referrer-policy":             "missing-referrer-policy",
+		"missing-hsts-header":                     "missing-hsts-header",
+		"10098":                                   "10098",
+		"ZAP-10098":                               "10098",
+		"custom-nuclei-missing-hsts-header":       "missing-hsts-header",
+		"custom-zap-jwt-password-hash-disclosure": "jwt-password-hash-disclosure",
+		"custom-nuclei-auth-complaints-exposure":  "auth-complaints-exposure",
+	}
+	for in, want := range cases {
+		if got := CanonicalPluginID(in); got != want {
+			t.Errorf("CanonicalPluginID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLookupCustomTaxonomy_CanonicalizesSourcePrefix(t *testing.T) {
+	// Both source variants of the same logical rule resolve to one entry.
+	for _, pid := range []string{"nuclei-missing-hsts-header", "zap-missing-hsts-header", "missing-hsts-header"} {
+		ct := LookupCustomTaxonomy(pid)
+		if ct == nil || ct.CWEID != 319 {
+			t.Errorf("LookupCustomTaxonomy(%q) = %+v, want CWE-319", pid, ct)
+		}
+	}
+}
+
+func TestLookupFalsePositiveGuidance_CanonicalizesSourcePrefix(t *testing.T) {
+	// "zap-10098" must hit the numeric "10098" FP-guidance key.
+	if g := LookupFalsePositiveGuidance("zap-10098"); g == nil || len(g.Conditions) == 0 {
+		t.Errorf("LookupFalsePositiveGuidance(zap-10098) = %+v, want CDM guidance", g)
+	}
+}
+
+func TestLookupCWEInfo_552ResolvesToTitle(t *testing.T) {
+	// CWE-552 must resolve to its real title, not echo the id, so renderers do
+	// not produce "CWE-552: CWE-552" on FTP-surface findings.
+	ref := LookupCWEInfo(552)
+	if ref == nil {
+		t.Fatal("expected MITRERef for CWE-552")
+	}
+	if ref.Name != "Files or Directories Accessible to External Parties" {
+		t.Errorf("CWE-552 name = %q, want resolved title", ref.Name)
+	}
+	if ref.Name == ref.ID {
+		t.Errorf("CWE-552 name echoes id %q", ref.ID)
+	}
+}
+
 func TestScrapeCWEID_LinkInHTML(t *testing.T) {
 	html := `<a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79</a>`
 	got := scrapeCWEID(html, "40012")
