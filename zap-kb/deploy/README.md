@@ -39,6 +39,15 @@ docker tag zap-kb:atlassian ghcr.io/<org>/zap-kb-atlassian:1.0.0
 docker push ghcr.io/<org>/zap-kb-atlassian:1.0.0
 ```
 
+**CI:** [`.github/workflows/zap-kb-image.yml`](../../.github/workflows/zap-kb-image.yml)
+builds this image (multi-arch `linux/amd64,linux/arm64`) and pushes it to
+`ghcr.io/<owner>/zap-kb-atlassian` on a `v*` tag or manual *Run workflow*. Pull
+the published image with:
+
+```bash
+docker pull ghcr.io/warlockobama/zap-kb-atlassian:latest
+```
+
 ## Configuration (environment)
 
 Targets and credentials come from env (a ConfigMap + Secret); flags override env.
