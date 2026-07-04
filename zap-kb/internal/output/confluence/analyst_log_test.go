@@ -100,33 +100,6 @@ func TestExtractAnalystLog_MultipleEntries(t *testing.T) {
 	}
 }
 
-// --- extractStateSig ---
-
-func TestExtractStateSig_Present(t *testing.T) {
-	sig := "occ=1|risk=Medium|lastSeen=2026-04-09T00:00:00Z|jira=To Do"
-	body := `<p>stuff</p><span class="kb-state-sig" style="display:none">` + sig + `</span><p>more</p>`
-	got := extractStateSig(body)
-	if got != sig {
-		t.Errorf("got %q, want %q", got, sig)
-	}
-}
-
-func TestExtractStateSig_Missing(t *testing.T) {
-	body := `<p>no sig here</p>`
-	got := extractStateSig(body)
-	if got != "" {
-		t.Errorf("expected empty, got %q", got)
-	}
-}
-
-func TestExtractStateSig_Empty(t *testing.T) {
-	body := `<span class="kb-state-sig" style="display:none"></span>`
-	got := extractStateSig(body)
-	if got != "" {
-		t.Errorf("expected empty for empty sig, got %q", got)
-	}
-}
-
 // --- demoteFirstInfoEntry ---
 
 func TestDemoteFirstInfoEntry_HasInfo(t *testing.T) {
@@ -312,39 +285,6 @@ func TestBuildAnalystLogSection_NoNewEntryPreservesExisting(t *testing.T) {
 	content := extractAnalystLog(got)
 	if content != existing {
 		t.Errorf("without new entry, existing log should be preserved unchanged; got %q", content)
-	}
-}
-
-// --- buildAnalystHistorySection ---
-
-func TestBuildAnalystHistorySection_Empty(t *testing.T) {
-	got := buildAnalystHistorySection(nil, "")
-	if got != "" {
-		t.Error("expected empty string for no summaries")
-	}
-}
-
-func TestBuildAnalystHistorySection_RendersRows(t *testing.T) {
-	summaries := []logSummary{
-		{
-			FindingID:   "fin-00868f1a",
-			FindingURL:  "https://confluence.example.com/spaces/KB/pages/123",
-			PublishedAt: "2026-04-09T10:00:00Z",
-			Risk:        "Medium",
-			JiraCase:    "KAN-189",
-		},
-	}
-	got := buildAnalystHistorySection(summaries, "https://jira.example.com")
-	checks := []string{
-		"Analyst History",
-		"fin-00868f1a",
-		"2026-04-09", // short date
-		"KAN-189",
-	}
-	for _, c := range checks {
-		if !strings.Contains(got, c) {
-			t.Errorf("expected %q in analyst history section", c)
-		}
 	}
 }
 

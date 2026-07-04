@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // PullOptions configures the pull operation.
@@ -52,7 +53,7 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 
 	auth := basicAuth(opts.Username, opts.Token)
 	base := strings.TrimRight(opts.BaseURL, "/")
-	client := newThrottledClient(&http.Client{Timeout: 30 * time.Second}, 250*time.Millisecond)
+	client := synccore.NewThrottledClient(&http.Client{Timeout: 30 * time.Second}, 250*time.Millisecond)
 
 	ei := buildEntityIndex(&ef)
 
@@ -267,13 +268,7 @@ const (
 
 // truncateBytes returns s truncated to at most n bytes at a valid UTF-8 boundary.
 func truncateBytes(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && s[n]&0xC0 == 0x80 {
-		n-- // step back past continuation bytes
-	}
-	return s[:n]
+	return synccore.TruncateBytes(s, n)
 }
 
 // fieldsToAnalyst builds an Analyst struct from parsed workflow fields.

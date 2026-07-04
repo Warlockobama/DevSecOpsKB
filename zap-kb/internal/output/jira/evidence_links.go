@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 type EvidenceLinkSummary struct {
@@ -52,7 +54,7 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 	if rawClient.Timeout == 0 {
 		rawClient.Timeout = 30 * time.Second
 	}
-	client := newThrottledClient(rawClient, delay)
+	client := synccore.NewThrottledClient(rawClient, delay)
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(strings.TrimSpace(opts.Username)+":"+strings.TrimSpace(opts.APIToken)))
 	base := strings.TrimRight(opts.BaseURL, "/")
 
@@ -138,15 +140,14 @@ func hasRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, w
 	}
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
-	resp, err := doWithRetry(client, req, 3)
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// Cap the read so a pathological server can't exhaust memory.
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return false, fmt.Errorf("list remote links %s: status=%d body=%s", issueKey, resp.StatusCode, strings.TrimSpace(string(body)))
+		// jiraHTTPErr caps the body read and redacts credential-like patterns.
+		return false, fmt.Errorf("list remote links %s: %w", issueKey, jiraHTTPErr(resp))
 	}
 	var links []struct {
 		Object struct {
@@ -182,7 +183,7 @@ func addRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, t
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := doWithRetry(client, req, 3)
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return err
 	}
@@ -191,8 +192,8 @@ func addRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, t
 	// (401/403 auth, 404 missing issue, 5xx upstream) and must not be silently
 	// treated as a successful link creation.
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("add remote link %s: status=%d body=%s", issueKey, resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("add remote link %s: %w", issueKey, jiraHTTPErr(resp))
 	}
+	io.Copy(io.Discard, resp.Body)
 	return nil
 }

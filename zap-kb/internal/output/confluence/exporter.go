@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // Options controls Confluence export of a single markdown page (e.g., INDEX.md).
@@ -177,10 +178,11 @@ func Export(ctx context.Context, vaultRoot string, opts Options) error {
 		return nil
 	}
 
-	httpClient := &http.Client{Timeout: opts.Timeout}
-	if httpClient.Timeout == 0 {
-		httpClient.Timeout = 30 * time.Second
+	rawClient := &http.Client{Timeout: opts.Timeout}
+	if rawClient.Timeout == 0 {
+		rawClient.Timeout = 30 * time.Second
 	}
+	httpClient := synccore.NewThrottledClient(rawClient, 250*time.Millisecond)
 	auth := basicAuth(opts.Username, opts.APIToken)
 	base := strings.TrimRight(opts.BaseURL, "/")
 
@@ -232,7 +234,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 	auth := basicAuth(opts.Username, opts.APIToken)
 	base := strings.TrimRight(opts.BaseURL, "/")
-	httpClient := newThrottledClient(&http.Client{Timeout: timeout}, delay)
+	httpClient := synccore.NewThrottledClient(&http.Client{Timeout: timeout}, delay)
 
 	// Build entity indexes for structured enrichment
 	ei := buildEntityIndex(opts.Entities)
@@ -365,8 +367,12 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	defsDir := filepath.Join(vaultRoot, "definitions")
 	entries, err := os.ReadDir(defsDir)
 	if err != nil {
-		// No definitions dir is not fatal — still write the summary page.
+		// No definitions dir is not fatal — still write the summary page and
+		// persist the hashes recorded so far so the next run can skip them.
 		upsertExportSummary(ctx, httpClient, auth, base, opts, rootID, hs, &summary)
+		if serr := hs.save(); serr != nil {
+			fmt.Printf("[confluence] warning: could not save hash store: %v\n", serr)
+		}
 		return summary, nil
 	}
 
@@ -453,10 +459,21 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	// In hierarchical/entity-aware mode, findings live under their definition pages and
 	// occurrences live under their finding pages, so top-level stub pages would just be empty noise.
 	if opts.Entities != nil {
-		findingPageIDs, _ := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
+		findingPageIDs := upsertFindingsHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
 			vaultRoot, concurrency, &ei, titleMap, defPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 		upsertOccurrencesHierarchical(ctx, httpClient, auth, base, opts.SpaceKey,
 			vaultRoot, concurrency, &ei, titleMap, findingPageIDs, rootID, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
+		// Expose published finding URLs so the caller can sync them into Jira
+		// as remote "evidence" links. Includes skipped (unchanged) pages — the
+		// Jira side dedups remote links, and older tickets may still lack one.
+		if len(findingPageIDs) > 0 {
+			summary.FindingLinks = make(map[string]string, len(findingPageIDs))
+			for fid, pid := range findingPageIDs {
+				if u := pageWebURL(base, opts.SpaceKey, pid); u != "" {
+					summary.FindingLinks[fid] = u
+				}
+			}
+		}
 	} else {
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
@@ -638,19 +655,19 @@ func buildExportSummaryBody(exportedAt time.Time, defs, findings, occurrences in
 }
 
 // upsertFindingsHierarchical upserts finding pages as children of their definition pages.
-// Returns a map of findingID → Confluence pageID for use by upsertOccurrencesHierarchical,
-// and a map of findingID → logSummary for building definition-page Analyst History rollups.
+// Returns a map of findingID → Confluence pageID for use by upsertOccurrencesHierarchical
+// and for the FindingLinks map on VaultSummary.
 // Findings whose definition page ID is not in defPageIDs are parented to fallbackParentID.
 func upsertFindingsHierarchical(
 	ctx context.Context, client httpDoer, auth, base, spaceKey, vaultRoot string,
 	concurrency int, ei *entityIndex, titleMap map[string]string,
 	defPageIDs map[string]string, fallbackParentID, jiraBaseURL string, jiraStatusByKey, jiraAssigneeByKey map[string]string, jiraStatusSynced string,
 	summary *VaultSummary, hs *pageHashStore,
-) (map[string]string, map[string]logSummary) {
+) map[string]string {
 	dir := filepath.Join(vaultRoot, "findings")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	var mdFiles []string
 	for _, e := range entries {
@@ -659,15 +676,14 @@ func upsertFindingsHierarchical(
 		}
 	}
 	if len(mdFiles) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	type result struct {
-		action     string
-		err        error
-		pageID     string
-		findingID  string
-		logSummary logSummary
+		action    string
+		err       error
+		pageID    string
+		findingID string
 	}
 	results := make([]result, len(mdFiles))
 	sem := make(chan struct{}, concurrency)
@@ -749,9 +765,6 @@ func upsertFindingsHierarchical(
 			// directly after the properties table — the first thing an analyst sees.
 			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, analystLogSection, changelogSection)
 
-			// Build log summary for the definition-page rollup
-			ls := buildLogSummaryForFinding(f, jiraBaseURL, jiraStatusByKey, publishedAt, existingLog)
-
 			labels := findingLabels(f)
 
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
@@ -773,16 +786,12 @@ func upsertFindingsHierarchical(
 			if f != nil {
 				fid = f.FindingID
 			}
-			if pageID != "" && ls.FindingID != "" {
-				ls.FindingURL = pageWebURL(base, spaceKey, pageID)
-			}
-			results[i] = result{action: act, err: uerr, pageID: pageID, findingID: fid, logSummary: ls}
+			results[i] = result{action: act, err: uerr, pageID: pageID, findingID: fid}
 		}(i, fname)
 	}
 	wg.Wait()
 
 	findingPageIDs := make(map[string]string)
-	logSummaries := make(map[string]logSummary)
 	for i, r := range results {
 		if r.err != nil {
 			fmt.Printf("[confluence] error upserting finding %s: %v\n", mdFiles[i], r.err)
@@ -792,12 +801,9 @@ func upsertFindingsHierarchical(
 			if r.findingID != "" && r.pageID != "" {
 				findingPageIDs[r.findingID] = r.pageID
 			}
-			if r.logSummary.FindingID != "" {
-				logSummaries[r.logSummary.FindingID] = r.logSummary
-			}
 		}
 	}
-	return findingPageIDs, logSummaries
+	return findingPageIDs
 }
 
 // upsertOccurrencesHierarchical upserts occurrence pages as children of their finding pages.
@@ -887,10 +893,13 @@ func upsertOccurrencesHierarchical(
 					pageID, act, uerr = upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, refoundParentID, hs)
 				}
 			}
-			if uerr == nil && len(labels) > 0 && act != "skipped" {
-				applyLabels(ctx, client, auth, base, pageID, labels)
-			}
-			if uerr == nil && pageID != "" {
+			// Label calls only on create/update: skipped pages already carry
+			// their labels from the run that created them, and an extra API
+			// call per unchanged page defeats the hash-cache skip path.
+			if uerr == nil && pageID != "" && act != "skipped" {
+				if len(labels) > 0 {
+					applyLabels(ctx, client, auth, base, pageID, labels)
+				}
 				if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
 					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
 				}
@@ -1018,12 +1027,17 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 			}
 
 			pageID, act, uerr := upsertPageCached(ctx, client, auth, base, spaceKey, title, storageBody, parentID, hs)
-			if uerr == nil && len(labels) > 0 && act != "skipped" {
-				applyLabels(ctx, client, auth, base, pageID, labels)
-			}
-			if uerr == nil && pageID != "" && subdir == "occurrences" {
-				if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
-					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+			// Label calls only on create/update: skipped pages already carry
+			// their labels from the run that created them, and an extra API
+			// call per unchanged page defeats the hash-cache skip path.
+			if uerr == nil && pageID != "" && act != "skipped" {
+				if len(labels) > 0 {
+					applyLabels(ctx, client, auth, base, pageID, labels)
+				}
+				if subdir == "occurrences" {
+					if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
+						fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+					}
 				}
 			}
 			results[i] = result{action: act, err: uerr}
@@ -1043,60 +1057,9 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 
 // --- helpers ---
 
-// httpDoer abstracts HTTP request execution for throttling and testing.
-type httpDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-// throttledClient wraps an http.Client with a minimum delay between requests
-// to avoid overwhelming the server. Safe for concurrent use.
-type throttledClient struct {
-	inner *http.Client
-	mu    sync.Mutex
-	last  time.Time
-	delay time.Duration
-}
-
-func newThrottledClient(inner *http.Client, delay time.Duration) *throttledClient {
-	return &throttledClient{inner: inner, delay: delay}
-}
-
-func (tc *throttledClient) Do(req *http.Request) (*http.Response, error) {
-	tc.mu.Lock()
-	now := time.Now()
-	elapsed := now.Sub(tc.last)
-	if elapsed < tc.delay {
-		remaining := tc.delay - elapsed
-		tc.last = now.Add(remaining)
-		tc.mu.Unlock()
-		select {
-		case <-time.After(remaining):
-		case <-req.Context().Done():
-			return nil, req.Context().Err()
-		}
-	} else {
-		tc.last = now
-		tc.mu.Unlock()
-	}
-	return tc.inner.Do(req)
-}
-
-// sanitizeErrorBody truncates an API error response body to 200 chars and
-// redacts substrings that look like credentials (Authorization headers,
-// token/key query params) before the message is printed to stdout/logs.
-func sanitizeErrorBody(s string) string {
-	if len(s) > 200 {
-		s = s[:200] + "…"
-	}
-	// Redact patterns like: "Authorization: Bearer xxx", "token=xxx", "apikey=xxx"
-	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
-		if idx := strings.Index(s, pat); idx >= 0 {
-			s = s[:idx] + "<redacted>" + "…"
-			break
-		}
-	}
-	return s
-}
+// httpDoer is an alias for synccore.HTTPDoer, kept so this package's
+// signatures and tests don't need renaming after the synccore migration.
+type httpDoer = synccore.HTTPDoer
 
 func basicAuth(user, token string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString(
@@ -1376,7 +1339,9 @@ func pageExistsByID(ctx context.Context, client httpDoer, auth, base, pageID str
 	}
 	req.Header.Set("Authorization", auth)
 
-	resp, err := client.Do(req)
+	// Raw variant: 404 is data (cached page deleted remotely), and a transient
+	// 429/5xx here must not fail the whole skip-path upsert.
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return false, fmt.Errorf("http: %w", err)
 	}
@@ -1403,86 +1368,18 @@ func doRequest(client httpDoer, req *http.Request) error {
 	return nil
 }
 
-// doWithRetry executes a request, retrying on 429 with exponential backoff.
-// Returns the successful response (caller must close body).
-// Body bytes are snapshotted before the loop so each retry gets a fresh reader —
-// http.Request bodies are consumed after the first Do() and cannot be replayed otherwise.
+// doWithRetry executes a request via synccore, retrying transient failures
+// (429/502/503/504, transport blips) with exponential backoff. Returns the
+// successful 2xx response (caller must close body); non-2xx becomes a
+// redacted error tagged "confluence".
 func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
-	var bodyData []byte
-	if req.Body != nil && req.Body != http.NoBody {
-		var err error
-		bodyData, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, fmt.Errorf("confluence: read request body: %w", err)
-		}
-		req.Body.Close()
-	}
-
-	backoff := 2 * time.Second
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if bodyData != nil {
-			req.Body = io.NopCloser(bytes.NewReader(bodyData))
-			req.ContentLength = int64(len(bodyData))
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("http: %w", err)
-		}
-		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-			// Respect Retry-After if present; keep existing backoff on parse failure.
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				if secs, err := parseRetryAfter(ra); err == nil && secs > 0 {
-					backoff = time.Duration(secs) * time.Second
-				}
-			}
-			fmt.Printf("[confluence] rate limited, retrying in %s (attempt %d/%d)\n", backoff, attempt+1, maxAttempts)
-			select {
-			case <-time.After(backoff):
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
-			backoff *= 2
-			if backoff > 30*time.Second {
-				backoff = 30 * time.Second
-			}
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			err := httpErr(resp)
-			resp.Body.Close()
-			return nil, err
-		}
-		return resp, nil
-	}
-	return nil, fmt.Errorf("confluence: max retries exceeded")
+	return synccore.DoWithRetryAs("confluence", client, req, maxAttempts)
 }
 
-// parseRetryAfter parses the Retry-After header value as seconds.
-func parseRetryAfter(val string) (int, error) {
-	val = strings.TrimSpace(val)
-	n := 0
-	for _, c := range val {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("non-numeric")
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n, nil
-}
-
-// httpErr reads the response body and returns a descriptive error.
-// The body is truncated to 200 chars and stripped of any credential-like patterns
-// before being included in the error string, which may appear in CI logs.
+// httpErr returns a descriptive, credential-redacted error for a non-2xx
+// response. Redaction/truncation mechanics live in synccore.
 func httpErr(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	msg := sanitizeErrorBody(strings.TrimSpace(string(body)))
-	if msg == "" {
-		return fmt.Errorf("confluence: http %d", resp.StatusCode)
-	}
-	return fmt.Errorf("confluence: http %d: %s", resp.StatusCode, msg)
+	return synccore.HTTPError("confluence", resp)
 }
 
 // --- Title map for wikilink resolution ---
@@ -2163,8 +2060,8 @@ func buildPostureStorageBody(pc postureCounts) string {
 	for _, level := range []string{"critical", "high", "medium", "low", "info"} {
 		if n, ok := pc.ByRisk[level]; ok && n > 0 {
 			props = append(props, [2]string{
-				strings.Title(level),
-				fmt.Sprintf("%s %d", riskStatusMacro(strings.Title(level)), n),
+				capitalizeRisk(level),
+				fmt.Sprintf("%s %d", riskStatusMacro(level), n),
 			})
 		}
 	}
@@ -2179,7 +2076,7 @@ func buildPostureStorageBody(pc postureCounts) string {
 	for _, level := range []string{"critical", "high", "medium", "low", "info"} {
 		n := pc.ByRisk[level]
 		b.WriteString(fmt.Sprintf(`<tr><td>%s</td><td>%d</td></tr>`,
-			riskStatusMacro(strings.Title(level)), n))
+			riskStatusMacro(level), n))
 	}
 	b.WriteString(`</tbody></table>`)
 
@@ -2187,6 +2084,16 @@ func buildPostureStorageBody(pc postureCounts) string {
 	b.WriteString(`<p><em>Current analyst status is owned by Jira. Use the Jira queue and Jira References sections for workflow state; this posture page only summarizes scanner evidence.</em></p>`)
 
 	return b.String()
+}
+
+// capitalizeRisk upper-cases the first letter of a lowercase ASCII risk level
+// ("critical" → "Critical"). Replaces the deprecated strings.Title for the
+// fixed risk vocabulary.
+func capitalizeRisk(level string) string {
+	if level == "" {
+		return level
+	}
+	return strings.ToUpper(level[:1]) + level[1:]
 }
 
 // upsertPostureSummary creates or updates the "Security Posture" page under rootID.
@@ -2796,78 +2703,6 @@ func warnPermanentAcceptance(ei *entityIndex) {
 	}
 }
 
-// appendUnownedSection appends an "Unowned" table to the Triage Board page
-// listing all status=open findings whose analyst.owner is empty (#61). The
-// section makes workload distribution visible at a glance — unowned findings
-// are findings nobody is actively triaging.
-func appendUnownedSection(pageTitle, storageBody string, ei *entityIndex) string {
-	if strings.TrimSpace(pageTitle) != "Triage Board" {
-		return storageBody
-	}
-	rows := collectUnownedRows(ei)
-	if len(rows) == 0 {
-		return storageBody
-	}
-	var b strings.Builder
-	b.WriteString(`<h2>Unowned</h2>`)
-	b.WriteString(`<p><em>Open findings with no analyst owner. Assign these to a team member so they are not silently ignored.</em></p>`)
-	b.WriteString(`<table><tbody>`)
-	b.WriteString(`<tr><th>Finding</th><th>Severity</th><th>Last seen</th></tr>`)
-	for _, row := range rows {
-		b.WriteString(`<tr><td>`)
-		b.WriteString(findingPageLink(row.FindingTitle))
-		b.WriteString(`</td><td>`)
-		if row.Severity != "" {
-			b.WriteString(riskStatusMacro(row.Severity))
-		} else {
-			b.WriteString(`-`)
-		}
-		b.WriteString(`</td><td>`)
-		b.WriteString(escapeHTML(row.LastSeen))
-		b.WriteString(`</td></tr>`)
-	}
-	b.WriteString(`</tbody></table>`)
-	return storageBody + b.String()
-}
-
-type unownedRow struct {
-	FindingTitle string
-	Severity     string
-	LastSeen     string
-	FindingID    string
-}
-
-func collectUnownedRows(ei *entityIndex) []unownedRow {
-	if ei == nil {
-		return nil
-	}
-	var rows []unownedRow
-	for _, f := range ei.finds {
-		if f == nil || f.Analyst == nil {
-			continue
-		}
-		if entities.CanonicalAnalystStatus(strings.TrimSpace(f.Analyst.Status)) != "open" {
-			continue
-		}
-		if strings.TrimSpace(f.Analyst.Owner) != "" {
-			continue
-		}
-		rows = append(rows, unownedRow{
-			FindingTitle: findingPageTitle(f, ei),
-			Severity:     strings.TrimSpace(f.Risk),
-			LastSeen:     strings.TrimSpace(f.LastSeen),
-			FindingID:    f.FindingID,
-		})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if riskRank(rows[i].Severity) != riskRank(rows[j].Severity) {
-			return riskRank(rows[i].Severity) < riskRank(rows[j].Severity)
-		}
-		return rows[i].FindingID < rows[j].FindingID
-	})
-	return rows
-}
-
 // appendAcceptanceExpiredSection appends an "Acceptance Expired" table to the
 // Triage Board page listing findings whose accepted risk window has lapsed.
 func appendAcceptanceExpiredSection(pageTitle, storageBody string, ei *entityIndex) string {
@@ -3451,16 +3286,15 @@ func prependOccurrenceProperties(storageBody string, o *entities.Occurrence, ei 
 
 // --- Confluence Labels API ---
 
-// addPageLabel adds a single label to a Confluence page (best-effort).
-// Errors are logged but not returned so a label failure never blocks export.
+// addPageLabel adds a single label to a Confluence page. Returns an error on
+// transport failure or non-2xx status; callers log it (best-effort — a label
+// failure never blocks export).
 func addPageLabel(ctx context.Context, client httpDoer, auth, base, pageID, label string) error {
 	if pageID == "" || label == "" {
 		return nil
 	}
 	label = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(label, " ", "-")))
-	if len(label) > 255 {
-		label = label[:255]
-	}
+	label = synccore.TruncateBytes(label, 255)
 	type labelEntry struct {
 		Prefix string `json:"prefix"`
 		Name   string `json:"name"`
@@ -3476,12 +3310,12 @@ func addPageLabel(ctx context.Context, client httpDoer, auth, base, pageID, labe
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", auth)
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
 	return nil
 }
 
@@ -3502,9 +3336,7 @@ func applyLabels(ctx context.Context, client httpDoer, auth, base, pageID string
 			// Confluence labels: lowercase, no spaces, max 255 chars
 			l = strings.ToLower(l)
 			l = strings.ReplaceAll(l, " ", "-")
-			if len(l) > 255 {
-				l = l[:255]
-			}
+			l = synccore.TruncateBytes(l, 255)
 			payload = append(payload, label{Prefix: "global", Name: l})
 		}
 	}
@@ -3521,13 +3353,13 @@ func applyLabels(ctx context.Context, client httpDoer, auth, base, pageID string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", auth)
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
 		fmt.Printf("[confluence] warning: failed to apply labels to page %s: %v\n", pageID, err)
 		return
 	}
+	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
 }
 
 // --- Label builders ---

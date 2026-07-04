@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
@@ -433,5 +434,72 @@ func TestExport_OwnerWithoutMappingOmitsAssignee(t *testing.T) {
 	fields := decodeIssuePayloadFields(t, capturedPayload)
 	if _, present := fields["assignee"]; present {
 		t.Errorf("expected NO assignee in payload (no mapping for 'carol'); got: %#v", fields["assignee"])
+	}
+}
+
+func TestExport_DedupFailureSkipsCreate(t *testing.T) {
+	// When the dedup search fails, the finding must be skipped (counted as an
+	// error) rather than created best-effort — a broken search plus a working
+	// create endpoint would otherwise mint duplicate tickets on every run.
+	var createCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql" {
+			// Plain 500 is deliberately non-retryable in synccore.
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"errorMessages":["search backend down"]}`))
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue" {
+			atomic.AddInt32(&createCalls, 1)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]string{"key": "SEC-1"})
+			return
+		}
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	ef := makeEntities(makeFinding("fin-001", "high", "https://example.com/a"))
+	sum, err := Export(context.Background(), ef, defaultOpts(srv.URL))
+	if err != nil {
+		t.Fatalf("Export itself should not error: %v", err)
+	}
+	if sum.Created != 0 {
+		t.Errorf("expected Created=0 when dedup failed, got %d", sum.Created)
+	}
+	if sum.Errors != 1 {
+		t.Errorf("expected Errors=1 for the skipped finding, got %d", sum.Errors)
+	}
+	if n := atomic.LoadInt32(&createCalls); n != 0 {
+		t.Errorf("issue create endpoint must not be hit after dedup failure; got %d calls", n)
+	}
+}
+
+func TestQuoteJQLString(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`plain-label`, `"plain-label"`},
+		{`has"quote`, `"has\"quote"`},
+		{`back\slash`, `"back\\slash"`},
+		{`both\"mixed`, `"both\\\"mixed"`},
+	}
+	for _, c := range cases {
+		if got := quoteJQLString(c.in); got != c.want {
+			t.Errorf("quoteJQLString(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestTruncateSummary_MultibyteSafe(t *testing.T) {
+	// 300 two-byte runes (é) = 600 bytes; truncation must not split a rune.
+	long := strings.Repeat("é", 300)
+	got := truncateSummary(long, 255)
+	if len(got) > 255 {
+		t.Errorf("truncated summary too long: %d bytes", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("expected trailing ellipsis, got %q", got[len(got)-6:])
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncation produced invalid UTF-8: %q", got)
 	}
 }

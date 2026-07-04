@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 const (
@@ -92,16 +93,6 @@ func buildFindingVerdictSection(f *entities.Finding) string {
 	writeRow("Rationale", escapeHTML(rationale))
 	b.WriteString(`</tbody></table>`)
 	return b.String()
-}
-
-// logSummary carries the most-recent analyst log snapshot per finding,
-// used to build the Analyst History rollup table on definition pages.
-type logSummary struct {
-	FindingID   string
-	FindingURL  string // Confluence page URL for linking
-	PublishedAt string // RFC3339; from the new or latest log entry
-	Risk        string
-	JiraCase    string
 }
 
 // findingStateSig returns a compact state fingerprint for a finding.
@@ -249,23 +240,6 @@ func extractAnalystLog(body string) string {
 		return ""
 	}
 	return content[:end]
-}
-
-// extractStateSig extracts the value inside the kb-state-sig hidden span.
-// Returns "" if not found.
-func extractStateSig(body string) string {
-	const openTag = `<span class="kb-state-sig" style="display:none">`
-	const closeTag = `</span>`
-	start := strings.Index(body, openTag)
-	if start < 0 {
-		return ""
-	}
-	rest := body[start+len(openTag):]
-	end := strings.Index(rest, closeTag)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
 }
 
 // demoteFirstInfoEntry replaces the first ac:name="info" occurrence in existingLog
@@ -422,9 +396,9 @@ func upsertPageProperty(ctx context.Context, client httpDoer, auth, base, pageID
 		return err
 	}
 	getReq.Header.Set("Authorization", auth)
-	// Use client.Do directly (not doWithRetry) so a 404 "property not found"
-	// response is not treated as an error — it means we need to create it.
-	getResp, err := client.Do(getReq)
+	// Raw retry variant so a 404 "property not found" response is data (means
+	// we need to create it) while transient 429/5xx still get retried.
+	getResp, err := synccore.DoWithRetryRaw(client, getReq, 3)
 	if err != nil {
 		return err
 	}
@@ -504,8 +478,9 @@ func fetchPageProperty(ctx context.Context, client httpDoer, auth, base, pageID,
 		return ""
 	}
 	req.Header.Set("Authorization", auth)
-	// Use client.Do directly so 404 (property absent) is handled gracefully.
-	resp, err := client.Do(req)
+	// Raw retry variant so 404 (property absent) is handled gracefully while
+	// transient 429/5xx still get retried.
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil || resp.StatusCode == http.StatusNotFound {
 		if resp != nil {
 			resp.Body.Close()
@@ -524,46 +499,6 @@ func fetchPageProperty(ctx context.Context, client httpDoer, auth, base, pageID,
 		return ""
 	}
 	return result.Value
-}
-
-// buildAnalystHistorySection renders the Analyst History rollup table for a
-// definition page. Returns "" if summaries is empty.
-func buildAnalystHistorySection(summaries []logSummary, jiraBaseURL string) string {
-	if len(summaries) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(`<h2>Analyst History</h2>`)
-	b.WriteString(`<table><tbody>`)
-	b.WriteString(`<tr><th>Finding</th><th>Last entry</th><th>Risk</th><th>Jira case</th></tr>`)
-	for _, s := range summaries {
-		// Finding link
-		findingCell := escapeHTML(s.FindingID)
-		if s.FindingURL != "" {
-			findingCell = `<a href="` + escapeAttr(s.FindingURL) + `">` + escapeHTML(s.FindingID) + `</a>`
-		}
-
-		// Published date (short)
-		publishedShort := s.PublishedAt
-		if t, err := time.Parse(time.RFC3339, s.PublishedAt); err == nil {
-			publishedShort = t.Format("2006-01-02")
-		}
-
-		// Jira case — link if URL resolvable
-		jiraCaseCell := escapeHTML(s.JiraCase)
-		if s.JiraCase != "" {
-			if browseURL, _ := jiraIssueBrowseURL(s.JiraCase, jiraBaseURL); browseURL != "" {
-				jiraCaseCell = `<a href="` + escapeAttr(browseURL) + `">` + escapeHTML(s.JiraCase) + `</a>`
-			}
-		}
-
-		b.WriteString(`<tr><td>` + findingCell + `</td>`)
-		b.WriteString(`<td>` + escapeHTML(publishedShort) + `</td>`)
-		b.WriteString(`<td>` + riskStatusMacro(s.Risk) + `</td>`)
-		b.WriteString(`<td>` + jiraCaseCell + `</td></tr>`)
-	}
-	b.WriteString(`</tbody></table>`)
-	return b.String()
 }
 
 // fetchPageStorageBody retrieves the storage body of a Confluence page by ID.
@@ -608,26 +543,4 @@ func fetchPageStorageBody(ctx context.Context, client httpDoer, auth, base, page
 		return "", fmt.Errorf("decode page response: %w", err)
 	}
 	return result.Body.Storage.Value, nil
-}
-
-// buildLogSummaryForFinding builds a logSummary for a finding. publishedAt is the
-// timestamp of the new entry (if one was created); otherwise the existing log is
-// scanned for the most-recent published timestamp (not yet implemented — uses publishedAt).
-func buildLogSummaryForFinding(f *entities.Finding, jiraBaseURL string, jiraStatusByKey map[string]string, publishedAt, _ string) logSummary {
-	if f == nil {
-		return logSummary{}
-	}
-	jiraCase := ""
-	if f.Analyst != nil {
-		_, jiraCase = firstJiraBrowseURL(f.Analyst.TicketRefs, jiraBaseURL)
-		if jiraCase == "" && len(f.Analyst.TicketRefs) > 0 {
-			jiraCase = strings.TrimSpace(f.Analyst.TicketRefs[0])
-		}
-	}
-	return logSummary{
-		FindingID:   f.FindingID,
-		PublishedAt: publishedAt,
-		Risk:        strings.TrimSpace(f.Risk),
-		JiraCase:    jiraCase,
-	}
 }

@@ -1,7 +1,10 @@
 package jira
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -169,5 +172,34 @@ func TestBuildEpicDescription_OmitsRollupWhenEmpty(t *testing.T) {
 	data, _ := json.Marshal(doc)
 	if strings.Contains(string(data), "Evidence rollup") {
 		t.Errorf("rollup section should be omitted for empty evidence")
+	}
+}
+
+func TestEnsureEpicForDefinition_SoftFallbackOn400(t *testing.T) {
+	// A 400/403 on Epic create means the project doesn't support the issue
+	// type (or the user lacks permission). That must surface as ("", nil) so
+	// the exporter falls back to flat findings — regression test for the dead
+	// status check before the synccore migration.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"issues": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue":
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"errors":{"issuetype":"The issue type selected is invalid."}}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	def := &entities.Definition{DefinitionID: "def-1", PluginID: "10020", Alert: "XFO Missing"}
+	key, err := ensureEpicForDefinition(context.Background(), srv.Client(), "Basic dTp0", srv.URL, def, epicEvidence{}, Options{ProjectKey: "SEC"})
+	if err != nil {
+		t.Fatalf("expected soft fallback (nil error) on 400, got: %v", err)
+	}
+	if key != "" {
+		t.Fatalf("expected empty epic key on soft fallback, got %q", key)
 	}
 }

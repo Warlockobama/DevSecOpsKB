@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // Options controls Jira issue export.
@@ -50,42 +51,9 @@ type Options struct {
 	UsernameMap map[string]string
 }
 
-// httpDoer abstracts HTTP request execution for throttling and testing.
-type httpDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-// throttledClient wraps an http.Client with a minimum delay between requests.
-type throttledClient struct {
-	inner *http.Client
-	mu    sync.Mutex
-	last  time.Time
-	delay time.Duration
-}
-
-func newThrottledClient(inner *http.Client, delay time.Duration) *throttledClient {
-	return &throttledClient{inner: inner, delay: delay}
-}
-
-func (tc *throttledClient) Do(req *http.Request) (*http.Response, error) {
-	tc.mu.Lock()
-	now := time.Now()
-	elapsed := now.Sub(tc.last)
-	if elapsed < tc.delay {
-		remaining := tc.delay - elapsed
-		tc.last = now.Add(remaining)
-		tc.mu.Unlock()
-		select {
-		case <-time.After(remaining):
-		case <-req.Context().Done():
-			return nil, req.Context().Err()
-		}
-	} else {
-		tc.last = now
-		tc.mu.Unlock()
-	}
-	return tc.inner.Do(req)
-}
+// httpDoer is an alias for synccore.HTTPDoer, kept so this package's
+// signatures and tests don't need renaming after the synccore migration.
+type httpDoer = synccore.HTTPDoer
 
 // Summary reports the outcome of an export run.
 type Summary struct {
@@ -131,14 +99,14 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	if delay == 0 {
 		delay = 250 * time.Millisecond
 	}
-	httpClient := newThrottledClient(rawClient, delay)
+	httpClient := synccore.NewThrottledClient(rawClient, delay)
 	auth := "Basic " + base64.StdEncoding.EncodeToString(
 		[]byte(strings.TrimSpace(opts.Username)+":"+strings.TrimSpace(opts.APIToken)),
 	)
 	base := strings.TrimRight(opts.BaseURL, "/")
-	floor := severityFloor(opts.MinRisk)
+	floor := synccore.SeverityFloor(opts.MinRisk)
 	if strings.TrimSpace(opts.MinRisk) == "" {
-		floor = severityFloor("medium")
+		floor = synccore.SeverityFloor("medium")
 	}
 	optInTag := strings.TrimSpace(opts.OptInTag)
 	if optInTag == "" {
@@ -167,7 +135,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	// Filter findings by minimum risk or explicit analyst opt-in.
 	var candidates []entities.Finding
 	for _, f := range ef.Findings {
-		if severityFloor(f.Risk) >= floor || findingHasOptInTag(f, optInTag) {
+		if synccore.SeverityFloor(f.Risk) >= floor || findingHasOptInTag(f, optInTag) {
 			candidates = append(candidates, f)
 		}
 	}
@@ -261,12 +229,16 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	ticketKeys := make(map[string]string)
 
 	// Separate into to-create and skipped; record keys for already-existing issues.
+	// When the dedup search itself failed we cannot know whether an issue already
+	// exists, so the finding is skipped and counted as an error rather than
+	// risking a duplicate ticket. The next run retries it.
 	var toCreate []entities.Finding
-	var skipped int
+	var skipped, dedupErrors int
 	for i, r := range dedupResults {
 		if r.err != nil {
-			// dedup check failed: proceed with create (best-effort)
-			toCreate = append(toCreate, candidates[i])
+			fmt.Printf("[jira] warning: dedup check failed for finding %s: %v (skipping create to avoid duplicates; will retry next run)\n",
+				candidates[i].FindingID, r.err)
+			dedupErrors++
 			continue
 		}
 		if r.exists {
@@ -352,7 +324,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			}
 		}
 	}
-	return Summary{Created: created, Skipped: skipped, Errors: errCount, TicketKeys: ticketKeys, EpicKeys: epicKeys, Relinked: relinked}, nil
+	return Summary{Created: created, Skipped: skipped, Errors: errCount + dedupErrors, TicketKeys: ticketKeys, EpicKeys: epicKeys, Relinked: relinked}, nil
 }
 
 // ensureIssueParent reads the current `parent` field on issueKey and PUTs an
@@ -366,7 +338,8 @@ func ensureIssueParent(ctx context.Context, client httpDoer, auth, base, issueKe
 		return false, nil
 	}
 
-	// 1. Read current parent.
+	// 1. Read current parent. Raw variant so a 404 (issue deleted since the
+	// dedup search) is data — skip quietly — rather than a logged error.
 	getURL := base + "/rest/api/3/issue/" + issueKey + "?fields=parent"
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
 	if err != nil {
@@ -374,12 +347,13 @@ func ensureIssueParent(ctx context.Context, client httpDoer, auth, base, issueKe
 	}
 	getReq.Header.Set("Authorization", auth)
 	getReq.Header.Set("Accept", "application/json")
-	getResp, err := doWithRetry(client, getReq, 3)
+	getResp, err := synccore.DoWithRetryRaw(client, getReq, 3)
 	if err != nil {
 		return false, fmt.Errorf("get parent: %w", err)
 	}
 	defer getResp.Body.Close()
 	if getResp.StatusCode == http.StatusNotFound {
+		io.Copy(io.Discard, getResp.Body)
 		return false, nil
 	}
 	if getResp.StatusCode != http.StatusOK {
@@ -419,7 +393,7 @@ func ensureIssueParent(ctx context.Context, client httpDoer, auth, base, issueKe
 	}
 	putReq.Header.Set("Authorization", auth)
 	putReq.Header.Set("Content-Type", "application/json")
-	putResp, err := doWithRetry(client, putReq, 3)
+	putResp, err := synccore.DoWithRetryRaw(client, putReq, 3)
 	if err != nil {
 		return false, fmt.Errorf("put parent: %w", err)
 	}
@@ -427,6 +401,7 @@ func ensureIssueParent(ctx context.Context, client httpDoer, auth, base, issueKe
 	if putResp.StatusCode != http.StatusNoContent && putResp.StatusCode != http.StatusOK {
 		return false, jiraHTTPErr(putResp)
 	}
+	io.Copy(io.Discard, putResp.Body)
 	return true, nil
 }
 
@@ -486,7 +461,7 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 	labels := []string{findingLabel(findingID), legacyFindingLabel(findingID)}
 	var quoted []string
 	for _, label := range labels {
-		quoted = append(quoted, fmt.Sprintf(`"%s"`, label))
+		quoted = append(quoted, quoteJQLString(label))
 	}
 	jql := fmt.Sprintf("labels in (%s)", strings.Join(quoted, ", "))
 
@@ -508,7 +483,7 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doWithRetry(client, req, 3)
+	resp, err := synccore.DoWithRetryAs("jira", client, req, 3)
 	if err != nil {
 		return "", err
 	}
@@ -526,6 +501,17 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 		return result.Issues[0].Key, nil
 	}
 	return "", nil
+}
+
+// quoteJQLString wraps s in double quotes for safe embedding in a JQL clause,
+// escaping backslashes and embedded quotes. Labels and IDs are generated
+// internally, but a hostile entities file must not be able to alter JQL
+// semantics (same hardening rationale as isValidJiraProjectKey on the
+// Confluence side).
+func quoteJQLString(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 // createIssue POSTs a new Jira issue for the given Finding.
@@ -589,7 +575,7 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doWithRetry(client, req, 3)
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return "", fmt.Errorf("post issue: %w", err)
 	}
@@ -614,11 +600,17 @@ func issueSummary(f entities.Finding) string {
 	if name == "" {
 		name = f.FindingID
 	}
-	// Trim to 255 chars (Jira summary limit)
-	if len(name) > 255 {
-		name = name[:252] + "..."
+	return truncateSummary(name, 255)
+}
+
+// truncateSummary trims s to at most max bytes (Jira's summary limit is 255
+// characters; staying under 255 bytes is always within it), appending "..."
+// and never splitting a multi-byte UTF-8 rune.
+func truncateSummary(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
-	return name
+	return synccore.TruncateBytes(s, max-3) + "..."
 }
 
 // findingLabel returns the dedup label for a finding.
@@ -661,100 +653,8 @@ func sanitizeLabel(s string) string {
 	return result
 }
 
-// doWithRetry executes a request, retrying on 429 with exponential backoff.
-// bodyData must be the raw request body bytes so each retry can construct a
-// fresh reader — http.Request bodies are consumed after the first Do() call
-// and cannot be replayed without this.
-func doWithRetry(client httpDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
-	// Snapshot the body bytes once so we can replay on 429 retries.
-	var bodyData []byte
-	if req.Body != nil && req.Body != http.NoBody {
-		var err error
-		bodyData, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, fmt.Errorf("jira: read request body: %w", err)
-		}
-		req.Body.Close()
-	}
-
-	backoff := 2 * time.Second
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		// Attach a fresh body reader for each attempt.
-		if bodyData != nil {
-			req.Body = io.NopCloser(bytes.NewReader(bodyData))
-			req.ContentLength = int64(len(bodyData))
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		if resp.StatusCode == 429 && attempt < maxAttempts-1 {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-			if ra := resp.Header.Get("Retry-After"); ra != "" {
-				if secs := parseRetryAfter(ra); secs > 0 {
-					backoff = time.Duration(secs) * time.Second
-				}
-				// On unparseable Retry-After keep existing backoff (don't reset to 100ms).
-			}
-			fmt.Printf("[jira] rate limited, retrying in %s (attempt %d/%d)\n", backoff, attempt+1, maxAttempts)
-			select {
-			case <-time.After(backoff):
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
-			backoff *= 2
-			if backoff > 30*time.Second {
-				backoff = 30 * time.Second
-			}
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			err := jiraHTTPErr(resp)
-			resp.Body.Close()
-			return nil, err
-		}
-		return resp, nil
-	}
-	return nil, fmt.Errorf("jira: max retries exceeded")
-}
-
-func parseRetryAfter(val string) int {
-	n := 0
-	for _, c := range strings.TrimSpace(val) {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n
-}
-
-// jiraHTTPErr reads the response body and returns a descriptive error.
-// The body is truncated to 200 chars and stripped of credential-like patterns
-// before being included in the error string, which may appear in CI logs.
+// jiraHTTPErr returns a descriptive, credential-redacted error for a non-2xx
+// response. Retry/backoff and redaction mechanics live in synccore.
 func jiraHTTPErr(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	msg := sanitizeErrorBody(strings.TrimSpace(string(body)))
-	if msg == "" {
-		return fmt.Errorf("jira: http %d", resp.StatusCode)
-	}
-	return fmt.Errorf("jira: http %d: %s", resp.StatusCode, msg)
-}
-
-// sanitizeErrorBody truncates an API error response body to 200 chars and
-// redacts substrings that look like credentials before the message is logged.
-func sanitizeErrorBody(s string) string {
-	if len(s) > 200 {
-		s = s[:200] + "…"
-	}
-	// Apply all redactions (not just first match) so multiple credential patterns
-	// in the same response body are all scrubbed.
-	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
-		if idx := strings.Index(s, pat); idx >= 0 {
-			s = s[:idx] + "<redacted>…"
-		}
-	}
-	return s
+	return synccore.HTTPError("jira", resp)
 }

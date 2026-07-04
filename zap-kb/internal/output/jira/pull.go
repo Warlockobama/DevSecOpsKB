@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // PullOptions configures the Jira status pull operation.
@@ -62,7 +63,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(opts.Username+":"+opts.Token))
 	base := strings.TrimRight(opts.BaseURL, "/")
-	client := newThrottledClient(&http.Client{Timeout: 30 * time.Second}, 250*time.Millisecond)
+	client := synccore.NewThrottledClient(&http.Client{Timeout: 30 * time.Second}, 250*time.Millisecond)
 
 	// Collect all unique ticket keys referenced by findings and occurrences.
 	type ticketRef struct {
@@ -245,17 +246,19 @@ func fetchJiraFields(ctx context.Context, client httpDoer, auth, base, key strin
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doWithRetry(client, req, 3)
+	// Raw variant so a 404 (ticket deleted or moved) is reported as NotFound
+	// rather than an error.
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return "", "", "", false, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 404 {
+	if resp.StatusCode == http.StatusNotFound {
 		io.Copy(io.Discard, resp.Body)
 		return "", "", "", false, nil
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return "", "", "", false, jiraHTTPErr(resp)
 	}
 

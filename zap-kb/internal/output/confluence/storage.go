@@ -671,6 +671,8 @@ func riskStatusMacro(risk string) string {
 	color := "Grey"
 	label := strings.ToUpper(strings.TrimSpace(risk))
 	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "critical": // Nuclei and CVSS-derived levels go above ZAP's "high"
+		color = "Red"
 	case "high":
 		color = "Red"
 	case "medium":

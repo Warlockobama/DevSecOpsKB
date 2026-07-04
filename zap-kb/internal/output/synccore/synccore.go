@@ -57,20 +57,26 @@ func (tc *ThrottledClient) Do(req *http.Request) (*http.Response, error) {
 	return tc.inner.Do(req)
 }
 
-// DoWithRetry executes a request with retries (see DoWithRetryRaw) and
-// converts any terminal non-2xx response into a redacted error. The caller
-// owns closing the body of a successful response.
-func DoWithRetry(client HTTPDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
+// DoWithRetryAs executes a request with retries (see DoWithRetryRaw) and
+// converts any terminal non-2xx response into a redacted error tagged with
+// the given system name ("jira", "confluence", …) so log lines keep their
+// source identity. The caller owns closing the body of a successful response.
+func DoWithRetryAs(system string, client HTTPDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
 	resp, err := DoWithRetryRaw(client, req, maxAttempts)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		err := HTTPError("synccore", resp)
+		err := HTTPError(system, resp)
 		resp.Body.Close()
 		return nil, err
 	}
 	return resp, nil
+}
+
+// DoWithRetry is DoWithRetryAs with the generic "synccore" system tag.
+func DoWithRetry(client HTTPDoer, req *http.Request, maxAttempts int) (*http.Response, error) {
+	return DoWithRetryAs("synccore", client, req, maxAttempts)
 }
 
 // retryableStatus reports whether an HTTP status is a transient condition
@@ -187,11 +193,11 @@ func HTTPError(system string, resp *http.Response) error {
 	return fmt.Errorf("%s: http %d: %s", system, resp.StatusCode, msg)
 }
 
-// SanitizeErrorBody truncates an API error body to 200 chars and redacts
+// SanitizeErrorBody truncates an API error body to 200 bytes and redacts
 // substrings that look like credentials before the message reaches logs.
 func SanitizeErrorBody(s string) string {
 	if len(s) > 200 {
-		s = s[:200] + "…"
+		s = TruncateBytes(s, 200) + "…"
 	}
 	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
 		if idx := strings.Index(s, pat); idx >= 0 {
@@ -199,6 +205,22 @@ func SanitizeErrorBody(s string) string {
 		}
 	}
 	return s
+}
+
+// TruncateBytes returns s truncated to at most n bytes, stepping back so a
+// multi-byte UTF-8 rune is never split. Shared by summary/label/error-body
+// truncation across the sink packages.
+func TruncateBytes(s string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && s[n]&0xC0 == 0x80 {
+		n--
+	}
+	return s[:n]
 }
 
 // SeverityFloor maps a risk string to a numeric code for threshold filtering:
