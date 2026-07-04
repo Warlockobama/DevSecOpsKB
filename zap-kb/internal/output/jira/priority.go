@@ -3,6 +3,7 @@ package jira
 import "strings"
 
 // riskToPriority maps ZAP risk strings to Jira Cloud priority names.
+// Risk-threshold filtering uses synccore.SeverityFloor.
 func riskToPriority(risk string) string {
 	switch strings.ToLower(strings.TrimSpace(risk)) {
 	case "high":
@@ -13,19 +14,5 @@ func riskToPriority(risk string) string {
 		return "Low"
 	default: // info, informational, unknown, ""
 		return "Lowest"
-	}
-}
-
-// severityFloor returns a numeric code for risk filtering (matches entities package convention).
-func severityFloor(risk string) int {
-	switch strings.ToLower(strings.TrimSpace(risk)) {
-	case "high":
-		return 3
-	case "medium":
-		return 2
-	case "low":
-		return 1
-	default:
-		return 0
 	}
 }

@@ -127,3 +127,36 @@ func TestEnsureIssueParent_EmptyKeysAreNoOp(t *testing.T) {
 		t.Fatalf("expected no-op for empty epic key, got updated=%v err=%v", u, err)
 	}
 }
+
+func TestEnsureIssueParent_DeletedIssueIsSilentNoOp(t *testing.T) {
+	// A 404 on the parent read means the issue was deleted since the dedup
+	// search — that's a quiet skip (false, nil), not an error. Regression test
+	// for the dead 404 check before the synccore migration.
+	var putCount int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/KAN-1":
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"errorMessages":["Issue does not exist"]}`))
+		case r.Method == http.MethodPut:
+			atomic.AddInt64(&putCount, 1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			// t.Fatalf is illegal off the test goroutine — record and fail the request.
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	updated, err := ensureIssueParent(context.Background(), srv.Client(), basicAuth(t), srv.URL, "KAN-1", "KAN-99")
+	if err != nil {
+		t.Fatalf("404 must not be an error, got: %v", err)
+	}
+	if updated {
+		t.Fatalf("expected updated=false for deleted issue")
+	}
+	if atomic.LoadInt64(&putCount) != 0 {
+		t.Fatalf("expected no PUT for deleted issue, got %d", putCount)
+	}
+}

@@ -381,6 +381,8 @@ func TestRiskStatusMacro(t *testing.T) {
 		wantColor string
 		wantTitle string
 	}{
+		{"Critical", "Red", "CRITICAL"},
+		{"critical", "Red", "CRITICAL"},
 		{"High", "Red", "HIGH"},
 		{"high", "Red", "HIGH"},
 		{"Medium", "Yellow", "MEDIUM"},

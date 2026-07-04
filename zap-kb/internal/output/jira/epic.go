@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // definitionLabel returns the dedup label used to find or create an Epic
@@ -39,10 +41,7 @@ func epicSummary(def *entities.Definition) string {
 	if pid := strings.TrimSpace(def.PluginID); pid != "" {
 		summary += " (Plugin " + pid + ")"
 	}
-	if len(summary) > 255 {
-		summary = summary[:252] + "..."
-	}
-	return summary
+	return truncateSummary(summary, 255)
 }
 
 // epicEvidence summarises the findings + occurrences for a single detection
@@ -244,7 +243,8 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doWithRetry(client, req, 3)
+	// Raw variant: 400/403 are data here (soft fallback), not transport errors.
+	resp, err := synccore.DoWithRetryRaw(client, req, 3)
 	if err != nil {
 		return "", fmt.Errorf("post epic: %w", err)
 	}
@@ -253,6 +253,7 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusForbidden {
 		// Project likely doesn't support this issue type or the user lacks
 		// permission. Return a soft failure so the caller can fall back.
+		io.Copy(io.Discard, resp.Body)
 		return "", nil
 	}
 	if resp.StatusCode != http.StatusCreated {
@@ -272,7 +273,7 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 // label, or "" when no match is found. Any issuetype matches — we rely on the
 // label (which we only apply to Epics) to scope the search.
 func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, label string) (string, error) {
-	jql := fmt.Sprintf(`labels = "%s"`, label)
+	jql := "labels = " + quoteJQLString(label)
 	body := map[string]any{
 		"jql":        jql,
 		"maxResults": 1,
@@ -290,14 +291,11 @@ func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, l
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := doWithRetry(client, req, 3)
+	resp, err := synccore.DoWithRetryAs("jira", client, req, 3)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", jiraHTTPErr(resp)
-	}
 
 	var result struct {
 		Issues []struct {

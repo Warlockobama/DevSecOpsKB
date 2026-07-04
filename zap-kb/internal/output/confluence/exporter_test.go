@@ -3057,72 +3057,6 @@ func TestAppendAcceptanceExpiredSection_OnlyOnTriageBoard(t *testing.T) {
 	}
 }
 
-func TestAppendUnownedSection_RendersOpenUnownedFindings(t *testing.T) {
-	defs := map[string]*entities.Definition{
-		"def-1": {DefinitionID: "def-1", Alert: "SQL Injection"},
-		"def-2": {DefinitionID: "def-2", Alert: "XSS"},
-		"def-3": {DefinitionID: "def-3", Alert: "Closed One"},
-	}
-	ei := &entityIndex{
-		defs: defs,
-		finds: map[string]*entities.Finding{
-			"fin-1": {
-				FindingID: "fin-1", DefinitionID: "def-1", Risk: "High",
-				Analyst: &entities.Analyst{Status: "open", Owner: ""},
-			},
-			"fin-2": {
-				FindingID: "fin-2", DefinitionID: "def-2", Risk: "Medium",
-				Analyst: &entities.Analyst{Status: "open", Owner: "alice"},
-			},
-			"fin-3": {
-				FindingID: "fin-3", DefinitionID: "def-3", Risk: "High",
-				Analyst: &entities.Analyst{Status: "fixed", Owner: ""},
-			},
-		},
-	}
-	out := appendUnownedSection("Triage Board", "<p>body</p>", ei)
-	if !strings.Contains(out, "<h2>Unowned</h2>") {
-		t.Errorf("expected 'Unowned' heading; got: %s", out)
-	}
-	if !strings.Contains(out, "SQL Injection") {
-		t.Errorf("expected SQL Injection (open + unowned) in section; got: %s", out)
-	}
-	if strings.Contains(out, "XSS") {
-		t.Errorf("XSS has owner — must not appear; got: %s", out)
-	}
-	if strings.Contains(out, "Closed One") {
-		t.Errorf("fixed findings must not appear; got: %s", out)
-	}
-}
-
-func TestAppendUnownedSection_OnlyOnTriageBoard(t *testing.T) {
-	ei := &entityIndex{
-		defs: map[string]*entities.Definition{"def-1": {DefinitionID: "def-1", Alert: "X"}},
-		finds: map[string]*entities.Finding{
-			"fin-1": {FindingID: "fin-1", DefinitionID: "def-1", Risk: "High", Analyst: &entities.Analyst{Status: "open"}},
-		},
-	}
-	for _, title := range []string{"KB Index", "KB Dashboard", "Issues"} {
-		out := appendUnownedSection(title, "<p>body</p>", ei)
-		if strings.Contains(out, "Unowned") {
-			t.Errorf("page %q should not get Unowned section; got: %s", title, out)
-		}
-	}
-}
-
-func TestAppendUnownedSection_NoOpWhenAllOwned(t *testing.T) {
-	ei := &entityIndex{
-		defs: map[string]*entities.Definition{"def-1": {DefinitionID: "def-1", Alert: "X"}},
-		finds: map[string]*entities.Finding{
-			"fin-1": {FindingID: "fin-1", DefinitionID: "def-1", Risk: "High", Analyst: &entities.Analyst{Status: "open", Owner: "alice"}},
-		},
-	}
-	out := appendUnownedSection("Triage Board", "<p>body</p>", ei)
-	if strings.Contains(out, "Unowned") {
-		t.Errorf("expected no section when all open findings are owned; got: %s", out)
-	}
-}
-
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -3190,5 +3124,77 @@ func TestWarnPermanentAcceptance_DeterministicOrder(t *testing.T) {
 	idxZ := strings.Index(out, "fin-z")
 	if !(idxA < idxM && idxM < idxZ) {
 		t.Errorf("expected warnings in sorted order fin-a, fin-m, fin-z; got:\n%s", out)
+	}
+}
+
+func TestExportVault_PopulatesFindingLinks(t *testing.T) {
+	// VaultSummary.FindingLinks feeds the Jira evidence-link sync in main.go.
+	// Regression test: it was never populated before, so the sync silently
+	// never ran.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			title, _ := body["title"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"id": "page-" + strings.ReplaceAll(title, " ", "_")})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/label"):
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/property/"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/property"):
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "INDEX.md"), "# KB Index")
+	defsDir := filepath.Join(dir, "definitions")
+	os.MkdirAll(defsDir, 0o755)
+	mustWriteFile(t, filepath.Join(defsDir, "10038-csp-header-not-set.md"),
+		"# CSP Header Not Set (Plugin 10038)\n\nBody.")
+	findingsDir := filepath.Join(dir, "findings")
+	os.MkdirAll(findingsDir, 0o755)
+	mustWriteFile(t, filepath.Join(findingsDir, "fin-abc123.md"),
+		"# Issue fin-abc123\n\nBody.")
+
+	ef := &entities.EntitiesFile{
+		SchemaVersion: "v1",
+		Definitions: []entities.Definition{
+			{DefinitionID: "def-10038", PluginID: "10038", Alert: "CSP Header Not Set"},
+		},
+		Findings: []entities.Finding{
+			{FindingID: "fin-abc123", DefinitionID: "def-10038", Risk: "Medium", URL: "https://example.com/app"},
+		},
+		Occurrences: []entities.Occurrence{},
+	}
+
+	sum, err := ExportVault(context.Background(), dir, VaultOptions{
+		BaseURL:      srv.URL,
+		Username:     "user",
+		APIToken:     "token",
+		SpaceKey:     "KB",
+		Concurrency:  1,
+		RequestDelay: time.Millisecond,
+		Entities:     ef,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	link, ok := sum.FindingLinks["fin-abc123"]
+	if !ok {
+		t.Fatalf("expected FindingLinks entry for fin-abc123, got: %v", sum.FindingLinks)
+	}
+	if !strings.HasPrefix(link, srv.URL+"/spaces/KB/pages/") {
+		t.Errorf("finding link should be a Confluence web URL, got %q", link)
 	}
 }

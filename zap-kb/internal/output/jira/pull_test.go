@@ -475,3 +475,42 @@ func TestPullStatus_RawStatusesPopulated(t *testing.T) {
 		t.Error("expected SyncedAt to be populated")
 	}
 }
+
+func TestPullStatus_DeletedTicketCountsNotFound(t *testing.T) {
+	// A 404 from Jira (ticket deleted or moved) must be classified as NotFound,
+	// not as an error — regression test for the dead 404 check that made
+	// PullResult.NotFound unreachable before the synccore migration.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"errorMessages":["Issue does not exist or you do not have permission to see it."]}`))
+	}))
+	defer srv.Close()
+
+	ef := makeEntities(entities.Finding{
+		FindingID: "fin-gone",
+		Name:      "Deleted Ticket Check",
+		Analyst: &entities.Analyst{
+			Status:     "open",
+			TicketRefs: []string{"KAN-404"},
+		},
+	})
+	res, err := PullStatus(context.Background(), ef, PullOptions{
+		BaseURL:  srv.URL,
+		Username: "user",
+		Token:    "token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Result.NotFound != 1 {
+		t.Errorf("expected NotFound=1 for deleted ticket, got %d", res.Result.NotFound)
+	}
+	if res.Result.Errors != 0 {
+		t.Errorf("expected Errors=0 for deleted ticket, got %d", res.Result.Errors)
+	}
+	// The KB-side status must be untouched.
+	if got := res.Updated.Findings[0].Analyst.Status; got != "open" {
+		t.Errorf("deleted ticket must not change analyst status; got %q", got)
+	}
+}
