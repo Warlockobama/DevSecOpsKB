@@ -269,7 +269,7 @@ func TestFindExistingIssue_SearchesCurrentAndLegacyLabels(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	key, err := findExistingIssue(context.Background(), srv.Client(), "Basic test", srv.URL, "fin-001")
+	key, err := findExistingIssue(context.Background(), srv.Client(), "Basic test", srv.URL, false, "fin-001")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

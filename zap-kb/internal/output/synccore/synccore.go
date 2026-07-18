@@ -6,6 +6,7 @@ package synccore
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -180,6 +181,20 @@ func parseRetryAfter(val string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// AuthHeader returns the Authorization header value for an Atlassian API
+// credential pair. With a username it is HTTP Basic (Cloud email + API token,
+// or Data Center username + password). With an empty username the token is
+// sent as a Bearer credential — the Data Center personal access token scheme,
+// which does not accept Basic.
+func AuthHeader(username, token string) string {
+	username = strings.TrimSpace(username)
+	token = strings.TrimSpace(token)
+	if username == "" {
+		return "Bearer " + token
+	}
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+token))
 }
 
 // HTTPError reads (a bounded prefix of) the response body and returns a

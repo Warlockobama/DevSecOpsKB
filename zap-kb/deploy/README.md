@@ -67,6 +67,8 @@ Confluence.
 | `CONFLUENCE_USER` | Confluence | Account email |
 | `CONFLUENCE_TOKEN` | Confluence | API token |
 | `JIRA_SERVER_ID` / `JIRA_SERVER_NAME` | Confluence | Optional — render the live Jira macro on the Triage Board page |
+| `JIRA_DEPLOYMENT` | Jira | `auto`\|`cloud`\|`datacenter`; auto-detects `*.atlassian.net` as cloud |
+| `CONFLUENCE_DEPLOYMENT` | Confluence | Same values; controls whether the user is required (see below) |
 
 Behavior flags: `-include-mitre` (default on), `-include-traffic`,
 `-confluence-full`, `-jira-min-risk`, `-jira-detection-epic`,
@@ -101,6 +103,34 @@ docker run --rm -v "$PWD/work:/work" \
 
 Outputs under `/work`: `entities.json` (normalized KB), `vault/` (rendered
 pages), `publish-summary.json` (redacted run summary).
+
+### Self-hosted Jira/Confluence (Data Center)
+
+The same image publishes to self-hosted Atlassian — e.g. `jira.example.com` +
+`confluence.example.com`. Deployment is auto-detected from the URL (anything
+that isn't `*.atlassian.net` is treated as Data Center):
+
+```bash
+docker run --rm -v "$PWD/work:/work" \
+  -e JIRA_URL=https://jira.example.com -e JIRA_PROJECT=SEC \
+  -e CONFLUENCE_URL=https://confluence.example.com -e CONFLUENCE_SPACE=SECKB \
+  -e JIRA_API_TOKEN -e CONFLUENCE_TOKEN \
+  zap-kb:atlassian \
+  -in /work/zap-alerts.json \
+  -out /work/entities.json -jira-min-risk medium
+```
+
+Data Center notes:
+
+- **No `/wiki` suffix** on `CONFLUENCE_URL` — that's a Cloud path.
+- **Auth**: either set the user vars for Basic username+password, or leave the
+  user vars **unset** and supply a personal access token — it is sent as
+  `Authorization: Bearer`. `atlassian check` does not require the user on
+  Data Center.
+- Jira issues are created via REST v2 with wiki-markup descriptions
+  (identical content to the Cloud ADF bodies).
+- `-jira-detection-epic` is Cloud-only; on Data Center the exporter warns and
+  creates flat findings.
 
 ### Rehearse first (no writes)
 

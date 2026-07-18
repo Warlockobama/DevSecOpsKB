@@ -20,6 +20,26 @@ Flags override environment variables. URL, space, and project values only use
 their matching environment variables; the CLI does not infer Jira URL from
 Confluence URL.
 
+## Self-Hosted (Data Center / Server)
+
+Both sinks also work against self-hosted Atlassian Data Center. The CLI
+auto-detects the deployment from the URL (`*.atlassian.net` is Cloud, anything
+else is Data Center); override with `JIRA_DEPLOYMENT` / `CONFLUENCE_DEPLOYMENT`
+(`auto|cloud|datacenter`). Differences from Cloud:
+
+- `CONFLUENCE_URL` has no `/wiki` suffix, e.g. `https://confluence.example.com`.
+- Credentials are either username + password (Basic) or a personal access
+  token: leave the user unset and put the PAT in the token variable — it is
+  sent as a `Bearer` header. On Data Center the user is optional in
+  `atlassian check` when a token is present.
+- Jira uses REST v2 with wiki-markup issue descriptions (Cloud uses REST v3
+  with ADF). Content is identical; only the serialization differs.
+- `-jira-detection-epic` is not supported on Data Center (Cloud links Epic
+  children via the `parent` field; DC classic projects use a per-instance
+  Epic Link custom field). The exporter warns and creates flat findings.
+- `-jira-user-map` values are Data Center usernames instead of Cloud
+  accountIds.
+
 ## Supported Publish Flow
 
 Run a redacted readiness check before publishing:
