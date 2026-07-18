@@ -75,6 +75,7 @@ func main() {
 		confUser            string
 		confToken           string
 		confSpace           string
+		confDeployment      string
 		confParent          string
 		confTitlePrefix     string
 		confDryRun          bool
@@ -84,6 +85,7 @@ func main() {
 		jiraUser            string
 		jiraToken           string
 		jiraProject         string
+		jiraDeployment      string
 		jiraServerID        string
 		jiraServerName      string
 		jiraUserMap         string
@@ -168,6 +170,7 @@ func main() {
 	flag.StringVar(&confUser, "confluence-user", "", "Confluence username (env: CONFLUENCE_USER).")
 	flag.StringVar(&confToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN).")
 	flag.StringVar(&confSpace, "confluence-space", "", "Confluence space key (env: CONFLUENCE_SPACE).")
+	flag.StringVar(&confDeployment, "confluence-deployment", "", "Confluence deployment: auto|cloud|datacenter (env: CONFLUENCE_DEPLOYMENT; default auto-detects *.atlassian.net as cloud). On datacenter, leave -confluence-user empty to send the token as a Bearer personal access token.")
 	flag.StringVar(&confParent, "confluence-parent", "", "Optional Confluence parent page ID.")
 	flag.StringVar(&confTitlePrefix, "confluence-title-prefix", "", "Optional title prefix for exported page (default: KB Index).")
 	flag.BoolVar(&confDryRun, "confluence-dry-run", false, "Dry-run Confluence export (log instead of POST).")
@@ -177,6 +180,7 @@ func main() {
 	flag.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER, fallback: CONFLUENCE_USER).")
 	flag.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN, fallback: CONFLUENCE_TOKEN).")
 	flag.StringVar(&jiraProject, "jira-project", "", "Jira project key (env: JIRA_PROJECT; e.g. SEC).")
+	flag.StringVar(&jiraDeployment, "jira-deployment", "", "Jira deployment: auto|cloud|datacenter (env: JIRA_DEPLOYMENT; default auto-detects *.atlassian.net as cloud). Datacenter uses REST v2 with wiki-markup descriptions; leave -jira-user empty to send the token as a Bearer personal access token.")
 	flag.StringVar(&jiraServerID, "jira-server-id", "", "Confluence application-link UUID for the Jira instance (e.g. 6ee9717b-54c7-35fc-8b8c-517e863e5ce4). Enables a live Jira Issues macro on the Triage Board page when combined with -jira-server-name and -jira-project.")
 	flag.StringVar(&jiraServerName, "jira-server-name", "", "Display name of the linked Jira application (as configured on the Confluence side). Required alongside -jira-server-id and -jira-project to render the Triage Board live macro.")
 	flag.StringVar(&jiraUserMap, "jira-user-map", "", "Comma-separated KB-owner→Jira-accountId map for setting Jira assignee from analyst.owner on issue create (e.g. \"alice=5e3f...,bob=602a...\"). Owners with no mapping are logged and the issue is created unassigned.")
@@ -234,23 +238,27 @@ func main() {
 	envFallback(&forgejoToken, "FORGEJO_TOKEN")
 
 	atlassianCfg := resolveAtlassianConfig(atlassianConfigInput{
-		ConfluenceURL:   confURL,
-		ConfluenceSpace: confSpace,
-		ConfluenceUser:  confUser,
-		ConfluenceToken: confToken,
-		JiraURL:         jiraURL,
-		JiraProject:     jiraProject,
-		JiraUser:        jiraUser,
-		JiraToken:       jiraToken,
+		ConfluenceURL:        confURL,
+		ConfluenceSpace:      confSpace,
+		ConfluenceUser:       confUser,
+		ConfluenceToken:      confToken,
+		ConfluenceDeployment: confDeployment,
+		JiraURL:              jiraURL,
+		JiraProject:          jiraProject,
+		JiraUser:             jiraUser,
+		JiraToken:            jiraToken,
+		JiraDeployment:       jiraDeployment,
 	}, os.Getenv)
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
 	confUser = atlassianCfg.ConfluenceUser
 	confToken = atlassianCfg.ConfluenceToken
+	confDeployment = atlassianCfg.ConfluenceDeployment
 	jiraURL = atlassianCfg.JiraURL
 	jiraProject = atlassianCfg.JiraProject
 	jiraUser = atlassianCfg.JiraUser
 	jiraToken = atlassianCfg.JiraToken
+	jiraDeployment = atlassianCfg.JiraDeployment
 	publishSummary := newAtlassianPublishSummary(atlassianCfg)
 
 	// Load operator-tunable triage policy once at startup. This drives the
@@ -739,6 +747,7 @@ func main() {
 			BaseURL:       jiraURL,
 			Username:      jiraUser,
 			APIToken:      jiraToken,
+			Deployment:    jiraDeployment,
 			ProjectKey:    jiraProject,
 			IssueType:     jiraIssueType,
 			Component:     jiraComponent,
@@ -789,10 +798,11 @@ func main() {
 			pullCtx, pullCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer pullCancel()
 			pullRes, pullErr := jira.PullStatus(pullCtx, ent, jira.PullOptions{
-				BaseURL:  jiraURL,
-				Username: jiraUser,
-				Token:    jiraToken,
-				ReadOnly: !jiraSyncKBStatus,
+				BaseURL:    jiraURL,
+				Username:   jiraUser,
+				Token:      jiraToken,
+				Deployment: jiraDeployment,
+				ReadOnly:   !jiraSyncKBStatus,
 			})
 			if pullErr != nil {
 				log.Printf("warning: jira status pull failed: %v", pullErr)
@@ -884,6 +894,7 @@ func main() {
 						BaseURL:     jiraURL,
 						Username:    jiraUser,
 						APIToken:    jiraToken,
+						Deployment:  jiraDeployment,
 						Concurrency: jiraConcurrency,
 					})
 					if lerr != nil {
@@ -1231,6 +1242,7 @@ func runPullCommand(args []string) {
 		jiraURL          string
 		jiraUser         string
 		jiraToken        string
+		jiraDeployment   string
 		jiraPullStatus   bool
 	)
 	fs.StringVar(&entitiesIn, "entities-in", "", "Entities JSON file to read and update (required)")
@@ -1243,6 +1255,7 @@ func runPullCommand(args []string) {
 	fs.StringVar(&jiraURL, "jira-url", "", "Jira base URL (env: JIRA_URL; enables Jira status pull)")
 	fs.StringVar(&jiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER, fallback: CONFLUENCE_USER)")
 	fs.StringVar(&jiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN, fallback: CONFLUENCE_TOKEN)")
+	fs.StringVar(&jiraDeployment, "jira-deployment", "", "Jira deployment: auto|cloud|datacenter (env: JIRA_DEPLOYMENT)")
 	fs.BoolVar(&jiraPullStatus, "jira-pull-status", false, "Pull Jira ticket status into analyst.Status (Jira wins)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
@@ -1257,6 +1270,7 @@ func runPullCommand(args []string) {
 		JiraURL:         jiraURL,
 		JiraUser:        jiraUser,
 		JiraToken:       jiraToken,
+		JiraDeployment:  jiraDeployment,
 	}, os.Getenv)
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
@@ -1265,6 +1279,7 @@ func runPullCommand(args []string) {
 	jiraURL = atlassianCfg.JiraURL
 	jiraUser = atlassianCfg.JiraUser
 	jiraToken = atlassianCfg.JiraToken
+	jiraDeployment = atlassianCfg.JiraDeployment
 
 	if strings.TrimSpace(entitiesIn) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -entities-in is required")
@@ -1303,9 +1318,10 @@ func runPullCommand(args []string) {
 	// Jira status pull (runs first so Confluence pull can layer on top).
 	if wantJira {
 		jRes, jErr := jira.PullStatus(ctx, ef, jira.PullOptions{
-			BaseURL:  strings.TrimSpace(jiraURL),
-			Username: strings.TrimSpace(jiraUser),
-			Token:    strings.TrimSpace(jiraToken),
+			BaseURL:    strings.TrimSpace(jiraURL),
+			Username:   strings.TrimSpace(jiraUser),
+			Token:      strings.TrimSpace(jiraToken),
+			Deployment: jiraDeployment,
 		})
 		if jErr != nil {
 			fmt.Fprintf(os.Stderr, "pull: jira: %v\n", jErr)

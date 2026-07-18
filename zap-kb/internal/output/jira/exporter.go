@@ -3,7 +3,6 @@ package jira
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,9 +18,18 @@ import (
 
 // Options controls Jira issue export.
 type Options struct {
-	BaseURL      string
-	Username     string // email for Jira Cloud
-	APIToken     string
+	BaseURL string
+	// Username is the account email on Jira Cloud, or the account username on
+	// Data Center. Leave empty on Data Center to send APIToken as a Bearer
+	// personal access token instead of Basic auth.
+	Username string
+	// APIToken is the Cloud API token, Data Center password (with Username),
+	// or Data Center personal access token (without Username).
+	APIToken string
+	// Deployment selects the API dialect: DeploymentCloud (default, REST v3 +
+	// ADF) or DeploymentDataCenter (REST v2 + wiki markup). "dc" and "server"
+	// are accepted aliases for Data Center.
+	Deployment   string
 	ProjectKey   string
 	IssueType    string   // default "Bug"
 	Component    string   // optional component name
@@ -75,8 +83,16 @@ type Summary struct {
 // Issues are created in parallel up to opts.Concurrency.
 func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summary, error) {
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.ProjectKey) == "" ||
-		strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.APIToken) == "" {
-		return Summary{}, fmt.Errorf("jira export: missing required fields (base URL, project key, username, api token)")
+		strings.TrimSpace(opts.APIToken) == "" {
+		return Summary{}, fmt.Errorf("jira export: missing required fields (base URL, project key, api token)")
+	}
+	dc := isDataCenter(opts.Deployment)
+	if opts.DetectionEpic && dc {
+		// Data Center classic projects link Epic children via the per-instance
+		// "Epic Link" custom field, not the Cloud `parent` field — creating the
+		// link would 400. Fall back to flat findings rather than half-publish.
+		fmt.Println("[jira] warning: -jira-detection-epic is not supported on Jira Data Center; creating flat findings")
+		opts.DetectionEpic = false
 	}
 
 	issueType := opts.IssueType
@@ -100,9 +116,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		delay = 250 * time.Millisecond
 	}
 	httpClient := synccore.NewThrottledClient(rawClient, delay)
-	auth := "Basic " + base64.StdEncoding.EncodeToString(
-		[]byte(strings.TrimSpace(opts.Username)+":"+strings.TrimSpace(opts.APIToken)),
-	)
+	auth := synccore.AuthHeader(opts.Username, opts.APIToken)
 	base := strings.TrimRight(opts.BaseURL, "/")
 	floor := synccore.SeverityFloor(opts.MinRisk)
 	if strings.TrimSpace(opts.MinRisk) == "" {
@@ -219,7 +233,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				key, err := findExistingIssue(ctx, httpClient, auth, base, f.FindingID)
+				key, err := findExistingIssue(ctx, httpClient, auth, base, dc, f.FindingID)
 				dedupResults[i] = dedupResult{idx: i, exists: key != "", issueKey: key, err: err}
 			}(i, f)
 		}
@@ -306,7 +320,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				key, err := createIssue(ctx, httpClient, auth, base, issueType, f, defByID[f.DefinitionID], latestOccByFind[f.FindingID], epicKeys[f.DefinitionID], opts)
+				key, err := createIssue(ctx, httpClient, auth, base, dc, issueType, f, defByID[f.DefinitionID], latestOccByFind[f.FindingID], epicKeys[f.DefinitionID], opts)
 				createResults[i] = createResult{findingID: f.FindingID, issueKey: key, err: err}
 			}(i, f)
 		}
@@ -456,8 +470,9 @@ func findingHasOptInTag(f entities.Finding, tag string) bool {
 // dedup label for a finding. This keeps exports backward-compatible across
 // label scheme changes and avoids duplicate issues for already-exported findings.
 // Returns the issue key if found, empty string if not found.
-// Uses POST /rest/api/3/search/jql (Jira Cloud v3 current endpoint).
-func findExistingIssue(ctx context.Context, client httpDoer, auth, base, findingID string) (string, error) {
+// Uses POST /rest/api/3/search/jql on Cloud, POST /rest/api/2/search on
+// Data Center — same body and response shape either way.
+func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, dc bool, findingID string) (string, error) {
 	labels := []string{findingLabel(findingID), legacyFindingLabel(findingID)}
 	var quoted []string
 	for _, label := range labels {
@@ -475,7 +490,7 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base, finding
 		return "", fmt.Errorf("marshal search: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/3/search/jql", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchEndpoint(base, dc), bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
@@ -516,7 +531,7 @@ func quoteJQLString(s string) string {
 
 // createIssue POSTs a new Jira issue for the given Finding.
 // Returns the new issue key (e.g. "KAN-42") and any error.
-func createIssue(ctx context.Context, client httpDoer, auth, base, issueType string, f entities.Finding, def *entities.Definition, occ *entities.Occurrence, epicKey string, opts Options) (string, error) {
+func createIssue(ctx context.Context, client httpDoer, auth, base string, dc bool, issueType string, f entities.Finding, def *entities.Definition, occ *entities.Occurrence, epicKey string, opts Options) (string, error) {
 	labels := []string{findingLabel(f.FindingID)}
 	if def != nil && def.Taxonomy != nil {
 		for _, l := range def.Taxonomy.OWASPTop10 {
@@ -530,31 +545,45 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 		labels = append(labels, sanitizeLabel(l))
 	}
 
+	// Cloud's REST v3 takes an ADF document; Data Center's REST v2 takes a
+	// wiki-markup string rendered from the same node tree.
+	var description any = buildDescription(f, def, occ)
+	if dc {
+		description = renderWikiDoc(buildDescription(f, def, occ))
+	}
+
 	fields := map[string]any{
 		"project":     map[string]string{"key": opts.ProjectKey},
 		"summary":     issueSummary(f),
 		"issuetype":   map[string]string{"name": issueType},
 		"priority":    map[string]string{"name": riskToPriority(f.Risk)},
 		"labels":      labels,
-		"description": buildDescription(f, def, occ),
+		"description": description,
 	}
 	if strings.TrimSpace(opts.Component) != "" {
 		fields["components"] = []map[string]string{{"name": opts.Component}}
 	}
-	if ek := strings.TrimSpace(epicKey); ek != "" {
+	if ek := strings.TrimSpace(epicKey); ek != "" && !dc {
 		// Next-gen / team-managed Jira Cloud projects link Epics via `parent`.
 		// Classic projects use customfield_10014; that variant can be added later
-		// if users hit compatibility issues.
+		// if users hit compatibility issues. Data Center never reaches here —
+		// Export disables DetectionEpic in DC mode, so epicKey stays empty.
 		fields["parent"] = map[string]string{"key": ek}
 	}
 
 	// Assignee mapping (#61): translate KB analyst.owner → Jira accountId via
 	// opts.UsernameMap. Skip silently when there's no owner. Warn (don't block)
 	// when an owner is set but absent from the map — issue is created unassigned.
+	// Data Center has no accountIds; there the mapped value is a Jira username
+	// and rides in the v2 `name` field instead.
 	if f.Analyst != nil {
 		if owner := strings.TrimSpace(f.Analyst.Owner); owner != "" {
 			if accountID := strings.TrimSpace(opts.UsernameMap[owner]); accountID != "" {
-				fields["assignee"] = map[string]string{"accountId": accountID}
+				if dc {
+					fields["assignee"] = map[string]string{"name": accountID}
+				} else {
+					fields["assignee"] = map[string]string{"accountId": accountID}
+				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[jira] warning: no Jira accountId mapping for owner %q on finding %s; issue will be unassigned\n", owner, f.FindingID)
 			}
@@ -567,7 +596,7 @@ func createIssue(ctx context.Context, client httpDoer, auth, base, issueType str
 		return "", fmt.Errorf("marshal issue: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/3/issue", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, issueAPI(base, dc)+"/issue", bytes.NewReader(data))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,40 +11,48 @@ import (
 )
 
 type atlassianConfigInput struct {
-	ConfluenceURL   string
-	ConfluenceSpace string
-	ConfluenceUser  string
-	ConfluenceToken string
-	JiraURL         string
-	JiraProject     string
-	JiraUser        string
-	JiraToken       string
+	ConfluenceURL        string
+	ConfluenceSpace      string
+	ConfluenceUser       string
+	ConfluenceToken      string
+	ConfluenceDeployment string
+	JiraURL              string
+	JiraProject          string
+	JiraUser             string
+	JiraToken            string
+	JiraDeployment       string
 }
 
 type atlassianConfig struct {
-	ConfluenceURL         string
-	ConfluenceURLSource   string
-	ConfluenceSpace       string
-	ConfluenceSpaceSource string
-	ConfluenceUser        string
-	ConfluenceUserSource  string
-	ConfluenceToken       string
-	ConfluenceTokenSource string
-	JiraURL               string
-	JiraURLSource         string
-	JiraProject           string
-	JiraProjectSource     string
-	JiraUser              string
-	JiraUserSource        string
-	JiraToken             string
-	JiraTokenSource       string
+	ConfluenceURL              string
+	ConfluenceURLSource        string
+	ConfluenceSpace            string
+	ConfluenceSpaceSource      string
+	ConfluenceUser             string
+	ConfluenceUserSource       string
+	ConfluenceToken            string
+	ConfluenceTokenSource      string
+	ConfluenceDeployment       string
+	ConfluenceDeploymentSource string
+	JiraURL                    string
+	JiraURLSource              string
+	JiraProject                string
+	JiraProjectSource          string
+	JiraUser                   string
+	JiraUserSource             string
+	JiraToken                  string
+	JiraTokenSource            string
+	JiraDeployment             string
+	JiraDeploymentSource       string
 }
 
 type atlassianTargets struct {
-	ConfluenceURL   string `json:"confluenceUrl,omitempty"`
-	ConfluenceSpace string `json:"confluenceSpace,omitempty"`
-	JiraURL         string `json:"jiraUrl,omitempty"`
-	JiraProject     string `json:"jiraProject,omitempty"`
+	ConfluenceURL        string `json:"confluenceUrl,omitempty"`
+	ConfluenceSpace      string `json:"confluenceSpace,omitempty"`
+	ConfluenceDeployment string `json:"confluenceDeployment,omitempty"`
+	JiraURL              string `json:"jiraUrl,omitempty"`
+	JiraProject          string `json:"jiraProject,omitempty"`
+	JiraDeployment       string `json:"jiraDeployment,omitempty"`
 }
 
 type atlassianCredentialSources struct {
@@ -110,7 +119,40 @@ func resolveAtlassianConfig(input atlassianConfigInput, getenv func(string) stri
 		cfg.JiraToken = cfg.ConfluenceToken
 		cfg.JiraTokenSource = "fallback:CONFLUENCE_TOKEN"
 	}
+	cfg.ConfluenceDeployment, cfg.ConfluenceDeploymentSource = resolveDeployment(input.ConfluenceDeployment, "CONFLUENCE_DEPLOYMENT", cfg.ConfluenceURL, getenv)
+	cfg.JiraDeployment, cfg.JiraDeploymentSource = resolveDeployment(input.JiraDeployment, "JIRA_DEPLOYMENT", cfg.JiraURL, getenv)
 	return cfg
+}
+
+// resolveDeployment resolves a sink's deployment kind ("cloud" or
+// "datacenter"). An explicit flag/env value wins ("dc" and "server" are
+// datacenter aliases); "auto" or unset falls back to URL detection —
+// *.atlassian.net hosts are Cloud, anything else self-hosted Data Center.
+// Returns "" when the sink URL is also unset (sink disabled).
+func resolveDeployment(flagValue, envKey, sinkURL string, getenv func(string) string) (string, string) {
+	explicit, source := resolveFlagEnv(flagValue, envKey, getenv)
+	switch strings.ToLower(explicit) {
+	case "cloud":
+		return "cloud", source
+	case "datacenter", "dc", "server":
+		return "datacenter", source
+	case "", "auto":
+		// fall through to URL detection
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown %s value %q, auto-detecting from URL\n", envKey, explicit)
+	}
+	sinkURL = strings.TrimSpace(sinkURL)
+	if sinkURL == "" {
+		return "", "unset"
+	}
+	if u, err := url.Parse(sinkURL); err == nil {
+		host := strings.ToLower(u.Hostname())
+		if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") {
+			return "cloud", "auto:url"
+		}
+		return "datacenter", "auto:url"
+	}
+	return "cloud", "auto:default"
 }
 
 func resolveFlagEnv(flagValue, envKey string, getenv func(string) string) (string, string) {
@@ -125,10 +167,12 @@ func resolveFlagEnv(flagValue, envKey string, getenv func(string) string) (strin
 
 func (cfg atlassianConfig) targets() atlassianTargets {
 	return atlassianTargets{
-		ConfluenceURL:   strings.TrimSpace(cfg.ConfluenceURL),
-		ConfluenceSpace: strings.TrimSpace(cfg.ConfluenceSpace),
-		JiraURL:         strings.TrimSpace(cfg.JiraURL),
-		JiraProject:     strings.TrimSpace(cfg.JiraProject),
+		ConfluenceURL:        strings.TrimSpace(cfg.ConfluenceURL),
+		ConfluenceSpace:      strings.TrimSpace(cfg.ConfluenceSpace),
+		ConfluenceDeployment: cfg.ConfluenceDeployment,
+		JiraURL:              strings.TrimSpace(cfg.JiraURL),
+		JiraProject:          strings.TrimSpace(cfg.JiraProject),
+		JiraDeployment:       cfg.JiraDeployment,
 	}
 }
 
@@ -149,7 +193,10 @@ func (cfg atlassianConfig) missingForFullPublish() []string {
 	if strings.TrimSpace(cfg.ConfluenceSpace) == "" {
 		missing = append(missing, "CONFLUENCE_SPACE")
 	}
-	if strings.TrimSpace(cfg.ConfluenceUser) == "" {
+	// Cloud API tokens only authenticate as Basic email+token, so the user is
+	// required. Data Center accepts a bare personal access token as Bearer, so
+	// there the user is optional (username+password remains valid too).
+	if strings.TrimSpace(cfg.ConfluenceUser) == "" && cfg.ConfluenceDeployment != "datacenter" {
 		missing = append(missing, "CONFLUENCE_USER")
 	}
 	if strings.TrimSpace(cfg.ConfluenceToken) == "" {
@@ -161,7 +208,7 @@ func (cfg atlassianConfig) missingForFullPublish() []string {
 	if strings.TrimSpace(cfg.JiraProject) == "" {
 		missing = append(missing, "JIRA_PROJECT")
 	}
-	if strings.TrimSpace(cfg.JiraUser) == "" {
+	if strings.TrimSpace(cfg.JiraUser) == "" && cfg.JiraDeployment != "datacenter" {
 		missing = append(missing, "JIRA_USER or CONFLUENCE_USER")
 	}
 	if strings.TrimSpace(cfg.JiraToken) == "" {

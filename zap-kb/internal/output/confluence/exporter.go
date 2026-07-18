@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -150,8 +149,8 @@ func (s *pageHashStore) save() error {
 // Content is wrapped in a markdown macro so existing markdown renders without conversion.
 // If a page with the same title already exists in the space, it is updated (upsert).
 func Export(ctx context.Context, vaultRoot string, opts Options) error {
-	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" || strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.APIToken) == "" {
-		return fmt.Errorf("confluence export: missing required fields (base URL, space key, username, api token)")
+	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" || strings.TrimSpace(opts.APIToken) == "" {
+		return fmt.Errorf("confluence export: missing required fields (base URL, space key, api token)")
 	}
 
 	page := strings.TrimSpace(opts.MarkdownPage)
@@ -210,8 +209,8 @@ func Export(ctx context.Context, vaultRoot string, opts Options) error {
 // All pages are upserted in parallel (bounded by Concurrency).
 func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (VaultSummary, error) {
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" ||
-		strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.APIToken) == "" {
-		return VaultSummary{}, fmt.Errorf("confluence vault export: missing required fields (base URL, space key, username, api token)")
+		strings.TrimSpace(opts.APIToken) == "" {
+		return VaultSummary{}, fmt.Errorf("confluence vault export: missing required fields (base URL, space key, api token)")
 	}
 
 	concurrency := opts.Concurrency
@@ -1061,9 +1060,12 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 // signatures and tests don't need renaming after the synccore migration.
 type httpDoer = synccore.HTTPDoer
 
+// basicAuth builds the Authorization header for a Confluence credential pair.
+// Despite the historical name it also covers Data Center personal access
+// tokens: with an empty user the token is sent as Bearer (see
+// synccore.AuthHeader).
 func basicAuth(user, token string) string {
-	return "Basic " + base64.StdEncoding.EncodeToString(
-		[]byte(strings.TrimSpace(user)+":"+strings.TrimSpace(token)))
+	return synccore.AuthHeader(user, token)
 }
 
 // readMarkdownFile reads and returns the content of a markdown file, stripping YAML frontmatter.

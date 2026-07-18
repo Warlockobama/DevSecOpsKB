@@ -3,7 +3,6 @@ package jira
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +31,8 @@ func SyncFindingEvidenceLinks(ctx context.Context, ticketKeys, findingLinks map[
 }
 
 func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]string, findingLinks map[string]string, opts Options) (EvidenceLinkSummary, error) {
-	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.APIToken) == "" {
-		return EvidenceLinkSummary{}, fmt.Errorf("jira evidence link sync: missing required fields (base URL, username, api token)")
+	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.APIToken) == "" {
+		return EvidenceLinkSummary{}, fmt.Errorf("jira evidence link sync: missing required fields (base URL, api token)")
 	}
 	if len(ticketRefs) == 0 || len(findingLinks) == 0 {
 		return EvidenceLinkSummary{}, nil
@@ -55,7 +54,8 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 		rawClient.Timeout = 30 * time.Second
 	}
 	client := synccore.NewThrottledClient(rawClient, delay)
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(strings.TrimSpace(opts.Username)+":"+strings.TrimSpace(opts.APIToken)))
+	auth := synccore.AuthHeader(opts.Username, opts.APIToken)
+	dc := isDataCenter(opts.Deployment)
 	base := strings.TrimRight(opts.BaseURL, "/")
 
 	type candidate struct {
@@ -100,7 +100,7 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			exists, err := hasRemoteLink(ctx, client, auth, base, c.issueKey, c.url)
+			exists, err := hasRemoteLink(ctx, client, auth, base, dc, c.issueKey, c.url)
 			if err != nil {
 				results[i] = result{err: err}
 				return
@@ -109,7 +109,7 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 				results[i] = result{skipped: true}
 				return
 			}
-			if err := addRemoteLink(ctx, client, auth, base, c.issueKey, c.url); err != nil {
+			if err := addRemoteLink(ctx, client, auth, base, dc, c.issueKey, c.url); err != nil {
 				results[i] = result{err: err}
 				return
 			}
@@ -133,8 +133,8 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 	return sum, nil
 }
 
-func hasRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, wantURL string) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/rest/api/3/issue/"+issueKey+"/remotelink", nil)
+func hasRemoteLink(ctx context.Context, client httpDoer, auth, base string, dc bool, issueKey, wantURL string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, issueAPI(base, dc)+"/issue/"+issueKey+"/remotelink", nil)
 	if err != nil {
 		return false, err
 	}
@@ -165,7 +165,7 @@ func hasRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, w
 	return false, nil
 }
 
-func addRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, targetURL string) error {
+func addRemoteLink(ctx context.Context, client httpDoer, auth, base string, dc bool, issueKey, targetURL string) error {
 	payload := map[string]any{
 		"object": map[string]any{
 			"url":   targetURL,
@@ -176,7 +176,7 @@ func addRemoteLink(ctx context.Context, client httpDoer, auth, base, issueKey, t
 	if err != nil {
 		return fmt.Errorf("marshal remote link: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/rest/api/3/issue/"+issueKey+"/remotelink", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, issueAPI(base, dc)+"/issue/"+issueKey+"/remotelink", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

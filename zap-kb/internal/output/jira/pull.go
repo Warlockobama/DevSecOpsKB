@@ -2,7 +2,6 @@ package jira
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,10 +16,14 @@ import (
 
 // PullOptions configures the Jira status pull operation.
 type PullOptions struct {
-	BaseURL  string
+	BaseURL string
+	// Username may be empty on Data Center to send Token as a Bearer personal
+	// access token (see Options.Username).
 	Username string
 	Token    string
-	ReadOnly bool
+	// Deployment selects the API dialect; see Options.Deployment.
+	Deployment string
+	ReadOnly   bool
 }
 
 // PullResult reports what the pull operation did.
@@ -57,11 +60,12 @@ type PullStatusResult struct {
 //
 // Tickets whose status doesn't match any mapping are left unchanged.
 func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions) (PullStatusResult, error) {
-	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.Token) == "" {
-		return PullStatusResult{}, fmt.Errorf("jira pull: missing required fields (base URL, username, token)")
+	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Token) == "" {
+		return PullStatusResult{}, fmt.Errorf("jira pull: missing required fields (base URL, token)")
 	}
 
-	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(opts.Username+":"+opts.Token))
+	auth := synccore.AuthHeader(opts.Username, opts.Token)
+	dc := isDataCenter(opts.Deployment)
 	base := strings.TrimRight(opts.BaseURL, "/")
 	client := synccore.NewThrottledClient(&http.Client{Timeout: 30 * time.Second}, 250*time.Millisecond)
 
@@ -137,7 +141,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			mapped, raw, assignee, found, err := fetchJiraFields(ctx, client, auth, base, ref.key)
+			mapped, raw, assignee, found, err := fetchJiraFields(ctx, client, auth, base, dc, ref.key)
 			if err != nil {
 				results[i] = refResult{ref: ref, err: err}
 				return
@@ -237,8 +241,8 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 // Returns found=false when the issue is not found. mappedStatus may be "" when
 // the Jira status does not map to a canonical value; assignee may be "" when
 // the issue is unassigned.
-func fetchJiraFields(ctx context.Context, client httpDoer, auth, base, key string) (string, string, string, bool, error) {
-	url := base + "/rest/api/3/issue/" + key + "?fields=status,assignee"
+func fetchJiraFields(ctx context.Context, client httpDoer, auth, base string, dc bool, key string) (string, string, string, bool, error) {
+	url := issueAPI(base, dc) + "/issue/" + key + "?fields=status,assignee"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", "", false, err

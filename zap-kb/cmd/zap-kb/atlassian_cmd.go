@@ -36,10 +36,12 @@ func runAtlassianCheck(args []string) {
 	fs.StringVar(&input.ConfluenceSpace, "confluence-space", "", "Confluence space key (env: CONFLUENCE_SPACE)")
 	fs.StringVar(&input.ConfluenceUser, "confluence-user", "", "Confluence username / email (env: CONFLUENCE_USER)")
 	fs.StringVar(&input.ConfluenceToken, "confluence-token", "", "Confluence API token (env: CONFLUENCE_TOKEN)")
+	fs.StringVar(&input.ConfluenceDeployment, "confluence-deployment", "", "Confluence deployment: auto|cloud|datacenter (env: CONFLUENCE_DEPLOYMENT)")
 	fs.StringVar(&input.JiraURL, "jira-url", "", "Jira base URL (env: JIRA_URL)")
 	fs.StringVar(&input.JiraProject, "jira-project", "", "Jira project key (env: JIRA_PROJECT)")
 	fs.StringVar(&input.JiraUser, "jira-user", "", "Jira username / email (env: JIRA_USER, fallback: CONFLUENCE_USER)")
 	fs.StringVar(&input.JiraToken, "jira-token", "", "Jira API token (env: JIRA_API_TOKEN, fallback: CONFLUENCE_TOKEN)")
+	fs.StringVar(&input.JiraDeployment, "jira-deployment", "", "Jira deployment: auto|cloud|datacenter (env: JIRA_DEPLOYMENT)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "atlassian check: %v\n", err)
 		os.Exit(1)

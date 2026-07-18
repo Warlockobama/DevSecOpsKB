@@ -47,8 +47,8 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 	}
 
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" ||
-		strings.TrimSpace(opts.Username) == "" || strings.TrimSpace(opts.Token) == "" {
-		return ef, PullResult{}, fmt.Errorf("pull: missing required fields (base URL, space key, username, token)")
+		strings.TrimSpace(opts.Token) == "" {
+		return ef, PullResult{}, fmt.Errorf("pull: missing required fields (base URL, space key, token)")
 	}
 
 	auth := basicAuth(opts.Username, opts.Token)
