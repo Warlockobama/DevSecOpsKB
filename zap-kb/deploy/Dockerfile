@@ -29,9 +29,18 @@ LABEL org.opencontainers.image.documentation="https://github.com/Warlockobama/De
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # ca-certificates: outbound HTTPS to Jira/Confluence Cloud.
-# tzdata: stable RFC3339 timestamps. A non-root user owns the /work dir so the
-# CLI can write outputs there both under `docker run` and in a pod.
-RUN apk add --no-cache ca-certificates tzdata \
+# tzdata: stable RFC3339 timestamps.
+# curl, jq: this image is used as a Jenkins pod sidecar, where the surrounding
+#   pipeline shells out to poll the ZAP API (planProgress, endDelayJob) from
+#   inside this container. The Alpine base only ships busybox wget, so those
+#   stages failed with "curl: not found" -- a plain `apk add curl` is the whole
+#   fix. jq comes along because the same loops parse ZAP's JSON, which they were
+#   otherwise doing with sed and grep.
+#   Neither is needed by zap-kb itself; the binary is static and speaks HTTP
+#   directly. Measured cost: 19.9 MB -> 25.6 MB unpacked (+5.8 MB).
+# A non-root user owns the /work dir so the CLI can write outputs there both
+# under `docker run` and in a pod.
+RUN apk add --no-cache ca-certificates tzdata curl jq \
  && adduser -D -H -u 65532 kb \
  && mkdir -p /work && chown kb:kb /work
 
