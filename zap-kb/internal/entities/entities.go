@@ -332,6 +332,10 @@ func DefinitionOriginValue(origin, pluginID string, det *Detection) string {
 
 func isProjectSpecificPluginID(pluginID string) bool {
 	id := strings.ToLower(strings.TrimSpace(pluginID))
+	// The pipeline tags KB-authored rules with an explicit "custom-" marker.
+	if strings.HasPrefix(id, "custom-") {
+		return true
+	}
 	if !strings.HasPrefix(id, "zap-") {
 		return false
 	}

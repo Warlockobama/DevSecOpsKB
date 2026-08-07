@@ -72,8 +72,10 @@ func cvssLine(cvss *entities.CVSS) string {
 
 func cweLabel(t *entities.Taxonomy) string {
 	label := fmt.Sprintf("CWE-%d", t.CWEID)
-	if strings.TrimSpace(t.CWEName) != "" {
-		label += ": " + strings.TrimSpace(t.CWEName)
+	// Skip the name when it is unresolved and merely echoes the id
+	// (e.g. CWEName "CWE-552"), which would render "CWE-552: CWE-552".
+	if n := strings.TrimSpace(t.CWEName); n != "" && n != label {
+		label += ": " + n
 	}
 	return label
 }

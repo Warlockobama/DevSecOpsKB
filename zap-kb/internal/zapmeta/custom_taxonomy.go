@@ -1,5 +1,10 @@
 package zapmeta
 
+import (
+	"strconv"
+	"strings"
+)
+
 // CustomTaxonomy holds static taxonomy overrides for custom/internal ZAP rule plugin IDs
 // that are not in the standard ZAP alerts catalogue.
 type CustomTaxonomy struct {
@@ -10,42 +15,109 @@ type CustomTaxonomy struct {
 	OWASPTop10 []string
 }
 
-// customTaxonomyMap maps plugin IDs to their static taxonomy.
-// The 4 authenticated-* rules are custom IDOR/access-control findings.
-var customTaxonomyMap = map[string]CustomTaxonomy{
-	"zap-authenticated-basket-item-enumeration": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-basket-object-reference-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-complaints-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-user-directory-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
+// knownSourcePrefixes are the scanner/source tokens the devsecopskb pipeline
+// prepends to every imported rule identifier (e.g. "zap-10098",
+// "nuclei-missing-hsts-header", "zap-missing-referrer-policy"). The same logical
+// rule is imported once per source tool, so these prefixes are stripped before
+// any taxonomy lookup — otherwise a curated entry would have to enumerate every
+// source variant and would silently miss new ones.
+var knownSourcePrefixes = []string{"zap-", "nuclei-", "burp-"}
+
+// CanonicalPluginID returns the source-agnostic lookup key for a plugin ID. It
+// trims an optional "custom-" marker (the pipeline tags KB-authored rules
+// "custom-nuclei-…"/"custom-zap-…") and then one known source prefix:
+//
+//	"zap-10098"                          → "10098"   (ZAP numeric plugin)
+//	"custom-nuclei-missing-hsts-header"  → "missing-hsts-header"
+//	"custom-zap-jwt-password-hash-disclosure" → "jwt-password-hash-disclosure"
+//	"nuclei-missing-referrer-policy"     → "missing-referrer-policy"
+//	"missing-hsts-header"                → "missing-hsts-header" (already canonical)
+//
+// Matching is case-insensitive; one "custom-" and one source prefix are removed.
+func CanonicalPluginID(pluginID string) string {
+	id := strings.TrimSpace(pluginID)
+	if strings.HasPrefix(strings.ToLower(id), "custom-") {
+		id = id[len("custom-"):]
+	}
+	lower := strings.ToLower(id)
+	for _, p := range knownSourcePrefixes {
+		if strings.HasPrefix(lower, p) {
+			return id[len(p):]
+		}
+	}
+	return id
 }
 
-// LookupCustomTaxonomy returns the static taxonomy for a plugin ID, or nil if not found.
+func cweURI(id int) string {
+	return "https://cwe.mitre.org/data/definitions/" + strconv.Itoa(id) + ".html"
+}
+
+// Shared mappings for custom-rule families.
+var (
+	// IDOR / broken access control (the authenticated-access rules).
+	idorTaxonomy = CustomTaxonomy{
+		CWEID: 639, CWEURI: cweURI(639), CAPECIDs: []int{122},
+		ATTACK: []string{"T1078"}, OWASPTop10: []string{"A01:2021-Broken Access Control"},
+	}
+	// Sensitive information exposed to unauthenticated callers.
+	infoExposureTaxonomy = CustomTaxonomy{
+		CWEID: 200, CWEURI: cweURI(200), CAPECIDs: []int{118}, OWASPTop10: []string{"A05:2021"},
+	}
+	// Error/stack-trace responses leaking internal detail.
+	errorDisclosureTaxonomy = CustomTaxonomy{
+		CWEID: 209, CWEURI: cweURI(209), CAPECIDs: []int{118}, OWASPTop10: []string{"A05:2021"},
+	}
+)
+
+// customTaxonomyMap maps the CANONICAL (prefix-stripped) plugin ID of a custom /
+// KB-authored rule to its static taxonomy. Keys are the source-agnostic slug the
+// pipeline emits after the "custom-"/"zap-"/"nuclei-" prefixes — see
+// CanonicalPluginID. Because custom rules are KB-owned, every custom rule the KB
+// publishes MUST appear here: an unmapped custom rule is deliberately left with
+// blank taxonomy ("Taxonomy incomplete") rather than inheriting the scanner's
+// generic placeholder CWE. The export prints a diagnostic listing any custom
+// rule that lands here without a mapping.
+var customTaxonomyMap = map[string]CustomTaxonomy{
+	// --- Access control (IDOR) ---
+	"auth-basket-items-enumeration": idorTaxonomy,
+	"auth-basket-object-reference":  idorTaxonomy,
+	"auth-complaints-exposure":      idorTaxonomy,
+	"auth-user-directory-exposure":  idorTaxonomy,
+
+	// --- Unauthenticated information exposure ---
+	"public-application-configuration": infoExposureTaxonomy,
+	"public-challenge-metadata":        infoExposureTaxonomy,
+	"public-feedback-exposure":         infoExposureTaxonomy,
+	"robots-sensitive-paths":           infoExposureTaxonomy,
+
+	// --- Error / stack-trace disclosure ---
+	"captcha-route-error-disclosure": errorDisclosureTaxonomy,
+	"stacktrace-disclosure":          errorDisclosureTaxonomy,
+
+	// --- Response-header hardening ---
+	// HSTS absent → cleartext transmission exposure.
+	"missing-hsts-header": {CWEID: 319, CWEURI: cweURI(319), OWASPTop10: []string{"A02:2021"}},
+	// Referrer-Policy absent → sensitive information disclosure via Referer.
+	"missing-referrer-policy": {CWEID: 200, CWEURI: cweURI(200), OWASPTop10: []string{"A05:2021"}},
+	// CSP absent → protection-mechanism failure enabling client-side injection.
+	"missing-csp": {CWEID: 693, CWEURI: cweURI(693), CAPECIDs: []int{63}, OWASPTop10: []string{"A05:2021"}},
+	// Permissive CORS (wildcard origin).
+	"wildcard-cors-origin": {CWEID: 942, CWEURI: cweURI(942), CAPECIDs: []int{1}, OWASPTop10: []string{"A05:2021"}},
+
+	// --- Other KB-authored rules ---
+	// Legacy FTP content reachable over the web root.
+	"legacy-ftp-surface": {CWEID: 552, CWEURI: cweURI(552), OWASPTop10: []string{"A01:2021-Broken Access Control"}},
+	// Error-based SQL injection.
+	"sql-error-based-injection": {CWEID: 89, CWEURI: cweURI(89), CAPECIDs: []int{66}, OWASPTop10: []string{"A03:2021"}},
+	// Credential hash embedded in a token → cryptographic failure. CWE-522 is the
+	// precise weakness, more so than the scanner's generic CWE-200.
+	"jwt-password-hash-disclosure": {CWEID: 522, CWEURI: cweURI(522), OWASPTop10: []string{"A02:2021"}},
+}
+
+// LookupCustomTaxonomy returns the static taxonomy for a plugin ID, or nil if not
+// found. The ID is canonicalized so every source variant maps to one entry.
 func LookupCustomTaxonomy(pluginID string) *CustomTaxonomy {
-	t, ok := customTaxonomyMap[pluginID]
+	t, ok := customTaxonomyMap[CanonicalPluginID(pluginID)]
 	if !ok {
 		return nil
 	}
@@ -87,9 +159,11 @@ var falsePositiveMap = map[string]FalsePositiveGuidance{
 	},
 }
 
-// LookupFalsePositiveGuidance returns FP conditions for a plugin ID, or nil if not found.
+// LookupFalsePositiveGuidance returns FP conditions for a plugin ID, or nil if
+// not found. The ID is canonicalized so source-prefixed IDs (e.g. "zap-10098")
+// match the numeric falsePositiveMap keys.
 func LookupFalsePositiveGuidance(pluginID string) *FalsePositiveGuidance {
-	g, ok := falsePositiveMap[pluginID]
+	g, ok := falsePositiveMap[CanonicalPluginID(pluginID)]
 	if !ok {
 		return nil
 	}

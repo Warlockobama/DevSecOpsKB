@@ -101,8 +101,10 @@ var cweNames = map[int]string{
 	327:  "Use of a Broken or Risky Cryptographic Algorithm",
 	345:  "Insufficient Verification of Data Authenticity",
 	502:  "Deserialization of Untrusted Data",
+	522:  "Insufficiently Protected Credentials",
 	525:  "Use of Web Browser Cache Containing Sensitive Information",
 	549:  "Missing Password Field Masking",
+	552:  "Files or Directories Accessible to External Parties",
 	565:  "Reliance on Cookies without Validation and Integrity Checking",
 	614:  "Sensitive Cookie in HTTPS Session Without Secure Attribute",
 	639:  "Authorization Bypass Through User-Controlled Key",
@@ -118,6 +120,7 @@ var cweNames = map[int]string{
 var capecNames = map[int]string{
 	1:   "Accessing Functionality Not Properly Constrained by ACLs",
 	37:  "Retrieve Embedded Sensitive Data",
+	63:  "Cross-Site Scripting (XSS)",
 	66:  "SQL Injection",
 	86:  "Cross-site Scripting",
 	118: "Data Leakage Attacks",

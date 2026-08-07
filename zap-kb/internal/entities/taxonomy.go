@@ -8,21 +8,23 @@ import (
 )
 
 // cweToOWASP maps CWE IDs to OWASP Top 10 2021 categories.
-// CWE-264 is a deprecated umbrella; CWE-942 is the correct mapping for permissive CORS.
-// CWE-264 is retained as a backwards-compat alias.
+// CWE-264 (Permissions, Privileges, and Access Controls) is a deprecated pillar
+// and is intentionally absent here; deprecatedCWE remaps it to its canonical
+// replacement before any OWASP/CAPEC derivation runs.
 var cweToOWASP = map[int]string{
 	22:  "A01:2021",
 	79:  "A03:2021",
 	89:  "A03:2021",
 	200: "A05:2021",
 	209: "A05:2021",
-	264: "A05:2021", // deprecated alias for CWE-942 (Permissive Cross-domain Policy)
 	287: "A07:2021",
 	311: "A02:2021",
 	312: "A02:2021",
 	319: "A02:2021",
 	327: "A02:2021",
 	502: "A08:2021",
+	522: "A02:2021", // Insufficiently Protected Credentials → Cryptographic Failures
+	552: "A01:2021", // Files or Directories Accessible to External Parties → Broken Access Control
 	639: "A01:2021",
 	693: "A05:2021",
 	918: "A10:2021",
@@ -31,15 +33,31 @@ var cweToOWASP = map[int]string{
 
 // cweToCAPEC maps CWE IDs to CAPEC identifiers.
 // Static map; covers the most common ZAP finding types.
+// Note: CWE-264 is deprecated and is remapped to its canonical CWE (see
+// deprecatedCWE) before derivation, so it has no entry here.
 var cweToCAPEC = map[int]string{
 	79:  "CAPEC-86",  // XSS → Exploitation of Improper Data Validation
 	89:  "CAPEC-66",  // SQL Injection
 	200: "CAPEC-118", // Exposure of Sensitive Information
-	264: "CAPEC-122", // deprecated CDM alias (Privilege Abuse)
 	311: "CAPEC-37",  // Cleartext Storage
-	639: "CAPEC-122", // IDOR / Authorization Through User-Controlled Key
-	693: "CAPEC-1",   // Protection Mechanism Failure (CSP) → Accessing/Intercepting/Modifying HTTP Communication
-	942: "CAPEC-1",   // Permissive CORS
+	639: "CAPEC-122", // IDOR / Authorization Through User-Controlled Key → Privilege Abuse
+	693: "CAPEC-63",  // Protection Mechanism Failure (CSP/XSS defenses) → Cross-Site Scripting (the attack the missing control fails to stop)
+	942: "CAPEC-1",   // Permissive CORS → Accessing Functionality Not Properly Constrained by ACLs
+}
+
+// deprecatedCWE maps deprecated CWE identifiers to their canonical replacement.
+// Deprecated pillars carry no usable OWASP/CAPEC mapping and render poorly for
+// analysts, so they are rewritten during enrichment when a non-deprecated
+// replacement is known for the finding.
+var deprecatedCWE = map[int]int{
+	264: 942, // Permissions, Privileges, and Access Controls (deprecated) → Permissive Cross-domain Policy
+}
+
+// isDeprecatedCWE reports whether a CWE ID is a deprecated identifier that should
+// be remapped to its canonical replacement.
+func isDeprecatedCWE(cweID int) bool {
+	_, ok := deprecatedCWE[cweID]
+	return ok
 }
 
 // CWEToOWASP returns the OWASP Top 10 2021 category for a CWE ID, or "" if not mapped.
@@ -95,6 +113,21 @@ func EnrichTaxonomy(defs []Definition) {
 
 		if d.Taxonomy == nil || d.Taxonomy.CWEID == 0 {
 			continue
+		}
+
+		// Rewrite a deprecated CWE pillar to the plugin's known canonical CWE.
+		// We only remap when the plugin has a specific, non-deprecated CWE in the
+		// static catalog — a blanket deprecated→canonical map would mislabel a
+		// genuinely access-control CWE-264 finding as CORS. Any OWASP/CAPEC
+		// derived from the deprecated ID is discarded so it re-derives below.
+		if isDeprecatedCWE(d.Taxonomy.CWEID) {
+			if r := zapmeta.LookupPlugin(d.PluginID); r != nil && r.CWEID > 0 && !isDeprecatedCWE(r.CWEID) {
+				d.Taxonomy.CWEID = r.CWEID
+				d.Taxonomy.CWEURI = r.CWEURI
+				d.Taxonomy.CWEName = ""
+				d.Taxonomy.OWASPTop10 = nil
+				d.Taxonomy.CAPECIDs = nil
+			}
 		}
 
 		// If we have a CWE ID but no OWASP category, derive it.

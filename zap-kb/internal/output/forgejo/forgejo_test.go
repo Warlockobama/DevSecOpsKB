@@ -80,6 +80,30 @@ func TestExtractIssueNumber(t *testing.T) {
 	}
 }
 
+func TestClassificationMarkdown_SkipsEchoedCWEName(t *testing.T) {
+	// An unresolved CWE name that echoes the id must not render "CWE-552: CWE-552".
+	def := &entities.Definition{
+		Taxonomy: &entities.Taxonomy{CWEID: 552, CWEName: "CWE-552"},
+	}
+	got := classificationMarkdown(def)
+	if strings.Contains(got, "CWE-552: CWE-552") {
+		t.Errorf("rendered echoed CWE name:\n%s", got)
+	}
+	if !strings.Contains(got, "CWE-552") {
+		t.Errorf("expected CWE-552 id in output:\n%s", got)
+	}
+}
+
+func TestClassificationMarkdown_KeepsResolvedCWEName(t *testing.T) {
+	def := &entities.Definition{
+		Taxonomy: &entities.Taxonomy{CWEID: 552, CWEName: "Files or Directories Accessible to External Parties"},
+	}
+	got := classificationMarkdown(def)
+	if !strings.Contains(got, "CWE-552: Files or Directories Accessible to External Parties") {
+		t.Errorf("expected resolved CWE name in output:\n%s", got)
+	}
+}
+
 func sampleEntities() entities.EntitiesFile {
 	return entities.EntitiesFile{
 		SchemaVersion: "v1",

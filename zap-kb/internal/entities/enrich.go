@@ -560,33 +560,112 @@ func EnrichDetectionSummaries(ctx context.Context, ef *EntitiesFile) {
 
 // EnrichCustomTaxonomy applies static taxonomy overrides and false positive guidance
 // for custom/internal plugin IDs (e.g., authenticated-* rules) and well-known plugin IDs
-// that have FP guidance (e.g., CDM, CSP, CDJSF). Best-effort; never overwrites existing values.
+// that have FP guidance (e.g., CDM, CSP, CDJSF). Best-effort.
+//
+// For these KB-owned custom rules the curated CWE and OWASP are authoritative:
+// when the entry specifies them they override any scanner-supplied value, so an
+// IDOR finding the scanner mislabeled CWE-200 becomes CWE-639/A01 and stays
+// consistent even on a JSON round-trip. CAPEC is likewise authoritative;
+// ATT&CK remains additive so scanner-provided identifiers are preserved.
+//
+// Custom rules are KB-owned, so the scanner's CWE is treated as an untrusted
+// placeholder: a custom rule with NO curated mapping has its taxonomy blanked
+// (rendering "Taxonomy incomplete") rather than publishing the scanner's generic
+// CWE. Standard tool plugins (numeric ZAP ids) are never blanked — their scanner
+// CWE is authoritative. UnmappedCustomRules reports the gaps for curation.
+// isCustomRule reports whether a plugin ID denotes a KB-authored custom rule (a
+// named slug such as "nuclei-auth-complaints-exposure") rather than a standard
+// tool plugin (a numeric ZAP id like "zap-10098"). It keys off the CANONICAL id
+// so the source/"custom-" prefixes are irrelevant — a tool plugin canonicalizes
+// to a number, a custom rule to a slug. This is deliberately independent of the
+// origin field, which is normalized later in the pipeline than enrichment runs.
+func isCustomRule(pluginID string) bool {
+	pid := strings.TrimSpace(pluginID)
+	if pid == "" {
+		return false
+	}
+	return !isNumericPluginID(zapmeta.CanonicalPluginID(pid))
+}
+
+// UnmappedCustomRules returns the distinct, sorted plugin IDs of custom
+// (KB-owned) definitions that have no curated taxonomy entry. These are the
+// rules whose taxonomy EnrichCustomTaxonomy blanks; the export surfaces them so
+// a maintainer knows exactly what to add to the curated map.
+func UnmappedCustomRules(defs []Definition) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for i := range defs {
+		d := &defs[i]
+		if !isCustomRule(d.PluginID) {
+			continue
+		}
+		if zapmeta.LookupCustomTaxonomy(d.PluginID) != nil {
+			continue
+		}
+		pid := strings.TrimSpace(d.PluginID)
+		if pid == "" {
+			continue
+		}
+		if _, ok := seen[pid]; ok {
+			continue
+		}
+		seen[pid] = struct{}{}
+		out = append(out, pid)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func EnrichCustomTaxonomy(defs []Definition) {
 	for i := range defs {
 		d := &defs[i]
 
+		ct := zapmeta.LookupCustomTaxonomy(d.PluginID)
+		if ct == nil {
+			// No curated mapping. For a custom (KB-owned) rule, discard the
+			// scanner's placeholder taxonomy so the gap is visible instead of
+			// misleading. Tool plugins keep their scanner taxonomy.
+			if isCustomRule(d.PluginID) && d.Taxonomy != nil {
+				d.Taxonomy.CWEID = 0
+				d.Taxonomy.CWEURI = ""
+				d.Taxonomy.CWEName = ""
+				d.Taxonomy.OWASPTop10 = nil
+				d.Taxonomy.CAPECIDs = nil
+				d.Taxonomy.CAPEC = nil
+				d.Taxonomy.MappingConfidence = ""
+			}
+		}
+
 		// Apply custom taxonomy for authenticated-* and other internal rules.
-		if ct := zapmeta.LookupCustomTaxonomy(d.PluginID); ct != nil {
+		if ct != nil {
 			if d.Taxonomy == nil {
 				d.Taxonomy = &Taxonomy{}
 			}
-			if d.Taxonomy.CWEID == 0 {
+			// CWE is authoritative when the curated entry specifies one.
+			if ct.CWEID > 0 {
 				d.Taxonomy.CWEID = ct.CWEID
-			}
-			if d.Taxonomy.CWEURI == "" {
 				d.Taxonomy.CWEURI = ct.CWEURI
 			}
-			if len(d.Taxonomy.CAPECIDs) == 0 {
+			// CAPEC is authoritative when the curated entry specifies one: replace
+			// the IDs and clear any stale resolved refs so EnrichMITRE rebuilds
+			// them. This heals a JSON round-trip where the old (wrong) CWE had
+			// derived a mismatched CAPEC (e.g. CWE-200→CAPEC-118 on an IDOR
+			// finding now corrected to CWE-639). When the entry has no CAPEC we
+			// leave the scanner-provided one untouched.
+			if len(ct.CAPECIDs) > 0 {
 				ids := make([]int, len(ct.CAPECIDs))
 				copy(ids, ct.CAPECIDs)
 				d.Taxonomy.CAPECIDs = ids
+				d.Taxonomy.CAPEC = nil
 			}
 			if len(d.Taxonomy.ATTACK) == 0 {
 				atk := make([]string, len(ct.ATTACK))
 				copy(atk, ct.ATTACK)
 				d.Taxonomy.ATTACK = atk
 			}
-			if len(d.Taxonomy.OWASPTop10) == 0 {
+			// OWASP is authoritative: a curated category overrides any
+			// scanner-derived value so KB corrections take effect.
+			if len(ct.OWASPTop10) > 0 {
 				owasp := make([]string, len(ct.OWASPTop10))
 				copy(owasp, ct.OWASPTop10)
 				d.Taxonomy.OWASPTop10 = owasp
