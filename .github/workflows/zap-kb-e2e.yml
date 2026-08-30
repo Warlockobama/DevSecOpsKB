@@ -116,9 +116,9 @@ jobs:
         run: |
           POD=$(kubectl -n devsecops-kb get pod -l app.kubernetes.io/component=forgejo -o name | head -1)
           [ -n "$POD" ] || POD=$(kubectl -n devsecops-kb get pod -o name | grep forgejo | head -1)
-          kubectl -n devsecops-kb exec "$POD" -- forgejo admin user create \
+          kubectl -n devsecops-kb exec "$POD" -- su-exec git forgejo admin user create \
             --admin --username devsecops --password 'e2e-Passw0rd!' --email kb@example.invalid
-          TOKEN=$(kubectl -n devsecops-kb exec "$POD" -- forgejo admin user generate-access-token \
+          TOKEN=$(kubectl -n devsecops-kb exec "$POD" -- su-exec git forgejo admin user generate-access-token \
             --username devsecops --token-name e2e --scopes all --raw | tr -d '\r\n')
           echo "::add-mask::$TOKEN"
           kubectl -n devsecops-kb create secret generic forgejo-credentials \
