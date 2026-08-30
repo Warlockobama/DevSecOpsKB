@@ -338,7 +338,7 @@ func TestExport_DryRunCountsExisting(t *testing.T) {
 
 func TestBuildIssueBody_DescriptionAndWikiLink(t *testing.T) {
 	f := entities.Finding{FindingID: "fin-1", DefinitionID: "def-1", Risk: "High", Occurrences: 1}
-	def := &entities.Definition{DefinitionID: "def-1", Description: "Reflected XSS happens when…"}
+	def := &entities.Definition{DefinitionID: "def-1", PluginID: "40012", Name: "Reflected XSS", Description: "Reflected XSS happens when…"}
 	body := buildIssueBody(f, def, nil, "https://forge.example/o/r/wiki")
 	if !strings.Contains(body, "## Description") {
 		t.Fatalf("missing Description section:\n%s", body)
@@ -346,7 +346,10 @@ func TestBuildIssueBody_DescriptionAndWikiLink(t *testing.T) {
 	if !strings.Contains(body, "Reflected XSS happens when") {
 		t.Fatalf("missing description text:\n%s", body)
 	}
-	if !strings.Contains(body, "https://forge.example/o/r/wiki/Definitions%2Fdef-1") {
-		t.Fatalf("missing escaped KB wiki link:\n%s", body)
+	// The link must target the SAME page slug the wiki publishes
+	// (definitions/{pluginId}-{slug}), not the raw DefinitionID — otherwise it
+	// redlinks.
+	if !strings.Contains(body, "https://forge.example/o/r/wiki/Definitions%2F40012-reflected-xss") {
+		t.Fatalf("KB wiki link does not match the published definition page slug:\n%s", body)
 	}
 }

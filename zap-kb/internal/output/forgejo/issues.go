@@ -17,18 +17,23 @@ import (
 
 // Options controls Forgejo issue export.
 type Options struct {
-	BaseURL      string // e.g. https://forge.example.com
-	Token        string // personal access token
-	Owner        string // repo owner (user or org)
-	Repo         string // repo name
-	ExtraLabels  []string
-	MinRisk      string // info|low|medium|high (default "medium")
-	OptInTag     string // analyst tag that forces export below MinRisk (default "case-ticket")
-	DryRun       bool
-	Concurrency  int           // max parallel requests (default 3, capped at 5)
-	Timeout      time.Duration // default 30s
-	RequestDelay time.Duration
-	WikiURLBase  string // e.g. https://forge.example.com/owner/repo/wiki; "" disables the KB-reference link
+	BaseURL     string // e.g. https://forge.example.com
+	Token       string // personal access token
+	Owner       string // repo owner (user or org)
+	Repo        string // repo name
+	ExtraLabels []string
+	MinRisk     string // info|low|medium|high (default "medium")
+	OptInTag    string // analyst tag that forces export below MinRisk (default "case-ticket")
+	// GroupByDefinition collapses every exported finding sharing a definition
+	// into ONE issue per rule (titled by the rule, with each affected endpoint
+	// listed in the body) instead of one issue per finding. Tames noisy scan
+	// types that otherwise emit hundreds of near-identical per-URL issues.
+	GroupByDefinition bool
+	DryRun            bool
+	Concurrency       int           // max parallel requests (default 3, capped at 5)
+	Timeout           time.Duration // default 30s
+	RequestDelay      time.Duration
+	WikiURLBase       string // e.g. https://forge.example.com/owner/repo/wiki; "" disables the KB-reference link
 }
 
 // Summary reports the outcome of an export run.
@@ -74,10 +79,11 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	if concurrency > 5 {
 		concurrency = 5
 	}
-	floor := synccore.SeverityFloor(opts.MinRisk)
-	if strings.TrimSpace(opts.MinRisk) == "" {
-		floor = synccore.SeverityFloor("medium")
+	minRisk := strings.TrimSpace(opts.MinRisk)
+	if minRisk == "" {
+		minRisk = "medium" // documented default; resolve before the floor lookup
 	}
+	floor := synccore.SeverityFloor(minRisk)
 	optInTag := strings.TrimSpace(opts.OptInTag)
 	if optInTag == "" {
 		optInTag = "case-ticket"
@@ -110,6 +116,10 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 		return Summary{TicketRefs: map[string]string{}}, nil
 	}
 
+	// Collapse candidates into publishing units: one per finding, or one per
+	// definition when grouping is enabled.
+	units := buildUnits(candidates, defByID, latestOcc, opts.GroupByDefinition)
+
 	// Build the dedup index first (GET-only): all open+closed KB-managed issues
 	// keyed by finding marker, winner = lowest issue number. Needed by dry-run
 	// (to report accurately) and by the create/reopen/refresh branch below.
@@ -126,20 +136,23 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 
 	if opts.DryRun {
 		sum := Summary{TicketRefs: map[string]string{}}
-		for _, f := range candidates {
-			if issues, ok := byFinding[f.FindingID]; ok {
+		for _, u := range units {
+			if issues, ok := byFinding[u.key]; ok {
 				w := issues[0]
+				ref := c.issueRef(w.Number)
 				sum.Skipped++
-				sum.TicketRefs[f.FindingID] = c.issueRef(w.Number)
+				for _, f := range u.findings {
+					sum.TicketRefs[f.FindingID] = ref
+				}
 				if w.State == "closed" && mapForgejoStatus(w.State, w.Labels) == "fixed" {
-					fmt.Printf("[forgejo] dry-run: would reopen %s for finding %s (recurred)\n", c.issueRef(w.Number), f.FindingID)
+					fmt.Printf("[forgejo] dry-run: would reopen %s for %s (recurred)\n", ref, u.key)
 				} else {
-					fmt.Printf("[forgejo] dry-run: finding %s already tracked as %s\n", f.FindingID, c.issueRef(w.Number))
+					fmt.Printf("[forgejo] dry-run: %s already tracked as %s\n", u.key, ref)
 				}
 				continue
 			}
 			sum.Created++
-			fmt.Printf("[forgejo] dry-run: would create issue for finding %s (risk=%s url=%s)\n", f.FindingID, f.Risk, f.URL)
+			fmt.Printf("[forgejo] dry-run: would create %q (key=%s risk=%s endpoints=%d)\n", u.title, u.key, u.risk, len(u.findings))
 		}
 		return sum, nil
 	}
@@ -149,8 +162,8 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	// payloads.
 	labelNames := append([]string{dedupLabel}, opts.ExtraLabels...)
 	riskSet := map[string]struct{}{}
-	for _, f := range candidates {
-		if rl := riskLabel(f.Risk); rl != "" {
+	for _, u := range units {
+		if rl := riskLabel(u.risk); rl != "" {
 			riskSet[rl] = struct{}{}
 		}
 	}
@@ -169,28 +182,31 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
-	for _, f := range candidates {
+	for _, u := range units {
 		wg.Add(1)
-		go func(f entities.Finding) {
+		go func(u issueUnit) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			def := defByID[f.DefinitionID]
-			occ := latestOcc[f.FindingID]
+			setRefs := func(ref string) {
+				for _, f := range u.findings {
+					ticketRefs[f.FindingID] = ref
+				}
+			}
 
-			issues, exists := byFinding[f.FindingID]
+			issues, exists := byFinding[u.key]
 			if !exists {
-				number, cerr := c.createIssue(ctx, f, def, occ, labelIDsForFinding(f, labelIDByName, opts.ExtraLabels), opts.WikiURLBase)
+				number, cerr := c.createIssueUnit(ctx, u, labelIDsForRisk(u.risk, labelIDByName, opts.ExtraLabels), opts.WikiURLBase)
 				mu.Lock()
 				defer mu.Unlock()
 				if cerr != nil {
-					fmt.Printf("[forgejo] error creating issue for %s: %v\n", f.FindingID, cerr)
+					fmt.Printf("[forgejo] error creating issue for %s: %v\n", u.key, cerr)
 					errCount++
 					return
 				}
 				created++
-				ticketRefs[f.FindingID] = c.issueRef(number)
+				setRefs(c.issueRef(number))
 				return
 			}
 
@@ -201,7 +217,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			if w.State == "closed" && mapForgejoStatus(w.State, w.Labels) != "fixed" {
 				mu.Lock()
 				skipped++
-				ticketRefs[f.FindingID] = ref
+				setRefs(ref)
 				mu.Unlock()
 				return
 			}
@@ -211,12 +227,12 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			if w.State == "closed" {
 				if rerr := c.reopenIssue(ctx, w.Number); rerr != nil {
 					mu.Lock()
-					fmt.Printf("[forgejo] error reopening #%d for %s: %v\n", w.Number, f.FindingID, rerr)
+					fmt.Printf("[forgejo] error reopening #%d for %s: %v\n", w.Number, u.key, rerr)
 					errCount++
 					mu.Unlock()
 					return
 				}
-				comment := fmt.Sprintf("Reopened by DevSecOpsKB: this finding recurred in the latest scan (risk: %s). If it was intentionally dismissed, label the issue `false-positive` or `accepted` to prevent automatic reopening.", titleCase(f.Risk))
+				comment := fmt.Sprintf("Reopened by DevSecOpsKB: this finding recurred in the latest scan (risk: %s). If it was intentionally dismissed, label the issue `false-positive` or `accepted` to prevent automatic reopening.", titleCase(u.risk))
 				if cerr := c.addComment(ctx, w.Number, comment); cerr != nil {
 					mu.Lock()
 					fmt.Printf("[forgejo] warning: reopened #%d but failed to comment: %v\n", w.Number, cerr)
@@ -226,12 +242,12 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			}
 
 			// Open (or just reopened): refresh the machine-owned body if it drifted.
-			desired := buildIssueBody(f, def, occ, opts.WikiURLBase)
+			desired := buildUnitBody(u, opts.WikiURLBase)
 			bodyChanged := desired != w.Body
 			if bodyChanged {
 				if uerr := c.updateIssueBody(ctx, w.Number, desired); uerr != nil {
 					mu.Lock()
-					fmt.Printf("[forgejo] error updating body #%d for %s: %v\n", w.Number, f.FindingID, uerr)
+					fmt.Printf("[forgejo] error updating body #%d for %s: %v\n", w.Number, u.key, uerr)
 					errCount++
 					mu.Unlock()
 					return
@@ -247,8 +263,8 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			} else if !justReopened {
 				skipped++
 			}
-			ticketRefs[f.FindingID] = ref
-		}(f)
+			setRefs(ref)
+		}(u)
 	}
 	wg.Wait()
 
@@ -258,18 +274,30 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	// rest. Skipped when nothing changed and the initial index was clean —
 	// the common steady-state re-run costs no extra API calls.
 	dupsClosed := 0
-	if created > 0 || reopened > 0 || initialDups {
+	// Only a create can race the dedup index into a duplicate; a reopen acts on
+	// an already-indexed issue, so it never needs a reconcile pass.
+	if created > 0 || initialDups {
 		closed, winners, rerr := c.reconcileDuplicates(ctx)
 		if rerr != nil {
 			fmt.Printf("[forgejo] warning: duplicate reconcile failed: %v\n", rerr)
 			errCount++
 		} else {
 			dupsClosed = closed
-			// Repoint refs at the surviving winner so persisted ticketRefs
-			// never reference an issue the reconcile just closed.
-			for fid, ref := range winners {
-				if _, ours := ticketRefs[fid]; ours {
-					ticketRefs[fid] = ref
+			// Repoint refs at the surviving winner so persisted ticketRefs never
+			// reference an issue the reconcile just closed. winners is keyed by
+			// the body-marker key (a findingID OR a "defgroup:<def>" key), so we
+			// fan the winner ref out to every finding in the matching unit — in
+			// group mode a single winner key owns N findings, and the old
+			// findingID-keyed lookup would never match.
+			for _, u := range units {
+				ref, ok := winners[u.key]
+				if !ok {
+					continue
+				}
+				for _, f := range u.findings {
+					if _, ours := ticketRefs[f.FindingID]; ours {
+						ticketRefs[f.FindingID] = ref
+					}
 				}
 			}
 		}
@@ -286,10 +314,10 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	}, nil
 }
 
-// labelIDsForFinding returns the base labels (dedup + extras) plus the finding's
-// risk label, sorted ascending for deterministic payloads. Names absent from
+// labelIDsForRisk returns the base labels (dedup + extras) plus the given risk
+// label, sorted ascending for deterministic payloads. Names absent from
 // labelIDByName (e.g. an extra that failed to resolve) are skipped.
-func labelIDsForFinding(f entities.Finding, labelIDByName map[string]int64, extras []string) []int64 {
+func labelIDsForRisk(risk string, labelIDByName map[string]int64, extras []string) []int64 {
 	ids := make([]int64, 0, len(extras)+2)
 	if id, ok := labelIDByName[dedupLabel]; ok {
 		ids = append(ids, id)
@@ -299,7 +327,7 @@ func labelIDsForFinding(f entities.Finding, labelIDByName map[string]int64, extr
 			ids = append(ids, id)
 		}
 	}
-	if rl := riskLabel(f.Risk); rl != "" {
+	if rl := riskLabel(risk); rl != "" {
 		if id, ok := labelIDByName[rl]; ok {
 			ids = append(ids, id)
 		}
@@ -308,11 +336,23 @@ func labelIDsForFinding(f entities.Finding, labelIDByName map[string]int64, extr
 	return ids
 }
 
-// createIssue POSTs a new issue for the finding and returns its number.
-func (c *client) createIssue(ctx context.Context, f entities.Finding, def *entities.Definition, occ *entities.Occurrence, labelIDs []int64, wikiURLBase string) (int64, error) {
+// buildUnitBody renders the machine-owned body for an issue unit: the grouped
+// definition body when the unit aggregates a rule, else the single-finding body.
+func buildUnitBody(u issueUnit, wikiURLBase string) string {
+	if u.grouped {
+		// Pass the unit's authoritative dedup key so the embedded marker can
+		// never diverge from the key the dedup index is built on.
+		return buildGroupBody(u.def, u.findings, u.occ, wikiURLBase, u.key)
+	}
+	f := u.findings[0]
+	return buildIssueBody(f, u.def, u.occ, wikiURLBase)
+}
+
+// createIssueUnit POSTs a new issue for the unit and returns its number.
+func (c *client) createIssueUnit(ctx context.Context, u issueUnit, labelIDs []int64, wikiURLBase string) (int64, error) {
 	payload := map[string]any{
-		"title":  issueTitle(f),
-		"body":   buildIssueBody(f, def, occ, wikiURLBase),
+		"title":  u.title,
+		"body":   buildUnitBody(u, wikiURLBase),
 		"labels": labelIDs,
 	}
 	data, err := json.Marshal(payload)

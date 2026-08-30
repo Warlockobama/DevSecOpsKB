@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
@@ -170,6 +172,37 @@ func TestRunForgejoPublish_ExportErrorReturnsFailure(t *testing.T) {
 	})
 	if failures < 1 {
 		t.Fatalf("failures=%d, want >=1 (returned, not exited)", failures)
+	}
+}
+
+// The wiki deadline is a knob, and its two interesting values are "the default"
+// and "off". A vault large enough to spend the whole budget reading unchanged
+// pages needs the second one, so a non-positive timeout must produce a context
+// with no deadline rather than one that is already expired.
+func TestWikiPublishContext(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		timeout     time.Duration
+		wantDeadess bool
+	}{
+		{"default", 10 * time.Minute, true},
+		{"zero disables", 0, false},
+		{"negative disables", -1 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := wikiPublishContext(context.Background(), tc.timeout)
+			defer cancel()
+			deadline, ok := ctx.Deadline()
+			if ok != tc.wantDeadess {
+				t.Fatalf("deadline set=%v, want %v", ok, tc.wantDeadess)
+			}
+			if ok && time.Until(deadline) <= 0 {
+				t.Fatalf("deadline %s is already past", deadline)
+			}
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("context already done: %v", err)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,247 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940" role="img" aria-labelledby="title desc">
+  <title id="title">DevSecOpsKB function, data flow, and architecture</title>
+  <desc id="desc">A data-flow architecture diagram for DevSecOpsKB showing source adapters, ingest, the entities model, enrichment, artifacts, automation, and analyst outputs.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b45309"/>
+    </marker>
+    <marker id="arrow-slate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .page { fill: #f8fafc; }
+      .title { font-family: Arial, Helvetica, sans-serif; font-size: 31px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 400; fill: #475569; }
+      .lane { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .lane-title { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: 700; fill: #0f172a; letter-spacing: 0; }
+      .lane-note { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #64748b; }
+      .box { fill: #ffffff; stroke-width: 1.5; }
+      .box-title { font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .box-text { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #334155; }
+      .tiny { font-family: Arial, Helvetica, sans-serif; font-size: 10px; font-weight: 400; fill: #475569; }
+      .arrow-label { font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; fill: #1e293b; }
+      .footer { fill: #0f172a; stroke: #0f172a; }
+      .footer-title { font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: 700; fill: #ffffff; }
+      .footer-text { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 400; fill: #dbeafe; }
+      .blue { stroke: #3b82f6; }
+      .green { stroke: #22c55e; }
+      .amber { stroke: #f59e0b; }
+      .red { stroke: #ef4444; }
+      .violet { stroke: #8b5cf6; }
+      .slate { stroke: #64748b; }
+      .soft-blue { fill: #eff6ff; }
+      .soft-green { fill: #f0fdf4; }
+      .soft-amber { fill: #fffbeb; }
+      .soft-red { fill: #fef2f2; }
+      .soft-violet { fill: #f5f3ff; }
+      .soft-slate { fill: #f8fafc; }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1480" height="940"/>
+  <text class="title" x="44" y="48">DevSecOpsKB: Function, Data Flow, and Architecture</text>
+  <text class="subtitle" x="44" y="76">A tool-agnostic security knowledge base: normalize findings once, then publish consistent analyst views anywhere.</text>
+
+  <rect class="lane" x="34" y="106" width="252" height="670" rx="14"/>
+  <text class="lane-title" x="56" y="134">1. Source Adapters</text>
+  <text class="lane-note" x="56" y="154">Scanner and pipeline inputs</text>
+
+  <rect class="lane" x="318" y="106" width="252" height="670" rx="14"/>
+  <text class="lane-title" x="340" y="134">2. Ingest and Normalize</text>
+  <text class="lane-note" x="340" y="154">Current module: zap-kb</text>
+
+  <rect class="lane" x="602" y="106" width="276" height="670" rx="14"/>
+  <text class="lane-title" x="624" y="134">3. Knowledge Base Core</text>
+  <text class="lane-note" x="624" y="154">Stable model, enrichment, safety</text>
+
+  <rect class="lane" x="910" y="106" width="252" height="670" rx="14"/>
+  <text class="lane-title" x="932" y="134">4. Contracts and Automation</text>
+  <text class="lane-note" x="932" y="154">Artifacts, containers, CI checks</text>
+
+  <rect class="lane" x="1194" y="106" width="252" height="670" rx="14"/>
+  <text class="lane-title" x="1216" y="134">5. Analyst Surfaces</text>
+  <text class="lane-note" x="1216" y="154">Published views and workflow sinks</text>
+
+  <rect class="box soft-blue blue" x="58" y="184" width="204" height="106" rx="10"/>
+  <text class="box-title" x="78" y="211">OWASP ZAP</text>
+  <text class="box-text" x="78" y="235">Live ZAP API, alert JSON,</text>
+  <text class="box-text" x="78" y="253">reports, and optional traffic</text>
+  <text class="box-text" x="78" y="271">snippets.</text>
+
+  <rect class="box soft-violet violet" x="58" y="322" width="204" height="120" rx="10"/>
+  <text class="box-title" x="78" y="349">Future Tool Adapters</text>
+  <text class="box-text" x="78" y="373">Burp, SAST, SBOM, dependency,</text>
+  <text class="box-text" x="78" y="391">cloud, Nuclei, or custom</text>
+  <text class="box-text" x="78" y="409">pipeline imports can plug in</text>
+  <text class="box-text" x="78" y="427">before the entities boundary.</text>
+
+  <rect class="box soft-amber amber" x="58" y="474" width="204" height="120" rx="10"/>
+  <text class="box-title" x="78" y="501">Run Context</text>
+  <text class="box-text" x="78" y="525">scan.label, site label, target</text>
+  <text class="box-text" x="78" y="543">base URL, source tool, generated</text>
+  <text class="box-text" x="78" y="561">time, auth context, and raw</text>
+  <text class="box-text" x="78" y="579">evidence controls.</text>
+
+  <rect class="box soft-slate slate" x="58" y="626" width="204" height="96" rx="10"/>
+  <text class="box-title" x="78" y="653">Controlled Test Inputs</text>
+  <text class="box-text" x="78" y="677">Firing range, smoke fixtures,</text>
+  <text class="box-text" x="78" y="695">and E2E exports prove the same</text>
+  <text class="box-text" x="78" y="713">pipeline shape.</text>
+
+  <rect class="box soft-green green" x="342" y="184" width="204" height="106" rx="10"/>
+  <text class="box-title" x="362" y="211">CLI and Helpers</text>
+  <text class="box-text" x="362" y="235">Go CLI, PowerShell wrapper,</text>
+  <text class="box-text" x="362" y="253">scan helper, report flattener,</text>
+  <text class="box-text" x="362" y="271">and Python artifact helper.</text>
+
+  <rect class="box soft-blue blue" x="342" y="322" width="204" height="106" rx="10"/>
+  <text class="box-title" x="362" y="349">Import Alerts</text>
+  <text class="box-text" x="362" y="373">Fetch from ZAP or read files:</text>
+  <text class="box-text" x="362" y="391">alerts JSON, run.json, or</text>
+  <text class="box-text" x="362" y="409">existing entities JSON.</text>
+
+  <rect class="box soft-amber amber" x="342" y="460" width="204" height="124" rx="10"/>
+  <text class="box-title" x="362" y="487">Normalize</text>
+  <text class="box-text" x="362" y="511">Map scanner records into the</text>
+  <text class="box-text" x="362" y="529">entities schema with stable IDs,</text>
+  <text class="box-text" x="362" y="547">scan labels, timestamps, and</text>
+  <text class="box-text" x="362" y="565">dedup keys.</text>
+
+  <rect class="box soft-violet violet" x="342" y="616" width="204" height="106" rx="10"/>
+  <text class="box-title" x="362" y="643">Merge History</text>
+  <text class="box-text" x="362" y="667">Combine new observations with</text>
+  <text class="box-text" x="362" y="685">prior entities while preserving</text>
+  <text class="box-text" x="362" y="703">analyst-owned state.</text>
+
+  <rect class="box soft-green green" x="630" y="174" width="220" height="120" rx="10"/>
+  <text class="box-title" x="650" y="201">Entities Model</text>
+  <text class="box-text" x="650" y="225">Definitions: rule metadata</text>
+  <text class="box-text" x="650" y="243">Findings: analyst issues</text>
+  <text class="box-text" x="650" y="261">Occurrences: scan-specific</text>
+  <text class="box-text" x="650" y="279">evidence and traffic.</text>
+
+  <rect class="box soft-blue blue" x="630" y="326" width="220" height="120" rx="10"/>
+  <text class="box-title" x="650" y="353">Enrichment</text>
+  <text class="box-text" x="650" y="377">ZAP metadata, MITRE, CWE,</text>
+  <text class="box-text" x="650" y="395">CAPEC, ATT&amp;CK, CVSS estimates,</text>
+  <text class="box-text" x="650" y="413">detection links, remediation,</text>
+  <text class="box-text" x="650" y="431">and FP guidance.</text>
+
+  <rect class="box soft-red red" x="630" y="478" width="220" height="120" rx="10"/>
+  <text class="box-title" x="650" y="505">Safety and Policy</text>
+  <text class="box-text" x="650" y="529">Redaction modes, neutered next</text>
+  <text class="box-text" x="650" y="547">actions, triage-policy.yaml,</text>
+  <text class="box-text" x="650" y="565">source publish gates, and custom</text>
+  <text class="box-text" x="650" y="583">definition controls.</text>
+
+  <rect class="box soft-violet violet" x="630" y="630" width="220" height="96" rx="10"/>
+  <text class="box-title" x="650" y="657">Workflow Overlay</text>
+  <text class="box-text" x="650" y="681">Status, owner, tickets, notes,</text>
+  <text class="box-text" x="650" y="699">acceptance, suppression, and</text>
+  <text class="box-text" x="650" y="717">recurrence signals.</text>
+
+  <rect class="box soft-amber amber" x="934" y="184" width="204" height="116" rx="10"/>
+  <text class="box-title" x="954" y="211">Portable Artifacts</text>
+  <text class="box-text" x="954" y="235">entities.json, run.json,</text>
+  <text class="box-text" x="954" y="253">alerts.json, kb.zip, and</text>
+  <text class="box-text" x="954" y="271">publish-summary.json.</text>
+
+  <rect class="box soft-green green" x="934" y="332" width="204" height="110" rx="10"/>
+  <text class="box-title" x="954" y="359">Automation</text>
+  <text class="box-text" x="954" y="383">GitHub Actions build, smoke,</text>
+  <text class="box-text" x="954" y="401">run artifact, release, and</text>
+  <text class="box-text" x="954" y="419">rendering checks.</text>
+
+  <rect class="box soft-blue blue" x="934" y="474" width="204" height="110" rx="10"/>
+  <text class="box-title" x="954" y="501">Runtime Packaging</text>
+  <text class="box-text" x="954" y="525">Docker image, Compose example,</text>
+  <text class="box-text" x="954" y="543">Make targets, and combined</text>
+  <text class="box-text" x="954" y="561">ZAP plus zap-kb runtime path.</text>
+
+  <rect class="box soft-slate slate" x="934" y="616" width="204" height="106" rx="10"/>
+  <text class="box-title" x="954" y="643">Validation Gates</text>
+  <text class="box-text" x="954" y="667">Go tests, vet/build, offline</text>
+  <text class="box-text" x="954" y="685">fixtures, Confluence rendering,</text>
+  <text class="box-text" x="954" y="703">and sink-specific E2E checks.</text>
+
+  <rect class="box soft-green green" x="1218" y="174" width="204" height="116" rx="10"/>
+  <text class="box-title" x="1238" y="201">Local KB</text>
+  <text class="box-text" x="1238" y="225">Obsidian vault, Markdown</text>
+  <text class="box-text" x="1238" y="243">reports, dashboards, triage</text>
+  <text class="box-text" x="1238" y="261">board, scans, findings, and</text>
+  <text class="box-text" x="1238" y="279">occurrences.</text>
+
+  <rect class="box soft-blue blue" x="1218" y="322" width="204" height="124" rx="10"/>
+  <text class="box-title" x="1238" y="349">Atlassian</text>
+  <text class="box-text" x="1238" y="373">Confluence publishes evidence</text>
+  <text class="box-text" x="1238" y="391">pages; Jira owns analyst cases,</text>
+  <text class="box-text" x="1238" y="409">Epics, evidence links, status,</text>
+  <text class="box-text" x="1238" y="427">and assignees.</text>
+
+  <rect class="box soft-violet violet" x="1218" y="478" width="204" height="110" rx="10"/>
+  <text class="box-title" x="1238" y="505">Markdown Wikis</text>
+  <text class="box-text" x="1238" y="529">Forgejo or Gitea-compatible</text>
+  <text class="box-text" x="1238" y="547">Markdown views can consume the</text>
+  <text class="box-text" x="1238" y="565">same vault-oriented output.</text>
+
+  <rect class="box soft-amber amber" x="1218" y="620" width="204" height="102" rx="10"/>
+  <text class="box-title" x="1238" y="647">Feedback Loop</text>
+  <text class="box-text" x="1238" y="671">Triage gaps, false positives,</text>
+  <text class="box-text" x="1238" y="689">classification defects, and</text>
+  <text class="box-text" x="1238" y="707">tuning candidates improve rules.</text>
+
+  <path d="M 262 237 C 300 237 306 237 342 237" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="275" y="220">scanner data</text>
+
+  <path d="M 262 382 C 300 382 306 374 342 374" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-slate)"/>
+  <text class="arrow-label" x="270" y="364">future adapters</text>
+
+  <path d="M 444 290 L 444 322" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="458" y="310">fetch/read</text>
+
+  <path d="M 444 428 L 444 460" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="458" y="448">records</text>
+
+  <path d="M 546 522 C 584 522 592 234 630 234" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text class="arrow-label" x="554" y="366">entities</text>
+
+  <path d="M 740 294 L 740 326" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="754" y="314">context</text>
+
+  <path d="M 740 446 L 740 478" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="754" y="466">protect</text>
+
+  <path d="M 740 598 L 740 630" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text class="arrow-label" x="754" y="618">state</text>
+
+  <path d="M 850 234 C 886 234 898 242 934 242" fill="none" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <text class="arrow-label" x="862" y="220">artifact contract</text>
+
+  <path d="M 850 682 C 890 682 898 388 934 388" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text class="arrow-label" x="858" y="610">validated publishes</text>
+
+  <path d="M 1138 242 C 1176 242 1184 232 1218 232" fill="none" stroke="#15803d" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <path d="M 1138 242 C 1178 242 1186 384 1218 384" fill="none" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <path d="M 1138 242 C 1180 242 1188 532 1218 532" fill="none" stroke="#8b5cf6" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <text class="arrow-label" x="1150" y="216">render</text>
+
+  <path d="M 1218 407 C 1148 454 922 642 850 682" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-slate)"/>
+  <text class="tiny" x="946" y="612">pull status and preserve analyst fields</text>
+
+  <path d="M 1218 671 C 1010 798 246 778 160 722" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-slate)"/>
+  <text class="tiny" x="510" y="746">feedback improves detection rules, triage policy, and source fixtures</text>
+
+  <rect class="footer" x="34" y="812" width="1412" height="88" rx="14"/>
+  <text class="footer-title" x="58" y="842">System Function</text>
+  <text class="footer-text" x="58" y="868">Normalize raw findings into versionable KB records and workflow views.</text>
+  <text class="footer-title" x="560" y="842">Durable Boundary</text>
+  <text class="footer-text" x="560" y="868">entities.json and run.json decouple adapters from publishers.</text>
+  <text class="footer-title" x="980" y="842">Current Active Module</text>
+  <text class="footer-text" x="980" y="868">zap-kb handles ZAP ingest, artifacts, and publishing.</text>
+</svg>

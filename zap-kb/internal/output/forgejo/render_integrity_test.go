@@ -139,7 +139,7 @@ func TestTitleCase_RuneSafe(t *testing.T) {
 
 func TestIssueTitle_LongMultibyteTitle(t *testing.T) {
 	f := entities.Finding{Name: strings.Repeat("é", 300)}
-	got := issueTitle(f)
+	got := issueTitle(f, nil)
 	if len(got) > 255 {
 		t.Fatalf("title is %d bytes, want <=255", len(got))
 	}
