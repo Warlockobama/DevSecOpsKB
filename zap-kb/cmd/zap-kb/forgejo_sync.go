@@ -28,20 +28,32 @@ const defaultForgejoRedact = "auth,cookies,headers,secrets"
 // connection + filtering knobs plus the vault/persistence context shared with
 // the rest of the pipeline.
 type forgejoPublishOptions struct {
-	BaseURL      string
-	Token        string
-	Owner        string
-	Repo         string
-	MinRisk      string
-	OptInTag     string
-	ExtraLabels  []string
-	Concurrency  int
-	DryRun       bool
-	SyncKBStatus bool
-	Issues       bool // create/track one Forgejo issue per finding; off = wiki-only
-	Wiki         bool
-	WikiPrune    bool
-	Redact       string // redaction list for published content; "off"/"none" disables
+	BaseURL           string
+	Token             string
+	Owner             string
+	Repo              string
+	MinRisk           string
+	OptInTag          string
+	ExtraLabels       []string
+	GroupByDefinition bool
+	Concurrency       int
+	DryRun            bool
+	SyncKBStatus      bool
+	Issues            bool // create/track one Forgejo issue per finding; off = wiki-only
+	Wiki              bool
+	WikiPrune         bool
+	// WikiTimeout bounds the whole wiki pass: page upserts, link repair and
+	// prune share it. Zero means "no deadline". It is a knob rather than a
+	// constant because the pass is O(pages) against a throttled API, so the
+	// right value depends on the vault, not on the code.
+	WikiTimeout time.Duration
+	// WikiRequestTO bounds a SINGLE wiki API request, which WikiTimeout does
+	// not: the pass deadline can be hours and one request still dies at the
+	// client's 30s default. The call that needs it is link repair's paged page
+	// listing, whose cost is the size of the wiki rather than the size of the
+	// publish. Zero keeps forgejo's own default.
+	WikiRequestTO time.Duration
+	Redact        string // redaction list for published content; "off"/"none" disables
 
 	// Vault / persistence context.
 	Format        string
@@ -157,16 +169,17 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		exCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		sum, err := forgejo.Export(exCtx, pubEnt, forgejo.Options{
-			BaseURL:     opts.BaseURL,
-			Token:       opts.Token,
-			Owner:       opts.Owner,
-			Repo:        opts.Repo,
-			ExtraLabels: opts.ExtraLabels,
-			MinRisk:     opts.MinRisk,
-			OptInTag:    opts.OptInTag,
-			DryRun:      opts.DryRun,
-			Concurrency: opts.Concurrency,
-			WikiURLBase: wikiURLBase,
+			BaseURL:           opts.BaseURL,
+			Token:             opts.Token,
+			Owner:             opts.Owner,
+			Repo:              opts.Repo,
+			ExtraLabels:       opts.ExtraLabels,
+			MinRisk:           opts.MinRisk,
+			OptInTag:          opts.OptInTag,
+			GroupByDefinition: opts.GroupByDefinition,
+			DryRun:            opts.DryRun,
+			Concurrency:       opts.Concurrency,
+			WikiURLBase:       wikiURLBase,
 		})
 		if err != nil {
 			// A wholesale export failure (auth/connectivity) would fail the pull
@@ -280,7 +293,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				return failures + 1
 			}
 		}
-		wikiCtx, wcancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		wikiCtx, wcancel := wikiPublishContext(context.Background(), opts.WikiTimeout)
 		defer wcancel()
 		wsum, werr := forgejo.ExportWiki(wikiCtx, wikiVault, forgejo.WikiOptions{
 			BaseURL:     opts.BaseURL,
@@ -289,6 +302,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			Repo:        opts.Repo,
 			Concurrency: opts.Concurrency,
 			Prune:       opts.WikiPrune,
+			Timeout:     opts.WikiRequestTO,
 		})
 		if werr != nil {
 			log.Printf("error: forgejo wiki export failed: %v", werr)
@@ -300,6 +314,17 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		}
 	}
 	return failures
+}
+
+// wikiPublishContext bounds the wiki pass. A non-positive timeout means the
+// pass runs to completion: the upsert loop, link repair and prune are one
+// budget, and on a large vault the throttled read of every unchanged page can
+// consume it before link repair starts, so "no deadline" has to be expressible.
+func wikiPublishContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, timeout)
 }
 
 // mergeForgejoTicketRefs records this run's findingID→issueRef map on the

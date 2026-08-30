@@ -2012,6 +2012,16 @@ func slug(s string) string {
 	return s
 }
 
+// DefinitionPageName returns the wiki/vault page base name for a definition —
+// "{pluginId}-{slug}" — matching the file WriteVault emits at
+// definitions/{pluginId}-{slug}.md. External sinks that link to the published
+// definition page (e.g. the Forgejo issue body's "KB reference") use this so
+// the link resolves to the same page the vault publishes, instead of guessing a
+// slug from the raw DefinitionID.
+func DefinitionPageName(d entities.Definition) string {
+	return fmt.Sprintf("%s-%s", d.PluginID, slug(firstNonEmpty(d.Alert, d.Name, d.PluginID)))
+}
+
 func firstNonEmpty(ss ...string) string {
 	for _, s := range ss {
 		if strings.TrimSpace(s) != "" {

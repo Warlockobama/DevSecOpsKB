@@ -105,6 +105,7 @@ func main() {
 		forgejoOwner        string
 		forgejoRepo         string
 		forgejoMinRisk      string
+		forgejoGroupByDef   bool
 		forgejoOptInTag     string
 		forgejoLabels       string
 		forgejoConcurrency  int
@@ -113,6 +114,8 @@ func main() {
 		forgejoIssues       bool
 		forgejoWiki         bool
 		forgejoWikiPrune    bool
+		forgejoWikiTimeout  time.Duration
+		forgejoWikiHTTPTO   time.Duration
 		forgejoRedact       string
 		allowAgentPublish   bool
 		allowCustomPublish  bool
@@ -200,6 +203,7 @@ func main() {
 	flag.StringVar(&forgejoOwner, "forgejo-owner", "", "Forgejo/Gitea repository owner (user or org).")
 	flag.StringVar(&forgejoRepo, "forgejo-repo", "", "Forgejo/Gitea repository name.")
 	flag.StringVar(&forgejoMinRisk, "forgejo-min-risk", "medium", "Minimum risk level to export as Forgejo issues: info|low|medium|high (default: medium).")
+	flag.BoolVar(&forgejoGroupByDef, "forgejo-group-by-definition", true, "Publish one Forgejo issue per rule/definition (titled by the rule, listing every affected endpoint) instead of one issue per finding. Tames noisy scan types; set false for per-URL granularity.")
 	flag.StringVar(&forgejoOptInTag, "forgejo-opt-in-tag", "case-ticket", "Analyst tag that forces Forgejo export for lower-severity findings.")
 	flag.StringVar(&forgejoLabels, "forgejo-labels", "", "Comma-separated extra labels to add to each Forgejo issue.")
 	flag.IntVar(&forgejoConcurrency, "forgejo-concurrency", 3, "Max parallel Forgejo API requests (default: 3, max: 5).")
@@ -208,6 +212,8 @@ func main() {
 	flag.BoolVar(&forgejoIssues, "forgejo-issues", true, "Create/track one Forgejo issue per finding. Set false for wiki-only publishing, leaving the Issues tab free for other use (e.g. analyst-filed tuning requests).")
 	flag.BoolVar(&forgejoWiki, "forgejo-wiki", false, "Also publish the generated Obsidian vault to the Forgejo repo wiki (Confluence analog).")
 	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
+	flag.DurationVar(&forgejoWikiTimeout, "forgejo-wiki-timeout", 10*time.Minute, "Deadline for the whole wiki publish: page upserts, link repair and prune share it. The API client is throttled to one request per 250ms and an unchanged page still costs a read, so budget from the page count rather than from the number of changes. 0 disables the deadline.")
+	flag.DurationVar(&forgejoWikiHTTPTO, "forgejo-wiki-request-timeout", 30*time.Second, "Timeout for a SINGLE wiki API request, as distinct from -forgejo-wiki-timeout, which budgets the whole pass. The binding call is the paged page listing link repair does before it can rewrite anything: its cost grows with the wiki, not with the publish, so on a large vault the first listing can exceed the 30s default while the pass deadline is barely touched. 0 keeps the default.")
 	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes,secrets; 'off' disables. 'secrets' scrubs credential/PII patterns (hashes, emails, JWTs) from evidence. The local entities file keeps unredacted data.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
@@ -932,29 +938,32 @@ func main() {
 			artPtr = &runInArtifact
 		}
 		forgejoFailures = runForgejoPublish(&ent, forgejoPublishOptions{
-			BaseURL:       forgejoURL,
-			Token:         forgejoToken,
-			Owner:         forgejoOwner,
-			Repo:          forgejoRepo,
-			MinRisk:       forgejoMinRisk,
-			OptInTag:      forgejoOptInTag,
-			ExtraLabels:   extraLabels,
-			Concurrency:   forgejoConcurrency,
-			DryRun:        forgejoDryRun,
-			SyncKBStatus:  forgejoSyncKBStatus,
-			Issues:        forgejoIssues,
-			Wiki:          forgejoWiki,
-			WikiPrune:     forgejoWikiPrune,
-			Redact:        forgejoRedact,
-			Format:        format,
-			Vault:         vault,
-			Out:           out,
-			EntitiesIn:    entitiesIn,
-			RunIn:         runIn,
-			RunInArtifact: artPtr,
-			ScanLabel:     scanLabel,
-			SiteLabel:     siteLabel,
-			ZapBaseURL:    zapBase,
+			BaseURL:           forgejoURL,
+			Token:             forgejoToken,
+			Owner:             forgejoOwner,
+			Repo:              forgejoRepo,
+			MinRisk:           forgejoMinRisk,
+			OptInTag:          forgejoOptInTag,
+			ExtraLabels:       extraLabels,
+			GroupByDefinition: forgejoGroupByDef,
+			Concurrency:       forgejoConcurrency,
+			DryRun:            forgejoDryRun,
+			SyncKBStatus:      forgejoSyncKBStatus,
+			Issues:            forgejoIssues,
+			Wiki:              forgejoWiki,
+			WikiPrune:         forgejoWikiPrune,
+			WikiTimeout:       forgejoWikiTimeout,
+			WikiRequestTO:     forgejoWikiHTTPTO,
+			Redact:            forgejoRedact,
+			Format:            format,
+			Vault:             vault,
+			Out:               out,
+			EntitiesIn:        entitiesIn,
+			RunIn:             runIn,
+			RunInArtifact:     artPtr,
+			ScanLabel:         scanLabel,
+			SiteLabel:         siteLabel,
+			ZapBaseURL:        zapBase,
 		})
 	}
 

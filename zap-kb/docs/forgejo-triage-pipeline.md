@@ -70,11 +70,23 @@ zap-kb \
   -forgejo-issues
   # add -forgejo-wiki to also publish the evidence vault as wiki pages
   # add -forgejo-dry-run first to preview which issues would be created
+  # add -forgejo-group-by-definition=false to get one issue per finding (per-URL)
 ```
-Each issue gets `kb-finding` + a `risk/<level>` label and a machine-owned body
-(Risk/Confidence/Occurrences → Description → Remediation → Security
-classification → Evidence). Re-running reconciles: bodies refresh, recurring
-finds reopen, nothing is duplicated.
+By default the publisher **groups by rule** (`-forgejo-group-by-definition`,
+default on): every finding sharing a definition collapses into **one issue per
+rule**, titled by the vulnerability class with a fan-out count
+(e.g. `Cross-Domain Misconfiguration — 26 occurrences`) and listing every
+affected endpoint in an "Affected endpoints" table. This keeps noisy scan types
+(static-asset probes, header checks) from flooding the board with hundreds of
+near-identical per-URL issues. Pass `-forgejo-group-by-definition=false` to
+restore one issue per finding.
+
+Each issue gets `kb-finding` + a `risk/<level>` label (the group's highest risk)
+and a machine-owned body (Risk/endpoints header → Description → Remediation →
+Security classification → Affected endpoints → representative Evidence). Bodies
+are capped to stay within Forgejo's size limit, with the dedup marker always
+preserved. Re-running reconciles: bodies refresh, recurring finds reopen,
+nothing is duplicated.
 
 ## Stage 3 — Connect Chrome
 Open the Forgejo instance in the browser where the Claude-in-Chrome extension is

@@ -7,7 +7,25 @@ import (
 	"unicode/utf8"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 )
+
+// maxBodyBytes bounds the assembled issue body. Forgejo/Gitea reject issue
+// bodies past a server-side limit (~65535 bytes on some configs); a finding
+// with large request/response evidence can approach it. The hidden dedup marker
+// is always appended AFTER the cap so it survives truncation — dedup
+// correctness must never depend on body length.
+const maxBodyBytes = 60000
+
+// finalizeBody trims trailing whitespace from the rendered content, caps it to
+// maxBodyBytes, and appends the hidden marker last so it always survives.
+func finalizeBody(content, marker string) string {
+	content = strings.TrimRight(content, "\n")
+	if len(content) > maxBodyBytes {
+		content = truncate(content, maxBodyBytes) + "\n\n_(evidence truncated — see the KB wiki for full detail)_"
+	}
+	return content + "\n\n" + marker + "\n"
+}
 
 // Forgejo issue descriptions are plain markdown (rendered natively), so unlike
 // the Jira sink there is no ADF document tree to build — just a markdown string.
@@ -19,17 +37,63 @@ func findingMarker(findingID string) string {
 	return "<!-- devsecopskb-finding:" + strings.TrimSpace(findingID) + " -->"
 }
 
-// issueTitle returns a concise issue title for a finding.
-func issueTitle(f entities.Finding) string {
+// issueTitle returns a concise issue title for a single finding. It leads with
+// the vulnerability class (the definition's rule name) so the Issues board is
+// scannable at a glance, and appends the affected URL path for context —
+// "Cross-Domain Misconfiguration — /rest/user". When no definition/name is
+// available it falls back to the finding's own name, then its ID.
+func issueTitle(f entities.Finding, def *entities.Definition) string {
+	vuln := ""
+	if def != nil {
+		vuln = strings.TrimSpace(firstNonEmpty(def.Name, def.Alert))
+	}
 	name := strings.TrimSpace(f.Name)
-	if name == "" {
-		name = strings.TrimSpace(f.FindingID)
+	path := pathContext(f)
+
+	var title string
+	switch {
+	case vuln != "" && path != "":
+		title = vuln + " — " + path
+	case vuln != "":
+		title = vuln
+	case name != "":
+		title = name
+	default:
+		title = strings.TrimSpace(f.FindingID)
 	}
-	name = sanitizeUntrusted(name)
-	if len(name) > 255 {
-		name = truncate(name, 252)
+	title = sanitizeUntrusted(title)
+	if len(title) > 255 {
+		title = truncate(title, 252)
 	}
-	return name
+	return title
+}
+
+// pathContext extracts a short URL path (with a "?…" marker when a query string
+// is present) from a finding, for use as title context. Falls back to the raw
+// URL when it doesn't parse.
+func pathContext(f entities.Finding) string {
+	u := strings.TrimSpace(f.URL)
+	if u == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(u); err == nil && parsed.Path != "" {
+		p := parsed.Path
+		if parsed.RawQuery != "" {
+			p += "?…"
+		}
+		return p
+	}
+	return u
+}
+
+// firstNonEmpty returns the first trimmed-non-empty string, or "".
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if t := strings.TrimSpace(s); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // buildIssueBody renders the markdown body for a finding's issue. When occ is
@@ -72,7 +136,7 @@ func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.
 			b.WriteString("\n")
 		}
 		if strings.TrimSpace(wikiURLBase) != "" {
-			page := "Definitions/" + def.DefinitionID
+			page := "Definitions/" + obsidian.DefinitionPageName(*def)
 			fmt.Fprintf(&b, "**KB reference:** [%s](%s/%s)\n\n", page,
 				strings.TrimRight(wikiURLBase, "/"), url.PathEscape(page))
 		}
@@ -86,10 +150,7 @@ func buildIssueBody(f entities.Finding, def *entities.Definition, occ *entities.
 		}
 	}
 
-	b.WriteString("\n")
-	b.WriteString(findingMarker(f.FindingID))
-	b.WriteString("\n")
-	return b.String()
+	return finalizeBody(b.String(), findingMarker(f.FindingID))
 }
 
 // classificationMarkdown renders CVSS / CWE / CAPEC / ATT&CK / OWASP lines.
@@ -108,7 +169,10 @@ func classificationMarkdown(def *entities.Definition) string {
 				url = fmt.Sprintf("https://cwe.mitre.org/data/definitions/%d.html", t.CWEID)
 			}
 			label := fmt.Sprintf("CWE-%d", t.CWEID)
-			if n := strings.TrimSpace(t.CWEName); n != "" {
+			// Only append the name when it adds information: scanner-sourced
+			// mappings sometimes set CWEName to the bare ID ("CWE-615"), which
+			// would render as "CWE-615: CWE-615".
+			if n := strings.TrimSpace(t.CWEName); n != "" && !strings.EqualFold(n, label) {
 				label += ": " + n
 			}
 			lines = append(lines, fmt.Sprintf("- **CWE:** [%s](%s)", label, url))
