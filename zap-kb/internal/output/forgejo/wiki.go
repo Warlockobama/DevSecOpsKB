@@ -216,6 +216,10 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			switch {
 			case isWikiBranchBug(err):
 				return summary, fmt.Errorf("forgejo wiki: %s: %w", wikiBranchBugAdvice, err)
+			case err != nil && ctx.Err() != nil:
+				summary.Errors++
+				fmt.Printf("[forgejo wiki] publish stopped: %v\n", ctx.Err())
+				return summary, nil
 			case err != nil:
 				summary.Errors++
 				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
@@ -233,7 +237,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		wg.Add(1)
 		go func(p page) {
 			defer wg.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-sem }()
 
 			content, err := readVaultMarkdown(p.path)
@@ -249,6 +257,8 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
+			case err != nil && ctx.Err() != nil:
+				return
 			case err != nil:
 				summary.Errors++
 				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
@@ -262,6 +272,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}(p)
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		summary.Errors++
+		fmt.Printf("[forgejo wiki] publish stopped: %v\n", err)
+		return summary, nil
+	}
 
 	// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
 	// pages just created, re-render every page's links against those tokens,
@@ -281,6 +296,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			return escapePageName(name)
 		}
 		for _, p := range allPages {
+			if err := ctx.Err(); err != nil {
+				summary.Errors++
+				fmt.Printf("[forgejo wiki] link repair stopped: %v\n", err)
+				break
+			}
 			su := subURLs[p.name]
 			if su == "" {
 				continue // page never landed; already counted as an error
@@ -296,6 +316,10 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 			}
 			if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
 				summary.Errors++
+				if ctx.Err() != nil {
+					fmt.Printf("[forgejo wiki] link repair stopped: %v\n", ctx.Err())
+					break
+				}
 				fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
 				continue
 			}
@@ -316,8 +340,17 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 		sort.Strings(stale)
 		for _, title := range stale {
+			if err := ctx.Err(); err != nil {
+				summary.Errors++
+				fmt.Printf("[forgejo wiki] prune stopped: %v\n", err)
+				break
+			}
 			if derr := c.deleteWikiPage(ctx, existing[title]); derr != nil {
 				summary.Errors++
+				if ctx.Err() != nil {
+					fmt.Printf("[forgejo wiki] prune stopped: %v\n", ctx.Err())
+					break
+				}
 				fmt.Printf("[forgejo wiki] error pruning %q: %v\n", title, derr)
 				continue
 			}

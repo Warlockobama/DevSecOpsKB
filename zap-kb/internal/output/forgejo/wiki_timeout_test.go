@@ -3,14 +3,72 @@ package forgejo
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestExportWikiStopsLinkRepairAfterPassDeadline(t *testing.T) {
+	vault := t.TempDir()
+	os.WriteFile(filepath.Join(vault, "INDEX.md"), []byte("see [[findings/fin-1.md|F1]]"), 0o644)
+	os.WriteFile(filepath.Join(vault, "DASHBOARD.md"), []byte("see [[findings/fin-1.md|F1]]"), 0o644)
+	os.MkdirAll(filepath.Join(vault, "findings"), 0o755)
+	os.WriteFile(filepath.Join(vault, "findings", "fin-1.md"), []byte("# F1"), 0o644)
+
+	var listCalls atomic.Int32
+	var patchCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/acme/kb":
+			json.NewEncoder(w).Encode(map[string]any{"has_wiki": true})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wiki/pages"):
+			if listCalls.Add(1) == 1 {
+				json.NewEncoder(w).Encode([]map[string]any{})
+				return
+			}
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"title": "Dashboard", "sub_url": "Dashboard"},
+				{"title": "Home", "sub_url": "Home"},
+				{"title": "Findings/fin-1", "sub_url": "Findings%2Ffin-1.-"},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wiki/new"):
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/wiki/page/"):
+			patchCalls.Add(1)
+			_, _ = io.ReadAll(r.Body)
+			<-r.Context().Done()
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	sum, err := ExportWiki(ctx, vault, WikiOptions{
+		BaseURL:      srv.URL,
+		Token:        "t",
+		Owner:        "acme",
+		Repo:         "kb",
+		Timeout:      5 * time.Second,
+		RequestDelay: time.Nanosecond,
+	})
+	if err != nil {
+		t.Fatalf("ExportWiki: %v", err)
+	}
+	if sum.Errors != 1 {
+		t.Fatalf("errors=%d, want one aggregate deadline failure", sum.Errors)
+	}
+	if got := patchCalls.Load(); got != 1 {
+		t.Fatalf("link repair PATCH calls=%d, want 1 before cancellation stopped the pass", got)
+	}
+}
 
 // The wiki pass has two limits and they are not the same limit. The caller's
 // context bounds the whole pass; WikiOptions.Timeout bounds a single API
