@@ -27,7 +27,7 @@ validation; an invalid wrapper is never retried as bare entities.
 | Request/response `headers` as an array of `"Name: value"` lines | Normalized | Converted to `{ "name": ..., "value": ... }` objects. |
 | Additive unknown object fields | Accepted for forward-compatible reading | zap-kb does not interpret unmodeled fields and does not promise to reproduce them when it rewrites the document. Producer evidence that must survive a round trip belongs in a modeled field such as `occurrences[].other`. |
 | Missing/unsupported schema version, missing collections, object/scalar collection values, truncated JSON, or trailing JSON values | Rejected | No fallback or version coercion is performed. |
-| Empty, duplicate, or whitespace-padded IDs; dangling/inconsistent references; mismatched finding/definition plugin IDs | Rejected | zap-kb does not repair identities or invent referenced records. |
+| Empty, duplicate, whitespace-padded, or path-unsafe IDs; dangling/inconsistent references; mismatched finding/definition plugin IDs | Rejected | zap-kb does not repair identities or invent referenced records. Every graph ID, graph reference, and `pluginId` must be one portable path component: `/`, `\\`, Windows filename metacharacters (`< > : " | ? *`), control characters, `.`/`..`, and Windows device names are rejected. Other punctuation, internal spaces, and Unicode text remain supported. |
 | Invalid RFC3339 timestamps or reversed finding first/last ranges | Rejected | Diagnostics name the timestamp path without copying its value. |
 
 Successful validation returns a `runartifact.ValidationResult`. Its format and
@@ -39,6 +39,8 @@ the original value.
 
 - Definition, finding, occurrence, and analyst-history entry IDs are nonempty
   and unique in their collection.
+- Graph IDs, references, and plugin IDs are portable single path components so
+  renderer filenames cannot escape or alias their intended directory.
 - Every finding references an existing definition and uses the same `pluginId`.
 - Every occurrence references an existing finding and definition, and the two
   references agree.

@@ -70,6 +70,13 @@ type Options struct {
 //	  findings/{findingId}.md
 //	  occurrences/{occurrenceId}.md
 func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
+	// Finding and occurrence IDs become filenames, and plugin IDs prefix
+	// definition filenames. Guard the public package boundary before reading or
+	// deleting any existing vault content so callers outside the CLI cannot turn
+	// graph identities into paths.
+	if validation := entities.ValidateIdentityPathSafety(ef); !validation.OK() {
+		return fmt.Errorf("validate identities: %w", validation.Err())
+	}
 	if opts.Redact.Enabled() {
 		raw, err := json.Marshal(ef)
 		if err != nil {

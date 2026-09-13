@@ -264,6 +264,86 @@ func TestCLIMergeValidatesCombinedGraphBeforeReplacingOutput(t *testing.T) {
 	}
 }
 
+func TestCLIRejectsUnsafeIdentityBeforeVaultOutputOrDestinationSideEffects(t *testing.T) {
+	binary := buildTestCLI(t)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	bare := `{"schemaVersion":"v1","sourceTool":"zap","definitions":[{"definitionId":"def-one","pluginId":"10001","alert":"Synthetic"}],"findings":[{"findingId":"../../outside-vault","definitionId":"def-one","pluginId":"10001","url":"https://example.test/","method":"GET","risk":"High"}],"occurrences":[]}`
+	for _, inputFlag := range []string{"-entities-in", "-run-in"} {
+		t.Run(strings.TrimPrefix(inputFlag, "-"), func(t *testing.T) {
+			hits.Store(0)
+			caseDir := t.TempDir()
+			vault := filepath.Join(caseDir, "vault")
+			out := filepath.Join(caseDir, "output.json")
+			sentinels := map[string][]byte{
+				filepath.Join(vault, "INDEX.md"):            []byte("PREEXISTING_INDEX\n"),
+				filepath.Join(vault, "findings", "kept.md"): []byte("PREEXISTING_FINDING\n"),
+				filepath.Join(caseDir, "outside-vault.md"):  []byte("PREEXISTING_SIBLING\n"),
+				out: []byte("PREEXISTING_OUTPUT\n"),
+			}
+			for path, contents := range sentinels {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, contents, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			contents := bare
+			if inputFlag == "-run-in" {
+				contents = `{"schema":"zap-kb/run/v1","meta":{"sourceTool":"zap"},"entities":` + bare + `}`
+			}
+			input := filepath.Join(caseDir, "unsafe.json")
+			if err := os.WriteFile(input, []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(binary,
+				"-wizard=false",
+				"-format=obsidian",
+				"-obsidian-dir="+vault,
+				"-out="+out,
+				inputFlag+"="+input,
+				"-include-mitre=false",
+				"-include-cvss=false",
+				"-forgejo-url="+server.URL,
+				"-forgejo-owner=synthetic-owner",
+				"-forgejo-repo=synthetic-repo",
+				"-forgejo-min-risk=info",
+			)
+			cmd.Env = cleanCLIEnvironment()
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("CLI accepted path-unsafe identity:\n%s", output)
+			}
+			diagnostic := string(output)
+			if !strings.Contains(diagnostic, "findings[0].findingId: unsafe path component") {
+				t.Fatalf("unexpected diagnostic: %s", diagnostic)
+			}
+			if strings.Contains(diagnostic, "outside-vault") {
+				t.Fatalf("diagnostic leaked rejected identity: %s", diagnostic)
+			}
+			if got := hits.Load(); got != 0 {
+				t.Fatalf("destination received %d request(s) for invalid input", got)
+			}
+			for path, before := range sentinels {
+				after, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatalf("read sentinel %s: %v", path, readErr)
+				}
+				if string(after) != string(before) {
+					t.Fatalf("sentinel %s changed: %q", path, after)
+				}
+			}
+		})
+	}
+}
+
 func validationFixturePath(t *testing.T, name string) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", "testdata", "validation", name))

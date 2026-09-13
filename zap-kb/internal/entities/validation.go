@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const SupportedSchemaVersion = "v1"
@@ -162,7 +163,100 @@ func Validate(ef EntitiesFile) ValidationResult {
 		}
 	}
 
+	identitySafety := ValidateIdentityPathSafety(ef)
+	result.Issues = append(result.Issues, identitySafety.Issues...)
+
 	return result
+}
+
+// ValidateIdentityPathSafety rejects graph identities that cannot safely be
+// used as one portable filename component. Obsidian uses findingId and
+// occurrenceId directly in filenames and pluginId in definition filenames;
+// applying the same constraint to the related graph IDs and references keeps
+// identity comparisons exact across renderers and operating systems.
+//
+// This check deliberately does not rewrite identities. Letters, digits,
+// Unicode text, spaces within the value, and punctuation other than portable
+// filesystem metacharacters remain supported.
+func ValidateIdentityPathSafety(ef EntitiesFile) ValidationResult {
+	var result ValidationResult
+	add := func(path, value string) {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return
+		}
+		if !isPortableIdentityComponent(value) {
+			result.Issues = append(result.Issues, ValidationIssue{Path: path, Category: "unsafe path component"})
+		}
+	}
+
+	for i, definition := range ef.Definitions {
+		path := fmt.Sprintf("definitions[%d]", i)
+		add(path+".definitionId", definition.DefinitionID)
+		add(path+".pluginId", definition.PluginID)
+	}
+	for i, finding := range ef.Findings {
+		path := fmt.Sprintf("findings[%d]", i)
+		add(path+".findingId", finding.FindingID)
+		add(path+".definitionId", finding.DefinitionID)
+		add(path+".pluginId", finding.PluginID)
+		if finding.Suppression != nil {
+			add(path+".suppression.occurrenceRef", finding.Suppression.OccurrenceRef)
+		}
+		validateAnalystIdentityPathSafety(&result, path+".analyst", finding.Analyst)
+	}
+	for i, occurrence := range ef.Occurrences {
+		path := fmt.Sprintf("occurrences[%d]", i)
+		add(path+".occurrenceId", occurrence.OccurrenceID)
+		add(path+".definitionId", occurrence.DefinitionID)
+		add(path+".findingId", occurrence.FindingID)
+		validateAnalystIdentityPathSafety(&result, path+".analyst", occurrence.Analyst)
+	}
+	return result
+}
+
+func validateAnalystIdentityPathSafety(result *ValidationResult, path string, analyst *Analyst) {
+	if analyst == nil {
+		return
+	}
+	for i, entry := range analyst.History {
+		value := entry.EntryID
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			continue
+		}
+		if !isPortableIdentityComponent(value) {
+			result.Issues = append(result.Issues, ValidationIssue{
+				Path:     fmt.Sprintf("%s.history[%d].entryId", path, i),
+				Category: "unsafe path component",
+			})
+		}
+	}
+}
+
+func isPortableIdentityComponent(value string) bool {
+	if value == "." || value == ".." {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return false
+		}
+	}
+	return !isWindowsReservedComponent(value)
+}
+
+func isWindowsReservedComponent(value string) bool {
+	name := strings.TrimRight(value, " .")
+	if dot := strings.IndexByte(name, '.'); dot >= 0 {
+		name = name[:dot]
+	}
+	switch strings.ToUpper(name) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateAnalyst(result *ValidationResult, path string, analyst *Analyst) {
