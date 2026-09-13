@@ -973,6 +973,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			ruleTitle = firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		}
 
+		findingScanLabel := opts.ScanLabel
+		if len(occs) > 0 {
+			findingScanLabel = firstNonEmpty(occs[0].ScanLabel, findingScanLabel)
+		}
 		issueSummaries = append(issueSummaries, issueSummary{
 			FindingID:       strings.TrimSpace(f.FindingID),
 			Link:            filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
@@ -985,7 +989,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			StatusOverview:  statusSummary,
 			RuleTitle:       ruleTitle,
 			ObservedAt:      lastSeen,
-			ScanLabel:       fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
+			ScanLabel:       findingScanLabel,
 			PluginID:        strings.TrimSpace(f.PluginID),
 			TuningCandidate: tuningCandidate,
 			TuningScans:     tuningScans,
