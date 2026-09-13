@@ -382,17 +382,14 @@ func main() {
 	)
 	// If -run-in is provided, load entities and default labels/meta from it.
 	if strings.TrimSpace(runIn) != "" {
-		var a runartifact.Artifact
-		if strict, serr := runartifact.Read(runIn); serr == nil && strings.TrimSpace(strict.Entities.SchemaVersion) != "" {
-			a = strict
-			runInArtifact = strict
+		a, validation, rerr := runartifact.ReadValidated(runIn)
+		if rerr != nil {
+			log.Fatalf("read -run-in: %v", rerr)
+		}
+		reportInputNormalizations("-run-in", validation)
+		if validation.Format == runartifact.FormatRunWrapper {
+			runInArtifact = a
 			runInIsArtifact = true
-		} else {
-			var rerr error
-			a, rerr = runartifact.ReadFlexible(runIn)
-			if rerr != nil {
-				log.Fatalf("read -run-in: %v", rerr)
-			}
 		}
 		entIn = a.Entities
 		if len(a.Alerts) > 0 {
@@ -455,18 +452,12 @@ func main() {
 
 	// Optional input Entities for merge/enrich-only (overridden when -run-in used)
 	if strings.TrimSpace(entitiesIn) != "" && strings.TrimSpace(runIn) == "" {
-		raw, err := os.ReadFile(entitiesIn)
+		var validation runartifact.ValidationResult
+		entIn, validation, err = runartifact.ReadEntities(entitiesIn)
 		if err != nil {
-			log.Fatalf("open -entities-in file: %v", err)
+			log.Fatalf("read -entities-in: %v", err)
 		}
-		raw, err = entities.NormalizeImportJSON(raw)
-		if err != nil {
-			log.Fatalf("normalize -entities-in file: %v", err)
-		}
-		if err := json.Unmarshal(raw, &entIn); err != nil {
-			log.Fatalf("decode -entities-in file: %v", err)
-		}
-		entities.FillDerivedRequests(&entIn)
+		reportInputNormalizations("-entities-in", validation)
 	}
 
 	// optional merge (flat alerts only)
@@ -496,7 +487,7 @@ func main() {
 	// Build entities model (or merge/enrich) if needed by chosen output
 	var ent entities.EntitiesFile
 	if format == "entities" || format == "both" || format == "obsidian" {
-		if len(entIn.Definitions) > 0 || len(entIn.Findings) > 0 || len(entIn.Occurrences) > 0 {
+		if strings.TrimSpace(runIn) != "" || strings.TrimSpace(entitiesIn) != "" {
 			ent = entIn
 		}
 		// Single timestamp to stamp this generation and as observedAt for new occurrences
@@ -654,6 +645,10 @@ func main() {
 		// any output/render step so every surface uses the KB's canonical model.
 		entities.NormalizeDefinitionOrigins(&ent)
 		entities.NormalizeAnalystStatuses(&ent)
+		entities.EnsureCollections(&ent)
+		if validation := entities.Validate(ent); !validation.OK() {
+			log.Fatalf("validate entities: %v", validation.Err())
+		}
 
 		// Print a concise init/enrich summary when not fetching alerts
 		if fetchAllowed == false { // enrich-only / init flows
@@ -1211,6 +1206,11 @@ func runMergeCommand(args []string) {
 	for _, ef := range artifacts[1:] {
 		merged = entities.MergeWithPolicy(merged, ef, policy)
 	}
+	entities.EnsureCollections(&merged)
+	if validation := entities.Validate(merged); !validation.OK() {
+		fmt.Fprintf(os.Stderr, "merge: validate result: %v\n", validation.Err())
+		os.Exit(1)
+	}
 
 	// Encode output.
 	enc, err := json.MarshalIndent(merged, "", "  ")
@@ -1233,6 +1233,12 @@ func runMergeCommand(args []string) {
 	// Summary to stderr.
 	fmt.Fprintf(os.Stderr, "Merged %d files: %d definitions, %d findings, %d occurrences\n",
 		len(paths), len(merged.Definitions), len(merged.Findings), len(merged.Occurrences))
+}
+
+func reportInputNormalizations(flagName string, result runartifact.ValidationResult) {
+	for _, normalization := range result.Normalizations {
+		fmt.Fprintf(os.Stderr, "Normalized %s at %s (%s)\n", flagName, normalization.Path, normalization.Rule)
+	}
 }
 
 // runPullCommand implements the "pull" sub-command: reads analyst triage fields

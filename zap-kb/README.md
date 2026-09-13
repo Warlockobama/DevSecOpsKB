@@ -175,6 +175,7 @@ captures the normalized entities and run metadata:
 
 Notes:
 - `-run-in` accepts both the wrapper `run.json` and a bare `entities.json` for convenience.
+- Both import forms are validated before output files or destinations are touched; see the [input compatibility matrix](docs/schema/input-validation.md).
 - When present, run metadata (scan/site labels, zap-base) is applied to Obsidian output.
 - To ship a single file from your pipeline, add `-zip-out out/run.zip`.
 - Use `-redact domain,cookies,auth` if your artifacts leave the build network.

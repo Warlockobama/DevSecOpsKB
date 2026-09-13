@@ -1,0 +1,52 @@
+{
+  "schema": "zap-kb/run/v1",
+  "meta": {
+    "sourceTool": "multi",
+    "generatedAt": "2026-09-12T12:03:00Z",
+    "scanLabel": "range-synthetic-20260912",
+    "siteLabel": "juice-shop"
+  },
+  "entities": {
+    "schemaVersion": "v1",
+    "generatedAt": "2026-09-12T12:03:00Z",
+    "sourceTool": "multi",
+    "definitions": [
+      {
+        "definitionId": "def-10016",
+        "pluginId": "10016",
+        "name": "Missing Security Headers",
+        "wascid": "15"
+      }
+    ],
+    "findings": [
+      {
+        "findingId": "fin-range-synthetic",
+        "definitionId": "def-10016",
+        "pluginId": "10016",
+        "url": "http://juice-shop.range.test/",
+        "method": "GET",
+        "riskcode": 1,
+        "occurrenceCount": 1
+      }
+    ],
+    "occurrences": [
+      {
+        "occurrenceId": "occ-range-synthetic",
+        "scanLabel": "range-synthetic-20260912",
+        "observedAt": "2026-09-12T12:03:00Z",
+        "definitionId": "def-10016",
+        "findingId": "fin-range-synthetic",
+        "url": "http://juice-shop.range.test/",
+        "method": "GET",
+        "riskcode": 1,
+        "request": {
+          "headers": ["Accept: text/html", "X-Synthetic: portable-fixture"]
+        },
+        "response": {
+          "statusCode": 200,
+          "headers": ["Content-Type: text/html"]
+        }
+      }
+    ]
+  }
+}

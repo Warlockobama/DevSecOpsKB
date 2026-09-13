@@ -1,0 +1,51 @@
+{
+  "schema": "zap-kb/run/v1",
+  "meta": {
+    "sourceTool": "cactus-sheriff",
+    "generatedAt": "2026-09-12T12:02:00Z",
+    "scanLabel": "cactus-synthetic-20260912",
+    "siteLabel": "artifact-lab",
+    "pipelineRun": "cactus-synthetic-20260912"
+  },
+  "entities": {
+    "schemaVersion": "v1",
+    "generatedAt": "2026-09-12T12:02:00Z",
+    "sourceTool": "cactus-sheriff",
+    "definitions": [
+      {
+        "definitionId": "def-cactus-brand-lookalike-high",
+        "pluginId": "cactus-brand-lookalike-high",
+        "origin": "custom",
+        "name": "Brand Lookalike High"
+      }
+    ],
+    "findings": [
+      {
+        "findingId": "fin-cactus-synthetic",
+        "definitionId": "def-cactus-brand-lookalike-high",
+        "pluginId": "cactus-brand-lookalike-high",
+        "url": "https://example.test/login",
+        "method": "GET",
+        "risk": "High",
+        "riskcode": "3",
+        "occurrenceCount": 1,
+        "firstSeen": "2026-09-12T12:02:00Z",
+        "lastSeen": "2026-09-12T12:02:00Z"
+      }
+    ],
+    "occurrences": [
+      {
+        "occurrenceId": "occ-cactus-synthetic",
+        "scanLabel": "cactus-synthetic-20260912",
+        "observedAt": "2026-09-12T12:02:00Z",
+        "definitionId": "def-cactus-brand-lookalike-high",
+        "findingId": "fin-cactus-synthetic",
+        "url": "https://example.test/login",
+        "method": "GET",
+        "other": "{\"policyVersion\":\"synthetic-policy-v1\",\"detectionTrace\":{\"schemaVersion\":\"detection-trace.v1\",\"decision\":{\"ruleId\":\"host.lookalike_sensitive_path\",\"outcome\":\"interrupt\"}}}",
+        "risk": "High",
+        "riskcode": "3"
+      }
+    ]
+  }
+}

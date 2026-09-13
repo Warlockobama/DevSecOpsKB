@@ -1,5 +1,8 @@
 # Entities Schema v1
 
+Import requirements and the supported producer/legacy matrix are documented in
+[Input validation and compatibility](input-validation.md).
+
 Goals
 - Tool-agnostic: ZAP today, expand to Burp, SAST/DAST later.
 - Stable deterministic IDs for reproducibility.

@@ -16,6 +16,10 @@ func testEntitiesFile() entities.EntitiesFile {
 	return entities.EntitiesFile{
 		SchemaVersion: "v1",
 		GeneratedAt:   "2026-04-06T12:00:00Z",
+		Definitions: []entities.Definition{{
+			DefinitionID: "def-1",
+			PluginID:     "10038",
+		}},
 		Findings: []entities.Finding{{
 			FindingID:    "fin-1",
 			DefinitionID: "def-1",

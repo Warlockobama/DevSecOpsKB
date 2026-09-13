@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "v1",
+  "generatedAt": "2026-09-12T12:04:00Z",
+  "sourceTool": "zap",
+  "definitions": [],
+  "findings": [
+    {
+      "findingId": "fin-synthetic",
+      "definitionId": "def-SYNTHETIC_SENSITIVE_MARKER",
+      "pluginId": "10001",
+      "url": "https://sensitive-marker.invalid/path",
+      "method": "GET",
+      "occurrenceCount": 0
+    }
+  ],
+  "occurrences": []
+}
