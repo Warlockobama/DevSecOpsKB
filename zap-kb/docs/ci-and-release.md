@@ -8,10 +8,12 @@ ephemeral services unless a prerequisite is called out explicitly.
 | Event | Required suites | Prerequisites | What it proves |
 | --- | --- | --- | --- |
 | Pull request and main push | `make test`, `make test-offline-e2e`, `make test-cli-contract`, formatting, vet, and a provenance build | Go version from `go.mod` | Go package regression coverage, the fixture-only vault/Confluence dry-run integration, and all CLI contract tests in `cmd/zap-kb` |
+| Pull request and main push | `make test-wiki-scale` | Synthetic in-process HTTP fixture only | 100/1,000/5,000-page wiki fresh, no-op, change, cancellation, and recovery behavior; this is not a Forgejo throughput claim |
 | Pull request and main push | `go test -tags e2e -count=1 -timeout 20m ./internal/e2e/forgejo/...` | Ephemeral Forgejo plus `E2E_FORGEJO_URL` and `E2E_FORGEJO_TOKEN`, supplied by `zap-kb-e2e.yml` | Forgejo API assumptions, retry, idempotency, redaction, and partial-outcome behavior |
 | Pull request and main push | `kubeconform -strict -summary deploy/k8s/*.yaml` | Downloaded kubeconform binary | Kubernetes manifest schema only |
 | Scheduled or manual `zap-kb-e2e.yml` | Disposable Kind cluster publisher job | Docker, Kind, kubectl, and an ephemeral Forgejo | The real CronJob image, ingest PVC seam, and an isolated publication path |
 | Manual `zap-kb-smoke.yml` | Offline smoke; optional live-ZAP smoke | Fixture only; `ZAP_URL` and `ZAP_API_KEY` only when `run_live_zap=true` | Portable artifact generation and, when selected, a bounded ZAP API fetch |
+| Manual `zap-kb-container-jira.yml` | Publisher image Jira contract | Local Docker only; an internal network, synthetic data, and synthetic credentials | Normal image entrypoint, environment-only Jira configuration, Cloud v3 create/readback, truthful rejected-create outcome, gateway routing, saved artifacts, and image revision identity |
 | Manual credentialed browser check | `npm ci && npm test` in `tests/e2e/` | Designated Confluence test tenant, credentials, and approved fixture parent | Rendered Confluence pages in a real browser; it can create or update fixture pages and is never a default PR check |
 
 `make test-offline-e2e` names the actual tagged package (`./e2e/...`); it is
@@ -20,25 +22,26 @@ and deliberately fails if its required ephemeral-service environment is absent.
 Do not replace a missing service with a skip: report that suite as unrun.
 
 The suite names above are the initial release baseline. The pending failure
-contracts from assignments 01–05 belong under `cmd/zap-kb`; the explicit
+contracts from assignments 03–04 belong under `cmd/zap-kb`; the explicit
 `make test-cli-contract` required step will collect them when those changes
-land. The bounded benchmark/smoke command from assignment 06 has not been
-specified yet, so no placeholder workflow silently passes in its place. Add it
-only after 06 supplies its reproducible command, fixture, timeout, and expected
-evidence.
+land. Assignment 06's synthetic scale command is required because it is fast,
+fixture-only, and bounded. Its Docker-backed disposable workload remains an
+explicit local opt-in (`WIKI_DISPOSABLE=1`): it creates its own container and
+volume and is not a default pull-request check. Passing either harness does not
+establish readiness for a large production wiki; publication outcomes and the
+documented live constraints still govern that decision.
 
-The final release matrix also needs a **published-container contract** from
-assignment 04. Build the `deploy/Dockerfile` image with the reviewed revision,
-start 04's controlled Jira create/rejection stub on the same isolated network,
-and invoke the image through its normal `zap-kb` entrypoint with only the
-documented environment inputs. Assert both a successful create and a rejected
-create's nonzero, sanitized outcome. This is distinct from a host `go run` or
-`go test` pass: it verifies the image entrypoint, static binary, certificate
-bundle, and environment-to-CLI configuration path actually used in a publisher
-job. Do not substitute a personal Jira tenant. If the historical deployed tag
-or digest becomes available, capture its `zap-kb -version` and run the same
-bounded stub cases as a separate comparison; it is not evidence for the
-reviewed source image.
+`zap-kb-container-jira.yml` provides the **published-container contract** for
+assignment 04. It builds `deploy/Dockerfile` from the reviewed tree, starts a
+minimal Jira fixture on an internal-only Docker network, and invokes the normal
+`zap-kb` entrypoint with Jira configuration supplied only through the container
+environment. It asserts Cloud v3 create/readback, a nonzero rejected-create
+result with sanitized run/summary artifacts, scoped-gateway Cloud routing, and
+matching OCI/binary revisions. The current tree is expected to fail the rejected
+create and gateway assertions until 04's CLI fix is integrated; that failure is
+the intended pre-dependency signal, never a reason to relax the harness. Do not
+substitute a personal Jira tenant. The historical image review remains separate
+in [published-image-jira-review-2026-09.md](published-image-jira-review-2026-09.md).
 
 ## Local verification
 

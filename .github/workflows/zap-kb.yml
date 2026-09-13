@@ -48,6 +48,9 @@ jobs:
       - name: Test (CLI contract)
         run: make test-cli-contract
 
+      - name: Test (synthetic wiki scale)
+        run: make test-wiki-scale
+
       - name: Build and show provenance
         run: |
           make build VERSION=ci REVISION="${GITHUB_SHA}"
