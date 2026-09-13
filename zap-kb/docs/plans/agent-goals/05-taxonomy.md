@@ -32,6 +32,19 @@ Starting paths: `internal/entities/enrich.go`, `internal/entities/taxonomy.go`, 
 - IDs and native/custom separation remain stable; repeat imports do not create duplicate definitions or finding identities.
 - Each changed mapping has traceable evidence; a helper test or successful compile alone is insufficient.
 
+### Coordinator mapping review during execution
+
+The initial helper's CWE-639 expectation is baseline behavior, not authoritative
+mapping evidence. Reviewing the companion detectors showed that basket-items,
+complaints and directory rules read collections; they do not demonstrate a
+user-controlled record-key authorization bypass. Preserve their imported
+classifications and explicitly report the curated mapping gap. The
+`auth-basket-object-reference` rule requests `/rest/basket/1` and checks a foreign
+owner, so it provides the justified CWE-639 enrichment case. Final CLI acceptance
+must cover both the original basket-items gap and the object-reference mapping
+through entities, run artifacts and rendering, preserving all identities. See
+[MITRE's CWE-639 definition](https://cwe.mitre.org/data/definitions/639.html).
+
 ## Escalation and handoff
 
 Escalate to Astra High if a mapping is semantically disputed, precedence would overwrite reviewed data, or a migration is needed. Keep uncertain mappings unresolved rather than inventing a classification.
