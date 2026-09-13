@@ -83,6 +83,50 @@ returning a required-stage failure.
 
 ## Designated-tenant acceptance procedure (pending access)
 
+The available CLI configuration is:
+
+```text
+zap-kb atlassian check -remote -jira-issue-type=10001 -jira-create-fields-file=create-fields.json
+zap-kb -run-in=scan.json -format=entities -out=published.json -run-out=run.json -zip-out=evidence.zip -jira-site-url=https://tenant.atlassian.net -jira-create-fields-file=create-fields.json
+```
+
+Connection details and credentials in these commands come from `JIRA_URL`,
+`JIRA_PROJECT`, `JIRA_USER`, and `JIRA_API_TOKEN`. The fields-file path can instead
+come from `JIRA_CREATE_FIELDS_FILE`; `JIRA_SITE_URL` sets the browser root. Explicit
+flags take precedence, including an explicitly empty value. A fields file is a
+JSON object such as `{"customfield_10042":"approved test value","priority":null}`.
+Its optional field values override create defaults; reserve the file for approved
+project configuration. `-jira-timeout` bounds each publish/readback/link stage
+(default five minutes). Interrupt and SIGTERM cancellation stop remote work and
+allow available artifacts and deferred cleanup to finish.
+
+`-publish-summary-out` sets the result sidecar. For a requested destination, its
+default is `RUN_OUT.publication.json`, otherwise `OUT.publication.json` for
+non-Obsidian output, otherwise `VAULT/publication.json`, or `publication.json`
+when no output location exists. The summary retains the legacy Atlassian counters
+and adds a `publication.stages` result for all requested destinations, including
+readback and evidence-link stages. Run wrappers have an optional `publication`
+field with outcomes from this invocation; imported outcomes are not replayed.
+ZIPs include the saved sidecar and available generated evidence. Late ZIP/save
+failures are added to the separate run/summary after archive work. Standalone
+`pull` writes its results to `OUT.publication.json` and gives both requested
+sources a chance to finish before returning a required failure.
+
+Counts describe acknowledged work, not an exact count of committed remote
+mutations. A canceled or unanswered write may already have committed. Wiki phase
+metrics contain request counts, retries and elapsed time without paths or bodies.
+Required configuration/prerequisite failures are failed stages even with no
+item counters; dry runs and stages with no applicable references are explicit
+skips. Artifact-save failures do not prevent attempts to save other outputs.
+
+Local acceptance includes the corrected portable Docker entrypoint contract
+(`CONTAINER_JIRA=1 go test -tags container -count=1 -timeout10m ./internal/e2e/jiracontainer`),
+CLI two-destination success/failure cases, required fields, failed lookups,
+readback permissions, evidence-link rejection, 429, exhausted retries, ambiguous
+creates, cancellation, zero-counter wiki discovery failure, artifact retention,
+late ZIP failure, metadata readiness and non-replayed imported outcomes. This
+does not replace the following tenant procedure.
+
 1. Obtain approval for one disposable project and test account. Record its Cloud
    site URL, cloud ID, token type/scopes, project key, issue type ID, required
    fields, parent/component constraints and assignee account ID. Keep credentials

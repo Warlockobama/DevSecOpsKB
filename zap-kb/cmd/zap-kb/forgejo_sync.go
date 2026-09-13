@@ -12,6 +12,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
@@ -29,6 +30,8 @@ const defaultForgejoRedact = "auth,cookies,headers,secrets"
 // connection + filtering knobs plus the vault/persistence context shared with
 // the rest of the pipeline.
 type forgejoPublishOptions struct {
+	Context           context.Context
+	Results           *publication.Result
 	BaseURL           string
 	Token             string
 	Owner             string
@@ -136,13 +139,25 @@ func redactedCopy(ent entities.EntitiesFile, ro entities.RedactOptions) (entitie
 // copy of the entities by default; the KB-side entities file keeps the
 // unredacted data.
 //
-// Returns the number of publish failures (issue create errors + wiki errors).
+// Returns the number of publication/readback/persistence failures. Results,
+// when supplied, receives the shared per-stage outcome and wiki metrics.
 // Callers should turn a non-zero count into a non-zero process exit so CI and
 // the CronJob report partial failure instead of silently succeeding.
 func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) int {
 	failures := 0
+	result := opts.Results
+	if result == nil {
+		result = &publication.Result{}
+	}
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	record := func(stage string, success, skipped, failed int, err error, dry bool) {
+		recordPublication(result, "forgejo", stage, success, skipped, failed, err, dry)
+	}
 	if err := validateForgejoRedact(opts.Redact); err != nil {
-		log.Print(err)
+		record("configuration", 0, 0, 1, err, false)
 		return 1
 	}
 
@@ -157,6 +172,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			// Abort the Forgejo publish (so unredacted data is never pushed) but
 			// return rather than killing the whole multi-sink pipeline.
 			log.Printf("error: forgejo redaction failed — skipping Forgejo publish: %v", synccore.SafeError(err))
+			record("prerequisite", 0, 0, 1, fmt.Errorf("required publication preparation failed"), false)
 			return failures + 1
 		}
 		pubEnt = cp
@@ -174,7 +190,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			wikiURLBase = fmt.Sprintf("%s/%s/%s/wiki", strings.TrimRight(opts.BaseURL, "/"), opts.Owner, opts.Repo)
 		}
 
-		exCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		exCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		sum, err := forgejo.Export(exCtx, pubEnt, forgejo.Options{
 			BaseURL:           opts.BaseURL,
@@ -189,13 +205,11 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			Concurrency:       opts.Concurrency,
 			WikiURLBase:       wikiURLBase,
 		})
+		record("issues", sum.Created+sum.Reopened+sum.BodiesUpdated, sum.Skipped, sum.Errors, err, opts.DryRun)
 		if err != nil {
-			// A wholesale export failure (auth/connectivity) would fail the pull
-			// and wiki steps the same way; return early with a failure so CI/cron
-			// sees a non-zero exit, without aborting other sinks via log.Fatalf.
-			log.Printf("error: forgejo export: %v", synccore.SafeError(err))
-			return failures + 1
+			failures++
 		}
+
 		fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
 			sum.Created, sum.Reopened, sum.BodiesUpdated, sum.Skipped, sum.Errors, sum.DuplicatesClosed)
 		failures += sum.Errors
@@ -213,7 +227,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		// Pull issue state back. By default this is read-only (Forgejo is the
 		// workflow source of truth); -forgejo-sync-kb-status mutates KB status.
 		if !opts.DryRun && hasFindingTicketRefs(*ent) {
-			pullCtx, pcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			pullCtx, pcancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer pcancel()
 			pres, perr := forgejo.PullStatus(pullCtx, *ent, forgejo.PullOptions{
 				BaseURL:  opts.BaseURL,
@@ -222,6 +236,11 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				Repo:     opts.Repo,
 				ReadOnly: !opts.SyncKBStatus,
 			})
+			record("pull", pres.Result.Updated+pres.Result.Unchanged+pres.Result.Unmapped, 0, pres.Result.Errors+pres.Result.NotFound, perr, false)
+			if perr != nil {
+				failures++
+			}
+			failures += pres.Result.Errors + pres.Result.NotFound
 			if perr != nil {
 				log.Printf("warning: forgejo status pull failed: %v", synccore.SafeError(perr))
 			} else if opts.SyncKBStatus {
@@ -234,6 +253,8 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			}
 		}
 
+		entities.RedactEntities(ent, opts.SharedRedact)
+
 		// Persist ticket refs / status back to the entities file so the next run
 		// short-circuits dedup. Reuses the shared persistence helper.
 		if !opts.DryRun && (addedTicketKeys > 0 || (opts.SyncKBStatus && hasFindingTicketRefs(*ent))) {
@@ -245,11 +266,15 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				RunInputArtifact: opts.RunInArtifact,
 			}, *ent)
 			if werr != nil {
+				record("state", 0, 0, 0, werr, false)
+				failures++
 				log.Printf("warning: could not save Forgejo state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {
 				fmt.Printf("Forgejo: wrote current ticket/state data to %s\n", savePath)
 			}
 		}
+		recordUnperformed(result, "forgejo", "pull", !opts.DryRun && (err != nil || sum.Errors > 0))
+
 	}
 
 	// Optional wiki publish (Confluence analog). The wiki is always rendered
@@ -261,6 +286,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		if wikiVault == "" {
 			log.Printf("warning: -forgejo-wiki requires a vault path (-obsidian-dir); skipping wiki publish")
 			failures++
+			record("wiki", 0, 0, 1, fmt.Errorf("wiki requires an output vault path"), false)
 			return failures
 		}
 
@@ -289,16 +315,18 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			tmp, terr := os.MkdirTemp("", "forgejo-wiki-vault-")
 			if terr != nil {
 				log.Printf("warning: could not create redacted wiki vault dir: %v", synccore.SafeError(terr))
+				record("prerequisite", 0, 0, 1, fmt.Errorf("required publication preparation failed"), false)
 				return failures + 1
 			}
 			defer os.RemoveAll(tmp)
 			if err := writeVaultSnapshot(tmp, pubEnt, vaultOpts); err != nil {
 				log.Printf("warning: could not write redacted vault for forgejo wiki: %v", synccore.SafeError(err))
+				record("prerequisite", 0, 0, 1, fmt.Errorf("required publication preparation failed"), false)
 				return failures + 1
 			}
 			wikiVault = tmp
 		}
-		wikiCtx, wcancel := wikiPublishContext(context.Background(), opts.WikiTimeout)
+		wikiCtx, wcancel := wikiPublishContext(ctx, opts.WikiTimeout)
 		defer wcancel()
 		wsum, werr := forgejo.ExportWiki(wikiCtx, wikiVault, forgejo.WikiOptions{
 			BaseURL:     opts.BaseURL,
@@ -309,6 +337,15 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			Prune:       opts.WikiPrune,
 			Timeout:     opts.WikiRequestTO,
 		})
+		record("wiki", wsum.Created+wsum.Updated+wsum.Pruned+wsum.LinkFixes, wsum.Skipped, wsum.Errors, werr, false)
+		if len(result.Stages) > 0 {
+			idx := len(result.Stages) - 1
+			result.Stages[idx].DurationMS = wsum.DurationMS
+			result.Stages[idx].Requests = int64(wsum.Requests)
+			for _, phase := range wsum.Phases {
+				result.Stages[idx].Phases = append(result.Stages[idx].Phases, publication.PhaseMetric{Phase: phase.Phase, DurationMS: phase.DurationMS, Requests: phase.Requests, Retries: phase.Retries})
+			}
+		}
 		if werr != nil {
 			log.Printf("error: forgejo wiki export failed: %v", synccore.SafeError(werr))
 			failures++
@@ -317,6 +354,9 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				wsum.Created, wsum.Updated, wsum.Skipped, wsum.Pruned, wsum.LinkFixes, wsum.Errors)
 			failures += wsum.Errors
 		}
+	}
+	if opts.Wiki && opts.DryRun {
+		record("wiki", 0, 0, 0, nil, true)
 	}
 	return failures
 }

@@ -24,6 +24,7 @@ type jiraSyncContext struct {
 }
 
 type confluencePublishOptions struct {
+	Context           context.Context
 	Redact            entities.RedactOptions
 	BaseURL           string
 	Username          string
@@ -173,6 +174,10 @@ func writeVaultSnapshot(root string, ent entities.EntitiesFile, opts obsidian.Op
 }
 
 func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opts confluencePublishOptions) (confluence.VaultSummary, error) {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.TrimSpace(opts.BaseURL) == "" {
 		return confluence.VaultSummary{}, nil
 	}
@@ -202,7 +207,7 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		}
 	}
 	if opts.Full {
-		confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		confCtx, confCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer confCancel()
 		sum, err := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
 			Redact:            opts.Redact,
@@ -222,12 +227,12 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 			Entities:          &ent,
 		})
 		if err != nil {
-			return confluence.VaultSummary{}, fmt.Errorf("confluence vault export: %w", err)
+			return sum, fmt.Errorf("confluence vault export: %w", err)
 		}
 		fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n", sum.Created, sum.Updated, sum.Skipped, sum.Errors)
 		return sum, nil
 	}
-	confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	confCtx, confCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer confCancel()
 	if err := confluence.Export(confCtx, vault, confluence.Options{
 		Redact:       opts.Redact,

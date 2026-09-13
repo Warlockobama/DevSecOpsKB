@@ -10,6 +10,7 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
@@ -41,10 +42,11 @@ type Meta struct {
 // optionally the raw alerts. Meant to be uploaded as a build artifact and later
 // re-imported to (re)publish the KB.
 type Artifact struct {
-	Schema   string                `json:"schema"`
-	Meta     Meta                  `json:"meta"`
-	Entities entities.EntitiesFile `json:"entities"`
-	Alerts   []zapclient.Alert     `json:"alerts,omitempty"`
+	Publication *publication.Result   `json:"publication,omitempty"`
+	Schema      string                `json:"schema"`
+	Meta        Meta                  `json:"meta"`
+	Entities    entities.EntitiesFile `json:"entities"`
+	Alerts      []zapclient.Alert     `json:"alerts,omitempty"`
 }
 
 // ValidationResult describes the accepted document format and any documented
@@ -206,7 +208,16 @@ func decodeRunWrapper(top map[string]json.RawMessage) (Artifact, ValidationResul
 		return appendIssue(result, err)
 	}
 	entities.FillDerivedRequests(&ent)
-	return Artifact{Schema: schema, Meta: meta, Entities: ent, Alerts: alerts}, result, nil
+	var outcomes *publication.Result
+	if raw, ok := top["publication"]; ok && string(raw) != "null" {
+		if !isJSONObject(raw) {
+			return invalid(result, "publication", "wrong type")
+		}
+		if err := json.Unmarshal(raw, &outcomes); err != nil {
+			return invalid(result, "publication", "wrong type")
+		}
+	}
+	return Artifact{Publication: outcomes, Schema: schema, Meta: meta, Entities: ent, Alerts: alerts}, result, nil
 }
 
 func decodeBareEntities(top map[string]json.RawMessage) (Artifact, ValidationResult, error) {

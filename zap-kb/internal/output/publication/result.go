@@ -33,17 +33,26 @@ type FieldDiagnostic struct {
 }
 
 type StageResult struct {
-	Destination string       `json:"destination"`
-	Stage       string       `json:"stage"`
-	Status      Status       `json:"status"`
-	Required    bool         `json:"required"`
-	Attempted   int          `json:"attempted"`
-	Succeeded   int          `json:"succeeded"`
-	Skipped     int          `json:"skipped"`
-	Failed      int          `json:"failed"`
-	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
-	DurationMS  int64        `json:"durationMs,omitempty"`
-	Requests    int64        `json:"requests,omitempty"`
+	Destination string        `json:"destination"`
+	Stage       string        `json:"stage"`
+	Status      Status        `json:"status"`
+	Required    bool          `json:"required"`
+	Attempted   int           `json:"attempted"`
+	Succeeded   int           `json:"succeeded"`
+	Skipped     int           `json:"skipped"`
+	Failed      int           `json:"failed"`
+	Diagnostics []Diagnostic  `json:"diagnostics,omitempty"`
+	DurationMS  int64         `json:"durationMs,omitempty"`
+	Requests    int64         `json:"requests,omitempty"`
+	Phases      []PhaseMetric `json:"phases,omitempty"`
+}
+
+// PhaseMetric carries aggregate request timing only; never URLs or bodies.
+type PhaseMetric struct {
+	Phase      string `json:"phase"`
+	DurationMS int64  `json:"durationMs"`
+	Requests   int    `json:"requests"`
+	Retries    int    `json:"retries"`
 }
 
 type Result struct {

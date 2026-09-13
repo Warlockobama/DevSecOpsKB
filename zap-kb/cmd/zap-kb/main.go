@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo"
@@ -25,106 +27,114 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
-func main() {
+func main() { os.Exit(executeCLI(runMain)) }
+
+func runMain() {
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	var (
-		zapURL              string
-		apiKey              string
-		baseURL             string
-		count               int
-		out                 string
-		merge               bool
-		format              string
-		source              string
-		vault               string
-		infile              string
-		entitiesIn          string
-		plugins             string
-		allPlugins          bool
-		genAt               string
-		includeTraffic      bool
-		trafficMax          int
-		trafficMaxPerIssue  int
-		trafficTotalMax     int
-		scanLabel           string
-		siteLabel           string
-		trafficScope        string
-		zapBase             string
-		trafficMinRisk      string
-		includeDetect       bool
-		includeMITRE        bool
-		mitreCWECache       string
-		mitreCAPECCache     string
-		mitreATTACKCache    string
-		includeCVSS         bool
-		detectDetails       string
-		initMode            bool
-		runOut              string
-		runIn               string
-		zipOut              string
-		redactOpts          string
-		runAlerts           string
-		wizard              bool
-		pruneScanLabel      string
-		pruneSiteLabel      string
-		pruneVault          string
-		pruneDryRun         bool
-		reportOut           string
-		reportSince         string
-		reportUntil         string
-		reportLookback      string
-		reportTitle         string
-		reportScanLabel     string
-		confURL             string
-		confUser            string
-		confToken           string
-		confSpace           string
-		confDeployment      string
-		confParent          string
-		confTitlePrefix     string
-		confDryRun          bool
-		confFull            bool
-		confConcurrency     int
-		jiraURL             string
-		jiraUser            string
-		jiraToken           string
-		jiraProject         string
-		jiraDeployment      string
-		jiraServerID        string
-		jiraServerName      string
-		jiraUserMap         string
-		jiraIssueType       string
-		jiraComponent       string
-		jiraLabels          string
-		jiraMinRisk         string
-		jiraOptInTag        string
-		jiraDryRun          bool
-		jiraConcurrency     int
-		jiraDetectionEpic   bool
-		jiraEpicIssueType   string
-		jiraEpicComponent   string
-		jiraSyncKBStatus    bool
-		forgejoURL          string
-		forgejoToken        string
-		forgejoOwner        string
-		forgejoRepo         string
-		forgejoMinRisk      string
-		forgejoGroupByDef   bool
-		forgejoOptInTag     string
-		forgejoLabels       string
-		forgejoConcurrency  int
-		forgejoDryRun       bool
-		forgejoSyncKBStatus bool
-		forgejoIssues       bool
-		forgejoWiki         bool
-		forgejoWikiPrune    bool
-		forgejoWikiTimeout  time.Duration
-		forgejoWikiHTTPTO   time.Duration
-		forgejoRedact       string
-		allowAgentPublish   bool
-		allowCustomPublish  bool
-		zapAlertsOnly       bool
-		publishSummaryOut   string
-		showVersion         bool
+		zapURL               string
+		apiKey               string
+		baseURL              string
+		count                int
+		out                  string
+		merge                bool
+		format               string
+		source               string
+		vault                string
+		infile               string
+		entitiesIn           string
+		plugins              string
+		allPlugins           bool
+		genAt                string
+		includeTraffic       bool
+		trafficMax           int
+		trafficMaxPerIssue   int
+		trafficTotalMax      int
+		scanLabel            string
+		siteLabel            string
+		trafficScope         string
+		zapBase              string
+		trafficMinRisk       string
+		includeDetect        bool
+		includeMITRE         bool
+		mitreCWECache        string
+		mitreCAPECCache      string
+		mitreATTACKCache     string
+		includeCVSS          bool
+		detectDetails        string
+		initMode             bool
+		runOut               string
+		runIn                string
+		zipOut               string
+		redactOpts           string
+		runAlerts            string
+		wizard               bool
+		pruneScanLabel       string
+		pruneSiteLabel       string
+		pruneVault           string
+		pruneDryRun          bool
+		reportOut            string
+		reportSince          string
+		reportUntil          string
+		reportLookback       string
+		reportTitle          string
+		reportScanLabel      string
+		confURL              string
+		confUser             string
+		confToken            string
+		confSpace            string
+		confDeployment       string
+		confParent           string
+		confTitlePrefix      string
+		confDryRun           bool
+		confFull             bool
+		confConcurrency      int
+		jiraURL              string
+		jiraUser             string
+		jiraToken            string
+		jiraProject          string
+		jiraDeployment       string
+		jiraServerID         string
+		jiraServerName       string
+		jiraUserMap          string
+		jiraIssueType        string
+		jiraComponent        string
+		jiraLabels           string
+		jiraMinRisk          string
+		jiraOptInTag         string
+		jiraDryRun           bool
+		jiraConcurrency      int
+		jiraDetectionEpic    bool
+		jiraEpicIssueType    string
+		jiraEpicComponent    string
+		jiraSyncKBStatus     bool
+		forgejoURL           string
+		forgejoToken         string
+		forgejoOwner         string
+		forgejoRepo          string
+		forgejoMinRisk       string
+		forgejoGroupByDef    bool
+		forgejoOptInTag      string
+		forgejoLabels        string
+		forgejoConcurrency   int
+		forgejoDryRun        bool
+		forgejoSyncKBStatus  bool
+		forgejoIssues        bool
+		forgejoWiki          bool
+		forgejoWikiPrune     bool
+		forgejoWikiTimeout   time.Duration
+		forgejoWikiHTTPTO    time.Duration
+		forgejoRedact        string
+		allowAgentPublish    bool
+		allowCustomPublish   bool
+		zapAlertsOnly        bool
+		publishSummaryOut    string
+		jiraSiteURL          string
+		jiraCreateFieldsFile string
+		jiraTimeout          time.Duration
+		showVersion          bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
 	flag.BoolVar(&showVersion, "version", false, "Print build version, source revision, and build time, then exit")
@@ -224,6 +234,9 @@ func main() {
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
+	flag.DurationVar(&jiraTimeout, "jira-timeout", 5*time.Minute, "Deadline for each Jira publish, readback or evidence-link stage")
+	flag.StringVar(&jiraSiteURL, "jira-site-url", "", "Human-facing Jira site URL (env: JIRA_SITE_URL); required for browser links when Jira API uses the scoped-token gateway")
+	flag.StringVar(&jiraCreateFieldsFile, "jira-create-fields-file", "", "JSON file containing optional/custom Jira create fields (env: JIRA_CREATE_FIELDS_FILE)")
 	flag.StringVar(&publishSummaryOut, "publish-summary-out", "", "Write a redacted Atlassian publish summary JSON to this path.")
 	// Subcommands own their flag sets, so dispatch before parsing global flags.
 	if handler, args, ok := lookupSubcommand(os.Args[1:]); ok {
@@ -231,20 +244,25 @@ func main() {
 		return
 	}
 
-	flag.Parse()
+	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			exitCLI(0)
+		}
+		exitCLI(2)
+	}
 	if showVersion {
 		fmt.Println(buildinfo.String())
 		return
 	}
 	outputPolicy, policyErr := entities.ParseRedactOptions(redactOpts)
 	if policyErr != nil {
-		log.Fatal(policyErr)
+		fatal(policyErr)
 	}
 	if err := validateForgejoRedact(forgejoRedact); err != nil {
-		log.Fatal(err)
+		fatal(err)
 	}
 	if runAlerts != "keep" && runAlerts != "omit" {
-		log.Fatal("invalid -run-alerts; use keep or omit")
+		fatal("invalid -run-alerts; use keep or omit")
 	}
 	supplied := suppliedFlags(flag.CommandLine)
 
@@ -272,7 +290,7 @@ func main() {
 		FlagSet:              supplied,
 	}, os.Getenv)
 	if cfgErr != nil {
-		log.Fatalf("configuration: %v", cfgErr)
+		fatalf("configuration: %v", cfgErr)
 	}
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
@@ -285,6 +303,13 @@ func main() {
 	jiraToken = atlassianCfg.JiraToken
 	jiraDeployment = atlassianCfg.JiraDeployment
 	publishSummary := newAtlassianPublishSummary(atlassianCfg)
+	jiraSiteURL, _ = resolveStringFlagEnvDefault(jiraSiteURL, supplied["jira-site-url"], "JIRA_SITE_URL", "", os.Getenv)
+	if err := validateOptionalHTTPURL("Jira site URL", jiraSiteURL); err != nil {
+		fatalf("configuration: %v", err)
+	}
+	jiraBrowserURL := jira.BrowserBase(jiraURL, jiraSiteURL)
+	jiraCreateFieldsFile, _ = resolveStringFlagEnvDefault(jiraCreateFieldsFile, supplied["jira-create-fields-file"], "JIRA_CREATE_FIELDS_FILE", "", os.Getenv)
+	jiraCreateFields, jiraFieldsErr := loadJiraCreateFields(jiraCreateFieldsFile)
 
 	// Load operator-tunable triage policy once at startup. This drives the
 	// auto-reopen gate, auto-suppression cadence, and rule-tune-scan tagging
@@ -302,7 +327,7 @@ func main() {
 	if perr != nil {
 		// Broken YAML should surface loudly; silently falling back to defaults
 		// hides policy drift from operators who think their overrides are live.
-		log.Fatalf("triage policy: %v", synccore.SafeError(perr))
+		fatalf("triage policy: %v", synccore.SafeError(perr))
 	}
 	if policySrc != "" {
 		fmt.Fprintf(os.Stderr, "[info] triage policy loaded from %s\n", policySrc)
@@ -320,7 +345,7 @@ func main() {
 		// perform prune
 		del, listed, perr := obsidian.PruneByScan(vdir, pruneScanLabel, pruneSiteLabel, pruneDryRun)
 		if perr != nil {
-			log.Fatalf("prune: %v", synccore.SafeError(perr))
+			fatalf("prune: %v", synccore.SafeError(perr))
 		}
 		if pruneDryRun {
 			fmt.Printf("Prune dry-run: %d files would be removed.\n", del)
@@ -341,7 +366,7 @@ func main() {
 		ef.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		ef.SourceTool = source
 		if err := obsidian.WriteVault(vdir, ef, obsidian.Options{ScanLabel: "", SiteLabel: "", ZapBaseURL: strings.TrimSpace(zapBase), TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
-			log.Fatalf("refresh index: %v", synccore.SafeError(err))
+			fatalf("refresh index: %v", synccore.SafeError(err))
 		}
 		fmt.Println("Refreshed INDEX.md and DASHBOARD.md")
 		return
@@ -375,7 +400,7 @@ func main() {
 			SourceTool:      &source,
 		}
 		if err := runWizard(wiz); err != nil {
-			log.Fatalf("wizard: %v", synccore.SafeError(err))
+			fatalf("wizard: %v", synccore.SafeError(err))
 		}
 	}
 
@@ -397,11 +422,12 @@ func main() {
 	if strings.TrimSpace(runIn) != "" {
 		a, validation, rerr := runartifact.ReadValidated(runIn)
 		if rerr != nil {
-			log.Fatalf("read -run-in: %v", rerr)
+			fatalf("read -run-in: %v", rerr)
 		}
 		reportInputNormalizations("-run-in", validation)
 		if validation.Format == runartifact.FormatRunWrapper {
 			runInArtifact = a
+			runInArtifact.Publication = nil
 			runInIsArtifact = true
 		}
 		entIn = a.Entities
@@ -419,7 +445,7 @@ func main() {
 			zapBase = a.Meta.ZapBaseURL
 		}
 	}
-	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	fetchCtx, fetchCancel := context.WithTimeout(runCtx, 2*time.Minute)
 	defer fetchCancel()
 
 	// Decide if we should fetch alerts from ZAP API
@@ -430,18 +456,18 @@ func main() {
 		// Read alerts from file and skip API calls
 		f, err := os.Open(infile)
 		if err != nil {
-			log.Fatal("open -in file: operation failed (private details omitted)")
+			fatal("open -in file: operation failed (private details omitted)")
 		}
 		defer f.Close()
 		dec := json.NewDecoder(f)
 		if err := dec.Decode(&alerts); err != nil {
-			log.Fatal("decode -in file: operation failed (private details omitted)")
+			fatal("decode -in file: operation failed (private details omitted)")
 		}
 	} else if fetchAllowed { // fetch only when not enrich-only
 		// Fetch from ZAP API
 		client, err = zapclient.NewClient(zapURL, apiKey)
 		if err != nil {
-			log.Fatal("new client: operation failed (private details omitted)")
+			fatal("new client: operation failed (private details omitted)")
 		}
 		// Default = all alerts; -count N restricts to first N
 		if count > 0 {
@@ -454,7 +480,7 @@ func main() {
 			})
 		}
 		if err != nil {
-			log.Fatal("get alerts: operation failed (private details omitted)")
+			fatal("get alerts: operation failed (private details omitted)")
 		}
 	} else {
 		// Helpful note for offline init/enrich-only runs
@@ -468,7 +494,7 @@ func main() {
 		var validation runartifact.ValidationResult
 		entIn, validation, err = runartifact.ReadEntities(entitiesIn)
 		if err != nil {
-			log.Fatalf("read -entities-in: %v", err)
+			fatalf("read -entities-in: %v", err)
 		}
 		reportInputNormalizations("-entities-in", validation)
 	}
@@ -599,12 +625,12 @@ func main() {
 		var enrichCtx context.Context
 		var enrichCancel context.CancelFunc
 		if includeTraffic || includeDetect {
-			enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+			enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
 			defer enrichCancel()
 		}
 		if includeTraffic {
 			if enrichCtx == nil {
-				enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+				enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
 				defer enrichCancel()
 			}
 			if trafficScope == "all" {
@@ -616,7 +642,7 @@ func main() {
 		}
 		if includeDetect {
 			if enrichCtx == nil {
-				enrichCtx, enrichCancel = context.WithTimeout(context.Background(), 10*time.Minute)
+				enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
 				defer enrichCancel()
 			}
 			entities.EnrichDetections(enrichCtx, &ent)
@@ -639,7 +665,7 @@ func main() {
 				ATTACK: mitreATTACKCache,
 			})
 			if err != nil {
-				log.Fatal("load MITRE caches: operation failed (private details omitted)")
+				fatal("load MITRE caches: operation failed (private details omitted)")
 			}
 			entities.EnrichMITREWithCatalogs(ent.Definitions, mitreCatalogs)
 		}
@@ -661,7 +687,7 @@ func main() {
 		entities.NormalizeAnalystStatuses(&ent)
 		entities.EnsureCollections(&ent)
 		if validation := entities.Validate(ent); !validation.OK() {
-			log.Fatalf("validate entities: %v", validation.Err())
+			fatalf("validate entities: %v", validation.Err())
 		}
 
 		// Print a concise init/enrich summary when not fetching alerts
@@ -689,7 +715,7 @@ func main() {
 		var copyErr error
 		ent, copyErr = redactedCopy(ent, outputPolicy)
 		if copyErr != nil {
-			log.Fatal("cannot create sanitized output view")
+			fatal("cannot create sanitized output view")
 		}
 	}
 	alerts = append([]zapclient.Alert(nil), alerts...)
@@ -698,45 +724,42 @@ func main() {
 	zapBase = entities.RedactText(zapBase, outputPolicy)
 	baseURL = entities.RedactText(baseURL, outputPolicy)
 	detectDetails = entities.RedactText(detectDetails, outputPolicy)
-	// write
-	switch format {
-	case "entities":
-		if err := jsondump.WritePretty(out, ent); err != nil {
-			log.Fatalf("write json: %v", synccore.SafeError(err))
+	if strings.TrimSpace(jiraURL) != "" || strings.TrimSpace(confURL) != "" || strings.TrimSpace(forgejoURL) != "" || strings.TrimSpace(publishSummaryOut) != "" {
+		publishSummaryOut = publicationSummaryPath(publishSummaryOut, runOut, out, format, vault)
+	}
+	results := &publishSummary.Publication
+	summarySaved, runSaved := false, false
+	var savedRunArtifact *runartifact.Artifact
+	outputErr := func() error {
+		switch format {
+		case "entities":
+			return jsondump.WritePretty(out, ent)
+		case "flat":
+			return jsondump.WritePretty(out, alerts)
+		case "both":
+			if err := jsondump.WritePretty(out, alerts); err != nil {
+				return err
+			}
+			return jsondump.WritePretty(out+".entities.json", ent)
+		case "obsidian":
+			return writeVaultSnapshot(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, JiraBaseURL: jiraBrowserURL, Redact: outputPolicy})
+		default:
+			return fmt.Errorf("unknown output format")
 		}
-	case "flat":
-		if err := jsondump.WritePretty(out, alerts); err != nil {
-			log.Fatalf("write json: %v", synccore.SafeError(err))
-		}
-	case "both":
-		if err := jsondump.WritePretty(out, alerts); err != nil {
-			log.Fatalf("write json flat: %v", synccore.SafeError(err))
-		}
-		if err := jsondump.WritePretty(out+".entities.json", ent); err != nil {
-			log.Fatalf("write json entities: %v", synccore.SafeError(err))
-		}
-	case "obsidian":
-		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
-			ScanLabel:   scanLabel,
-			SiteLabel:   siteLabel,
-			ZapBaseURL:  zapBase,
-			JiraBaseURL: jiraURL,
-			Redact:      outputPolicy,
-		}); err != nil {
-			log.Fatalf("write obsidian: %v", synccore.SafeError(err))
-		}
-	default:
-		log.Fatal("unknown -format (use entities|flat|both|obsidian)")
+	}()
+	if outputErr != nil {
+		recordPublication(results, "local", "output", 0, 0, 0, outputErr, false)
 	}
 
 	if err := validatePublishSource(ent, strings.TrimSpace(confURL) != "", strings.TrimSpace(jiraURL) != "", allowAgentPublish, allowCustomPublish); err != nil {
-		log.Fatalf("publish source: %v", synccore.SafeError(err))
+		fatalf("publish source: %v", synccore.SafeError(err))
 	}
 
 	// Optional Confluence export - when Jira is also enabled, publish after Jira
 	// keys are merged so finding pages and evidence pages stay in sync.
 	if strings.TrimSpace(confURL) != "" && strings.TrimSpace(jiraURL) == "" {
 		confSum, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
+			Context:          runCtx,
 			BaseURL:          confURL,
 			Username:         confUser,
 			APIToken:         confToken,
@@ -750,16 +773,14 @@ func main() {
 			Redact:           outputPolicy,
 			SiteLabel:        siteLabel,
 			ZapBaseURL:       zapBase,
-			JiraBaseURL:      jiraURL,
+			JiraBaseURL:      jiraBrowserURL,
 			JiraStatusByKey:  nil,
 			JiraStatusSynced: "",
 			JiraServerID:     jiraServerID,
 			JiraServerName:   jiraServerName,
 			JiraProjectKey:   jiraProject,
 		})
-		if err != nil {
-			log.Fatalf("%v", synccore.SafeError(err))
-		}
+		recordPublication(results, "confluence", "publish", confSum.Created+confSum.Updated, confSum.Skipped, confSum.Errors, err, confDryRun)
 		publishSummary.Confluence = &publishConfluenceSummary{
 			Created: confSum.Created,
 			Updated: confSum.Updated,
@@ -778,37 +799,41 @@ func main() {
 				}
 			}
 		}
-		jiraCtx, jiraCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		jiraCtx, jiraCancel := context.WithTimeout(runCtx, jiraTimeout)
 		defer jiraCancel()
-		sum, err := jira.Export(jiraCtx, ent, jira.Options{
-			BaseURL:       jiraURL,
-			Username:      jiraUser,
-			APIToken:      jiraToken,
-			Deployment:    jiraDeployment,
-			ProjectKey:    jiraProject,
-			IssueType:     jiraIssueType,
-			Component:     jiraComponent,
-			ExtraLabels:   extraLabels,
-			MinRisk:       jiraMinRisk,
-			OptInTag:      jiraOptInTag,
-			DryRun:        jiraDryRun,
-			Concurrency:   jiraConcurrency,
-			DetectionEpic: jiraDetectionEpic,
-			EpicIssueType: jiraEpicIssueType,
-			// Default Epics to the same component as findings unless an explicit
-			// override is provided. One -jira-component flag handles both the
-			// common case of "everything goes to one component."
-			EpicComponent: func() string {
-				if strings.TrimSpace(jiraEpicComponent) != "" {
-					return jiraEpicComponent
-				}
-				return jiraComponent
-			}(),
-			UsernameMap: parseJiraUserMap(jiraUserMap),
-		})
-		if err != nil {
-			log.Fatalf("jira export: %v", synccore.SafeError(err))
-		}
+		sum, err := func() (jira.Summary, error) {
+			if jiraFieldsErr != nil {
+				return jira.Summary{}, jiraFieldsErr
+			}
+			return jira.Export(jiraCtx, ent, jira.Options{
+				CreateFields:  jiraCreateFields,
+				BaseURL:       jiraURL,
+				Username:      jiraUser,
+				APIToken:      jiraToken,
+				Deployment:    jiraDeployment,
+				ProjectKey:    jiraProject,
+				IssueType:     jiraIssueType,
+				Component:     jiraComponent,
+				ExtraLabels:   extraLabels,
+				MinRisk:       jiraMinRisk,
+				OptInTag:      jiraOptInTag,
+				DryRun:        jiraDryRun,
+				Concurrency:   jiraConcurrency,
+				DetectionEpic: jiraDetectionEpic,
+				EpicIssueType: jiraEpicIssueType,
+				// Default Epics to the same component as findings unless an explicit
+				// override is provided. One -jira-component flag handles both the
+				// common case of "everything goes to one component."
+				EpicComponent: func() string {
+					if strings.TrimSpace(jiraEpicComponent) != "" {
+						return jiraEpicComponent
+					}
+					return jiraComponent
+				}(),
+				UsernameMap: parseJiraUserMap(jiraUserMap),
+			})
+		}()
+		recordPublication(results, "jira", "publish", sum.Created+sum.Relinked, sum.Skipped, sum.Errors, err, jiraDryRun, sum.Diagnostics...)
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
 		publishSummary.Jira = &publishJiraSummary{
 			Created:  sum.Created,
@@ -832,7 +857,7 @@ func main() {
 			}
 		}
 		if !jiraDryRun && hasFindingTicketRefs(ent) {
-			pullCtx, pullCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			pullCtx, pullCancel := context.WithTimeout(runCtx, jiraTimeout)
 			defer pullCancel()
 			pullRes, pullErr := jira.PullStatus(pullCtx, ent, jira.PullOptions{
 				BaseURL:    jiraURL,
@@ -841,6 +866,7 @@ func main() {
 				Deployment: jiraDeployment,
 				ReadOnly:   !jiraSyncKBStatus,
 			})
+			recordPublication(results, "jira", "pull", pullRes.Result.Updated+pullRes.Result.Unchanged+pullRes.Result.Unmapped, 0, pullRes.Result.Errors+pullRes.Result.NotFound, pullErr, false, pullRes.Diagnostics...)
 			if pullErr != nil {
 				log.Printf("warning: jira status pull failed: %v", synccore.SafeError(pullErr))
 			} else {
@@ -849,6 +875,8 @@ func main() {
 				}
 				jiraStatusByKey = pullRes.RawStatuses
 				jiraAssigneeByKey = pullRes.RawAssignees
+				entities.RedactOutput(&jiraStatusByKey, outputPolicy)
+				entities.RedactOutput(&jiraAssigneeByKey, outputPolicy)
 				jiraStatusSynced = pullRes.SyncedAt
 				if jiraSyncKBStatus {
 					fmt.Printf("Jira pull: updated=%d unchanged=%d notfound=%d unmapped=%d errors=%d\n",
@@ -873,6 +901,7 @@ func main() {
 				RunInputArtifact: artPtr,
 			}, ent)
 			if werr != nil {
+				recordPublication(results, "local", "jira_state", 0, 0, 0, werr, false)
 				log.Printf("warning: could not save Jira state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {
 				fmt.Printf("Jira: wrote current ticket/state data to %s\n", savePath)
@@ -884,17 +913,18 @@ func main() {
 				Redact:            outputPolicy,
 				SiteLabel:         siteLabel,
 				ZapBaseURL:        zapBase,
-				JiraBaseURL:       jiraURL,
+				JiraBaseURL:       jiraBrowserURL,
 				JiraStatusByKey:   jiraStatusByKey,
 				JiraAssigneeByKey: jiraAssigneeByKey,
 				JiraStatusSynced:  jiraStatusSynced,
 			}); err != nil {
-				log.Fatalf("rewrite obsidian after jira: %v", synccore.SafeError(err))
+				recordPublication(results, "local", "jira_vault", 0, 0, 0, err, false)
 			}
 		}
 
 		if strings.TrimSpace(confURL) != "" {
 			confSum, err := publishConfluenceVault(vault, format, ent, confluencePublishOptions{
+				Context:           runCtx,
 				BaseURL:           confURL,
 				Username:          confUser,
 				APIToken:          confToken,
@@ -908,7 +938,7 @@ func main() {
 				Redact:            outputPolicy,
 				SiteLabel:         siteLabel,
 				ZapBaseURL:        zapBase,
-				JiraBaseURL:       jiraURL,
+				JiraBaseURL:       jiraBrowserURL,
 				JiraStatusByKey:   jiraStatusByKey,
 				JiraAssigneeByKey: jiraAssigneeByKey,
 				JiraStatusSynced:  jiraStatusSynced,
@@ -916,9 +946,7 @@ func main() {
 				JiraServerName:    jiraServerName,
 				JiraProjectKey:    jiraProject,
 			})
-			if err != nil {
-				log.Fatalf("%v", synccore.SafeError(err))
-			}
+			recordPublication(results, "confluence", "publish", confSum.Created+confSum.Updated, confSum.Skipped, confSum.Errors, err, confDryRun)
 			publishSummary.Confluence = &publishConfluenceSummary{
 				Created: confSum.Created,
 				Updated: confSum.Updated,
@@ -928,7 +956,7 @@ func main() {
 			if !jiraDryRun && len(confSum.FindingLinks) > 0 {
 				ticketRefs := collectFindingTicketRefs(ent)
 				if len(ticketRefs) > 0 {
-					linkCtx, linkCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					linkCtx, linkCancel := context.WithTimeout(runCtx, jiraTimeout)
 					defer linkCancel()
 					linkSum, lerr := jira.SyncFindingEvidenceLinkRefs(linkCtx, ticketRefs, confSum.FindingLinks, jira.Options{
 						BaseURL:     jiraURL,
@@ -937,6 +965,7 @@ func main() {
 						Deployment:  jiraDeployment,
 						Concurrency: jiraConcurrency,
 					})
+					recordPublication(results, "jira", "evidence_links", linkSum.Added, linkSum.Skipped, linkSum.Errors, lerr, false, linkSum.Diagnostics...)
 					if lerr != nil {
 						log.Printf("warning: jira evidence link sync failed: %v", synccore.SafeError(lerr))
 					} else {
@@ -950,6 +979,18 @@ func main() {
 				}
 			}
 		}
+		recordUnperformed(results, "jira", "pull", !jiraDryRun && (sum.Errors > 0 || err != nil))
+		if confFull && strings.TrimSpace(confURL) != "" {
+			failedPrerequisite := !jiraDryRun && !confDryRun && (sum.Errors > 0 || err != nil || (publishSummary.Confluence != nil && publishSummary.Confluence.Errors > 0))
+			// A Confluence failure may have zero counters.
+			for _, stage := range results.Stages {
+				if stage.Destination == "confluence" && stage.Failed > 0 && !jiraDryRun && !confDryRun {
+					failedPrerequisite = true
+				}
+			}
+			recordUnperformed(results, "jira", "evidence_links", failedPrerequisite)
+		}
+
 	}
 
 	// Optional Forgejo/Gitea publish — open-source analog to the Atlassian
@@ -959,7 +1000,7 @@ func main() {
 	var forgejoFailures int
 	if strings.TrimSpace(forgejoURL) != "" {
 		if !forgejoIssues && !forgejoWiki {
-			log.Fatalf("-forgejo-issues=false with -forgejo-wiki unset leaves nothing to publish; enable one")
+			recordPublication(results, "forgejo", "configuration", 0, 0, 1, fmt.Errorf("no Forgejo destination enabled"), false)
 		}
 		var extraLabels []string
 		for _, l := range strings.Split(forgejoLabels, ",") {
@@ -972,6 +1013,7 @@ func main() {
 			artPtr = &runInArtifact
 		}
 		forgejoFailures = runForgejoPublish(&ent, forgejoPublishOptions{
+			Context: runCtx, Results: results,
 			BaseURL:           forgejoURL,
 			Token:             forgejoToken,
 			Owner:             forgejoOwner,
@@ -1002,33 +1044,33 @@ func main() {
 		})
 	}
 
-	// Optional report generation (vault-wide, time-bounded)
+	// Report failures do not prevent requested evidence artifacts.
 	if strings.TrimSpace(reportOut) != "" {
-		if format != "obsidian" {
-			fmt.Println("Note: -report-out requires -format=obsidian; skipping report generation.")
+		reportErr := func() error {
+			if format != "obsidian" {
+				return fmt.Errorf("report requires Obsidian format")
+			}
+			rs, ru, err := computeReportWindow(reportSince, reportUntil, reportLookback)
+			if err != nil {
+				return err
+			}
+			return obsidian.GenerateReport(vault, obsidian.ReportOptions{OutPath: reportOut, Title: reportTitle, Since: rs, Until: ru, ScanLabel: reportScanLabel})
+		}()
+		if reportErr != nil {
+			recordPublication(results, "local", "report", 0, 0, 0, reportErr, false)
 		} else {
-			rs, ru, rerr := computeReportWindow(reportSince, reportUntil, reportLookback)
-			if rerr != nil {
-				log.Fatalf("report window: %v", synccore.SafeError(rerr))
-			}
-			if err := obsidian.GenerateReport(vault, obsidian.ReportOptions{
-				OutPath:   reportOut,
-				Title:     reportTitle,
-				Since:     rs,
-				Until:     ru,
-				ScanLabel: reportScanLabel,
-			}); err != nil {
-				log.Fatalf("report: %v", synccore.SafeError(err))
-			}
 			fmt.Printf("Wrote report to %s\n", reportOut)
 		}
 	}
 
 	if strings.TrimSpace(publishSummaryOut) != "" {
+		entities.RedactOutput(&publishSummary, outputPolicy)
 		if err := writeAtlassianPublishSummary(publishSummaryOut, publishSummary); err != nil {
-			log.Fatalf("%v", synccore.SafeError(err))
+			recordPublication(results, "local", "summary", 0, 0, 0, err, false)
+		} else {
+			summarySaved = true
+			fmt.Printf("Wrote publication summary to %s\n", publishSummaryOut)
 		}
-		fmt.Printf("Wrote Atlassian publish summary to %s\n", publishSummaryOut)
 	}
 
 	// Optionally write a run artifact (entities + meta [+alerts]) for pipelines
@@ -1044,63 +1086,95 @@ func main() {
 			DetectionDetails: detectDetails,
 			IncludeTraffic:   includeTraffic,
 		}
-		art := runartifact.Artifact{Schema: "zap-kb/run/v1", Meta: meta, Entities: ent, Alerts: alerts}
+		art := runartifact.Artifact{Publication: results, Schema: "zap-kb/run/v1", Meta: meta, Entities: ent, Alerts: alerts}
 		entities.RedactOutput(&art.Meta, outputPolicy)
 		if runAlerts == "omit" {
 			art.Alerts = nil
 		}
 		if err := runartifact.Write(runOut, art); err != nil {
-			log.Fatalf("write -run-out: %v", synccore.SafeError(err))
+			recordPublication(results, "local", "run_artifact", 0, 0, 0, err, false)
+		} else {
+			runSaved = true
+			savedRunArtifact = &art
+			fmt.Printf("Wrote run artifact to %s\n", runOut)
 		}
-		fmt.Printf("Wrote run artifact to %s\n", runOut)
 	}
 
+	if summarySaved {
+		entities.RedactOutput(&publishSummary, outputPolicy)
+		if err := writeAtlassianPublishSummary(publishSummaryOut, publishSummary); err != nil {
+			summarySaved = false
+			recordPublication(results, "local", "summary", 0, 0, 0, err, false)
+		}
+	}
 	// Optionally zip outputs for easy artifacting
 	if strings.TrimSpace(zipOut) != "" {
-		var ins []string
-		if strings.TrimSpace(runOut) != "" {
-			ins = append(ins, runOut)
-		}
-		if format != "obsidian" && strings.TrimSpace(out) != "" {
-			ins = append(ins, out)
-		}
-		if format == "both" {
-			ins = append(ins, out+".entities.json")
-		}
-		if format == "obsidian" && strings.TrimSpace(vault) != "" {
-			snapshot, snapshotErr := os.MkdirTemp("", "zap-kb-archive-")
-			if snapshotErr != nil {
-				log.Fatal("cannot create archive snapshot")
+		zipErr := func() error {
+			var ins []string
+			if runSaved {
+				ins = append(ins, runOut)
 			}
-			defer os.RemoveAll(snapshot)
-			if err := writeVaultSnapshot(snapshot, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, JiraBaseURL: jiraURL, CarryForwardRoot: vault, Redact: outputPolicy}); err != nil {
-				log.Fatal("cannot render archive snapshot")
+			if outputErr == nil && format != "obsidian" && strings.TrimSpace(out) != "" {
+				ins = append(ins, out)
 			}
-			ins = append(ins, snapshot)
+			if outputErr == nil && format == "both" {
+				ins = append(ins, out+".entities.json")
+			}
+			if format == "obsidian" && strings.TrimSpace(vault) != "" {
+				snapshot, snapshotErr := os.MkdirTemp("", "zap-kb-archive-")
+				if snapshotErr != nil {
+					return fmt.Errorf("cannot create archive snapshot")
+				}
+				defer os.RemoveAll(snapshot)
+				if err := writeVaultSnapshot(snapshot, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, JiraBaseURL: jiraBrowserURL, CarryForwardRoot: vault, Redact: outputPolicy}); err != nil {
+					return fmt.Errorf("cannot render archive snapshot")
+				}
+				ins = append(ins, snapshot)
+			}
+			if summarySaved {
+				ins = append(ins, publishSummaryOut)
+			}
+			if outputErr == nil && len(ins) == 0 && format != "obsidian" && strings.TrimSpace(out) != "" {
+				ins = append(ins, out)
+			}
+			available := ins[:0]
+			for _, path := range ins {
+				if _, err := os.Stat(path); err == nil {
+					available = append(available, path)
+				}
+			}
+			return ziputil.Zip(zipOut, available...)
+		}()
+		if zipErr != nil {
+			recordPublication(results, "local", "zip", 0, 0, 0, zipErr, false)
+		} else {
+			fmt.Printf("Zipped outputs to %s\n", zipOut)
 		}
-		if strings.TrimSpace(publishSummaryOut) != "" {
-			ins = append(ins, publishSummaryOut)
-		}
-		if len(ins) == 0 && strings.TrimSpace(out) != "" {
-			ins = append(ins, out)
-		}
-		if err := ziputil.Zip(zipOut, ins...); err != nil {
-			log.Fatalf("zip: %v", synccore.SafeError(err))
-		}
-		fmt.Printf("Zipped outputs to %s\n", zipOut)
 	}
 
-	// Partial Forgejo publish failure exits non-zero so CI and the CronJob get
-	// a failure signal instead of a silent partial sync. Placed after run-out /
-	// zip so diagnostic artifacts are still produced.
-	if forgejoFailures > 0 {
-		log.Printf("forgejo publish completed with %d failure(s)", forgejoFailures)
-		os.Exit(1)
+	if runSaved && savedRunArtifact != nil {
+		savedRunArtifact.Publication = results
+		if err := runartifact.Write(runOut, *savedRunArtifact); err != nil {
+			recordPublication(results, "local", "run_finalize", 0, 0, 0, err, false)
+		}
+	}
+
+	if strings.TrimSpace(publishSummaryOut) != "" {
+		entities.RedactOutput(&publishSummary, outputPolicy)
+		if err := writeAtlassianPublishSummary(publishSummaryOut, publishSummary); err != nil && !stageRecorded(results, "local", "summary") {
+			recordPublication(results, "local", "summary", 0, 0, 0, err, false)
+		}
+	}
+
+	// Required destination or artifact failures exit only after independent work,
+	// available saves and final outcome updates have had their chance to finish.
+	if err := results.Err(); err != nil || forgejoFailures > 0 {
+		exitCLI(1)
 	}
 
 	// Exit code 2 only when no content produced at all (no alerts and no entities).
 	if (format == "flat" || format == "both") && len(alerts) == 0 && len(ent.Definitions) == 0 {
-		os.Exit(2)
+		exitCLI(2)
 	}
 }
 
@@ -1203,7 +1277,7 @@ func runMergeCommand(args []string) {
 	fs.StringVar(&outFlag, "out", "-", "Output file path; use \"-\" or omit for stdout")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "merge: %v\n", err)
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	// Collect input paths: -inputs flag (comma-separated) plus any remaining positional args.
@@ -1223,7 +1297,7 @@ func runMergeCommand(args []string) {
 	if len(paths) == 0 {
 		fmt.Fprintln(os.Stderr, "merge: -inputs is required (provide at least one file path)")
 		fs.Usage()
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	// Read and merge files left-to-right.
@@ -1232,7 +1306,7 @@ func runMergeCommand(args []string) {
 		art, err := runartifact.ReadFlexible(p)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "merge: cannot read %q: %v\n", p, err)
-			os.Exit(1)
+			exitCLI(1)
 		}
 		artifacts = append(artifacts, art.Entities)
 	}
@@ -1244,7 +1318,7 @@ func runMergeCommand(args []string) {
 	policy, policySrc, perr := config.LoadPolicy(cwd)
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "merge: triage policy: %v\n", perr)
-		os.Exit(1)
+		exitCLI(1)
 	}
 	if policySrc != "" {
 		fmt.Fprintf(os.Stderr, "merge: triage policy loaded from %s\n", policySrc)
@@ -1256,14 +1330,14 @@ func runMergeCommand(args []string) {
 	entities.EnsureCollections(&merged)
 	if validation := entities.Validate(merged); !validation.OK() {
 		fmt.Fprintf(os.Stderr, "merge: validate result: %v\n", validation.Err())
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	// Encode output.
 	enc, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "merge: encode: %v\n", err)
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	outPath := strings.TrimSpace(outFlag)
@@ -1273,7 +1347,7 @@ func runMergeCommand(args []string) {
 	} else {
 		if werr := os.WriteFile(outPath, append(enc, '\n'), 0o644); werr != nil {
 			fmt.Fprintf(os.Stderr, "merge: write %q: %v\n", outPath, werr)
-			os.Exit(1)
+			exitCLI(1)
 		}
 	}
 
@@ -1327,7 +1401,7 @@ func runPullCommand(args []string) {
 	fs.BoolVar(&jiraPullStatus, "jira-pull-status", false, "Pull Jira ticket status into analyst.Status (Jira wins)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "pull: %v\n", err)
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	atlassianCfg, cfgErr := resolveAtlassianConfigStrict(atlassianConfigInput{
@@ -1343,7 +1417,7 @@ func runPullCommand(args []string) {
 	}, os.Getenv)
 	if cfgErr != nil {
 		fmt.Fprintf(os.Stderr, "pull: configuration: %v\n", cfgErr)
-		os.Exit(1)
+		exitCLI(1)
 	}
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
@@ -1357,12 +1431,12 @@ func runPullCommand(args []string) {
 	if strings.TrimSpace(entitiesIn) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -entities-in is required")
 		fs.Usage()
-		os.Exit(1)
+		exitCLI(1)
 	}
 	if strings.TrimSpace(outPath) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -out is required")
 		fs.Usage()
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	// Require at least one pull source.
@@ -1371,22 +1445,27 @@ func runPullCommand(args []string) {
 	if !wantConf && !wantJira {
 		fmt.Fprintln(os.Stderr, "pull: specify -confluence-url/-confluence-space or -jira-url -jira-pull-status")
 		fs.Usage()
-		os.Exit(1)
+		exitCLI(1)
 	}
 	if wantConf && strings.TrimSpace(confSpace) == "" {
 		fmt.Fprintln(os.Stderr, "pull: -confluence-space is required when -confluence-url is set")
 		fs.Usage()
-		os.Exit(1)
+		exitCLI(1)
 	}
 
 	// Read existing entities file.
 	art, err := runartifact.ReadFlexible(strings.TrimSpace(entitiesIn))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pull: cannot read %q: %v\n", entitiesIn, err)
-		os.Exit(1)
+		exitCLI(1)
 	}
 	ef := art.Entities
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	summary := newAtlassianPublishSummary(atlassianCfg)
+	results := &summary.Publication
 
 	// Jira status pull (runs first so Confluence pull can layer on top).
 	if wantJira {
@@ -1396,11 +1475,10 @@ func runPullCommand(args []string) {
 			Token:      strings.TrimSpace(jiraToken),
 			Deployment: jiraDeployment,
 		})
-		if jErr != nil {
-			fmt.Fprintf(os.Stderr, "pull: jira: %v\n", jErr)
-			os.Exit(1)
+		recordPublication(results, "jira", "pull", jRes.Result.Updated+jRes.Result.Unchanged+jRes.Result.Unmapped, 0, jRes.Result.Errors+jRes.Result.NotFound, jErr, false, jRes.Diagnostics...)
+		if jErr == nil {
+			ef = jRes.Updated
 		}
-		ef = jRes.Updated
 		fmt.Printf("Jira pull: %d updated, %d unchanged, %d not found, %d unmapped, %d errors\n",
 			jRes.Result.Updated, jRes.Result.Unchanged, jRes.Result.NotFound, jRes.Result.Unmapped, jRes.Result.Errors)
 	}
@@ -1414,24 +1492,23 @@ func runPullCommand(args []string) {
 			Token:        strings.TrimSpace(confToken),
 			PullWorkflow: confPullWorkflow,
 		})
-		if cErr != nil {
-			fmt.Fprintf(os.Stderr, "pull: confluence: %v\n", cErr)
-			os.Exit(1)
+		recordPublication(results, "confluence", "pull", res.Updated+res.Unchanged, 0, res.Errors+res.NotFound, cErr, false)
+		if cErr == nil {
+			ef = updated
 		}
-		ef = updated
 		fmt.Printf("Confluence pull: %d updated, %d unchanged, %d not found, %d errors\n",
 			res.Updated, res.Unchanged, res.NotFound, res.Errors)
 	}
 
-	// Write the updated entities file.
-	enc, err := json.MarshalIndent(ef, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pull: encode: %v\n", err)
-		os.Exit(1)
+	// Persist available state and outcomes even when one requested pull failed.
+	if err := jsondump.WritePretty(strings.TrimSpace(outPath), ef); err != nil {
+		recordPublication(results, "local", "output", 0, 0, 0, err, false)
 	}
-	if werr := os.WriteFile(strings.TrimSpace(outPath), append(enc, '\n'), 0o644); werr != nil {
-		fmt.Fprintf(os.Stderr, "pull: write %q: %v\n", outPath, werr)
-		os.Exit(1)
+	if err := writeAtlassianPublishSummary(outPath+".publication.json", summary); err != nil {
+		recordPublication(results, "local", "summary", 0, 0, 0, err, false)
+	}
+	if results.Err() != nil {
+		exitCLI(1)
 	}
 	fmt.Printf("Written: %s\n", outPath)
 }

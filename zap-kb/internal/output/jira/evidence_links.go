@@ -11,13 +11,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 type EvidenceLinkSummary struct {
-	Added   int
-	Skipped int
-	Errors  int
+	Diagnostics []publication.Diagnostic
+	Added       int
+	Skipped     int
+	Errors      int
 }
 
 func SyncFindingEvidenceLinks(ctx context.Context, ticketKeys, findingLinks map[string]string, opts Options) (EvidenceLinkSummary, error) {
@@ -59,8 +61,9 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 	base := strings.TrimRight(opts.BaseURL, "/")
 
 	type candidate struct {
-		issueKey string
-		url      string
+		findingID string
+		issueKey  string
+		url       string
 	}
 	var candidates []candidate
 	for findingID, refs := range ticketRefs {
@@ -78,7 +81,7 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 				continue
 			}
 			seen[issueKey] = struct{}{}
-			candidates = append(candidates, candidate{issueKey: issueKey, url: link})
+			candidates = append(candidates, candidate{findingID: findingID, issueKey: issueKey, url: link})
 		}
 	}
 	if len(candidates) == 0 {
@@ -119,9 +122,10 @@ func SyncFindingEvidenceLinkRefs(ctx context.Context, ticketRefs map[string][]st
 	wg.Wait()
 
 	var sum EvidenceLinkSummary
-	for _, r := range results {
+	for i, r := range results {
 		if r.err != nil {
 			sum.Errors++
+			sum.Diagnostics = append(sum.Diagnostics, diagnostic("evidence_links", candidates[i].findingID, r.err))
 			continue
 		}
 		if r.added {
@@ -183,11 +187,21 @@ func addRemoteLink(ctx context.Context, client httpDoer, auth, base string, dc b
 	req.Header.Set("Authorization", auth)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := synccore.DoWithRetryRaw(client, req, 3)
+	resp, err := synccore.DoWithRetryRaw(client, req, 1)
 	if err != nil {
-		return err
+		if exists, checkErr := hasRemoteLink(ctx, client, auth, base, dc, issueKey, targetURL); checkErr == nil && exists {
+			return nil
+		}
+		return &ambiguousCreateError{cause: err}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		cause := jiraHTTPErr(resp)
+		if exists, checkErr := hasRemoteLink(ctx, client, auth, base, dc, issueKey, targetURL); checkErr == nil && exists {
+			return nil
+		}
+		return &ambiguousCreateError{cause: cause}
+	}
 	// Jira returns 201 Created on success; anything else is a real failure
 	// (401/403 auth, 404 missing issue, 5xx upstream) and must not be silently
 	// treated as a successful link creation.

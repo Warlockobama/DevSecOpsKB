@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 )
 
 type atlassianConfigInput struct {
@@ -77,14 +80,18 @@ type atlassianCredentialSources struct {
 }
 
 type atlassianCheckOutput struct {
-	Ready             bool                       `json:"ready"`
-	Missing           []string                   `json:"missing"`
-	Targets           atlassianTargets           `json:"targets"`
-	TargetSources     atlassianTargetSources     `json:"targetSources"`
-	CredentialSources atlassianCredentialSources `json:"credentialSources"`
+	ConfigurationComplete bool                       `json:"configurationComplete"`
+	Checked               []string                   `json:"checked"`
+	JiraRemote            *jira.ReadinessReport      `json:"jiraRemote,omitempty"`
+	Ready                 bool                       `json:"ready"`
+	Missing               []string                   `json:"missing"`
+	Targets               atlassianTargets           `json:"targets"`
+	TargetSources         atlassianTargetSources     `json:"targetSources"`
+	CredentialSources     atlassianCredentialSources `json:"credentialSources"`
 }
 
 type atlassianPublishSummary struct {
+	Publication       publication.Result          `json:"publication"`
 	GeneratedAt       string                      `json:"generatedAt"`
 	Targets           atlassianTargets            `json:"targets"`
 	CredentialSources atlassianCredentialSources  `json:"credentialSources"`
@@ -191,7 +198,7 @@ func resolveDeploymentStrict(flagValue string, flagSet bool, envKey, sinkURL str
 		return "", "auto:url", fmt.Errorf("invalid %s URL: expected an absolute http or https URL", strings.TrimSuffix(envKey, "_DEPLOYMENT"))
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") {
+	if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") || jira.IsCloudURL(sinkURL) {
 		return "cloud", "auto:url", nil
 	}
 	return "datacenter", "auto:url", nil
