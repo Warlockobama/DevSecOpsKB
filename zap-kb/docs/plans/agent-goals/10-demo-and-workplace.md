@@ -45,6 +45,12 @@ versions in the proposed evaluation procedure. Evaluation implementation is a
 future phase; this assignment prepares its prerequisites without contacting a
 workplace tenant or changing workflow automatically.
 
+The owner believes the workplace uses Amazon Bedrock; its exact agent application
+and connector support are unconfirmed. Keep the pilot independent of model
+provider. A Bedrock-hosted model plus an MCP-capable agent and Atlassian connector
+is a candidate integration, not a verified workplace setup. Record the chosen
+model/version and tool-access configuration when the evaluation is implemented.
+
 ## Acceptance evidence
 
 - A clean operator can follow the documented demo using the stated revisions/configuration. Record actual artifact-to-issue/wiki readback, not just a successful Job status.

@@ -13,9 +13,9 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 03 Redaction | Astra High | Running from validated input boundary | Based on `bf8138b` |
 | 04 Jira/outcomes | Astra High | API/result contract integrated; CLI phase waits for 03 | `6dea1c9`; published-image failures reproduced with local mocks |
 | 05 Taxonomy | Sol High | Reviewed package changes integrated; pipeline phase waits for 03 | `bf8138b`; preserves imported taxonomy and exposes unsupported mapping gaps |
-| 06 Wiki | Astra High | Initial optimization and metrics integrated; disposable measurements running | `3713743`, `23e1f50`; large-wiki runtime acceptance remains open |
+| 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
 | 07 Publication state | Astra High | State design and cross-repository package work running | Local CLI on `4e3a5be` overwrites a newer atomic source replacement after delayed Jira create |
-| 08 CI/release | Terra High | Initial phase integrated | `5313680`, `f4aae32`; final image/suite acceptance pending |
+| 08 CI/release | Terra High | Initial phase integrated; portable container/benchmark checks in progress | `5313680`, `f4aae32`; final image/suite acceptance pending |
 | 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
 | 10 Demo/workplace | Sol Medium | Queued | Workplace live acceptance needs designated tenant access |
 | 11 Integration | Astra High | Coordinating | Final combined checks pending |
