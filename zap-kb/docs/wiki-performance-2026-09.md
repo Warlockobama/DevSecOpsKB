@@ -89,6 +89,19 @@ remote content changes, concurrent rename failure/recovery and preservation of
 the renamed page. The synthetic scale workloads passed all scenarios. The full
 Go suite, vet, build and diff whitespace check passed for the package-local change.
 
+`WikiSummary` additionally carries total `DurationMS`, `Requests`, and `Phases`.
+Each phase has only a static phase name, wall duration, outer HTTP attempt count,
+and retry-attempt count. Actual calls to the HTTP doer are counted, including
+attempts stopped by request spacing/context cancellation before reaching the wire;
+this is not a TCP packet count. Each logical request uses a short-lived observer,
+so no headers, URLs, page titles, bodies or credentials are retained for metrics.
+Preflight/discovery failure and cancellation retain their available phase timing.
+There are no phase entries for an unexecuted repair/prune pass. Local collection
+time is included in total duration but not assigned to a network phase. Assignment
+04 maps these fields into its common publication result; this package does not
+create a competing result contract. Tests cover successful retries, exact attempts,
+backoff duration, cancellation timing and absence of request data in phase output.
+
 The default 250 ms request spacing still implies about 21 minutes 15 seconds of
 request-start spacing for an unchanged 5,000-page wiki, before server processing.
 That is an analytical floor, not measured completion under the 45-minute wiki
