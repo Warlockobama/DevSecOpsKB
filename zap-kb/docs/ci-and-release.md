@@ -70,17 +70,25 @@ must not claim a guessed source revision.
 
    ```bash
    IMAGE=ghcr.io/<owner>/zap-kb-atlassian@sha256:<published-digest>
-   kubectl -n <namespace> set image job/<job> <container>="$IMAGE"
-   kubectl -n <namespace> exec <pod> -- zap-kb -version
+   kubectl -n <namespace> set image cronjob/<publisher> <container>="$IMAGE"
    ```
 
-   The running binary's `revision=` must match the release SHA and the running
-   image reference must be the recorded `@sha256:` digest. OCI labels can be
-   read before deployment with `docker buildx imagetools inspect "$IMAGE"`.
+   This updates future Jobs; an existing Job's pod template is immutable.
+   Validate a new canary Job in an isolated test destination using the reviewed
+   input and state paths before enabling scheduled production publication. A
+   canary copied from a production CronJob must have its destination and volumes
+   changed before creation; otherwise it will publish to production.
+
+   The canary binary's `-version` output must match the release SHA and its pod's
+   configured image must be the recorded `@sha256:` reference. Record the
+   runtime `imageID` too; for a multi-platform image, the platform manifest
+   digest can differ from the pinned index digest. OCI labels can be inspected
+   on the pulled platform image with `docker image inspect "$IMAGE"`.
 4. Retain the previous reviewed `image@sha256` and its release SHA. To roll
-   back, set the same workload container image to that exact prior digest, wait
-   for the workload to become ready, then repeat `zap-kb -version`. Do not roll
-   back by retagging `latest`.
+   back, set the CronJob's container image to that exact prior digest and verify
+   a new isolated canary. Updating a CronJob does not replace a running Job;
+   coordinate any running publication separately to avoid overlapping writers.
+   Do not roll back by retagging `latest`.
 
 The checked-in Kubernetes example still uses a mutable demonstration image
 reference because this change does not publish a new digest. A release operator
