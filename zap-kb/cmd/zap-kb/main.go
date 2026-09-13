@@ -625,6 +625,11 @@ func main() {
 			}
 		}
 
+		// Resolve tool/custom origin before applying curated custom mappings. This
+		// keeps source-prefixed scanner rules separate from project-owned rules.
+		entities.NormalizeDefinitionOrigins(&ent)
+		entities.EnrichCustomTaxonomy(ent.Definitions)
+
 		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
 		entities.EnrichTaxonomy(ent.Definitions)
 		if includeMITRE {
@@ -651,9 +656,8 @@ func main() {
 			fmt.Printf("Dropped mismatched traffic samples: %d\n", dropped)
 		}
 
-		// Normalize tool/custom definition origin and analyst status once before
-		// any output/render step so every surface uses the KB's canonical model.
-		entities.NormalizeDefinitionOrigins(&ent)
+		// Normalize analyst status once before any output/render step so every
+		// surface uses the KB's canonical model.
 		entities.NormalizeAnalystStatuses(&ent)
 		entities.EnsureCollections(&ent)
 		if validation := entities.Validate(ent); !validation.OK() {
