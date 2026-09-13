@@ -284,6 +284,7 @@ type EntitiesFile struct {
 	SchemaVersion string       `json:"schemaVersion"`
 	GeneratedAt   string       `json:"generatedAt"`
 	SourceTool    string       `json:"sourceTool,omitempty"`
+	ExportPolicy  string       `json:"exportPolicy,omitempty"`
 	Definitions   []Definition `json:"definitions"`
 	Findings      []Finding    `json:"findings"`
 	Occurrences   []Occurrence `json:"occurrences"`

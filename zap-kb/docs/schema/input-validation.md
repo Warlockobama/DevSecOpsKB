@@ -50,3 +50,5 @@ the original value.
 The validator does not recompute deterministic IDs, occurrence counts, risk,
 or analyst decisions. Those values retain their existing schema meaning and
 ownership.
+
+The additive `exportPolicy` string is modeled and retained in typed artifacts. Merge retains a policy only when both inputs agree; mixed or unstamped inputs clear the claim. Original source artifacts are separate from publication state; see [publication state](../publication-state.md).
