@@ -13,6 +13,9 @@ Doc map:
 - `zap-kb/docs/triage.md` – how triage/status persists.
 - `zap-kb/docs/architecture.md` – updated flow diagram.
 - `zap-kb/docs/schema/entities-v1.md` – entity schema.
+- `zap-kb/docs/plans/reliability-goals-2026-09.md` – reliability goals, Jira Cloud repair, output safety, and publishing performance acceptance.
+- `zap-kb/docs/plans/agent-goals/README.md` – agent assignments, model recommendations, dependencies, and acceptance criteria.
+- `zap-kb/docs/production-publishing-review-2026-09.md` – live Forgejo findings, firing-range integration, and large-wiki performance priorities.
 
 ## Getting Started (zap-kb)
 See `zap-kb/README.md` for usage, flags, and examples. A GitHub Actions workflow is provided to build/vet the module on pushes and PRs.
