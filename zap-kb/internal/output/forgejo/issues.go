@@ -201,7 +201,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				mu.Lock()
 				defer mu.Unlock()
 				if cerr != nil {
-					fmt.Printf("[forgejo] error creating issue for %s: %v\n", u.key, cerr)
+					fmt.Printf("[forgejo] error creating issue for: %s\n", synccore.SafeError(cerr))
 					errCount++
 					return
 				}
@@ -227,7 +227,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			if w.State == "closed" {
 				if rerr := c.reopenIssue(ctx, w.Number); rerr != nil {
 					mu.Lock()
-					fmt.Printf("[forgejo] error reopening #%d for %s: %v\n", w.Number, u.key, rerr)
+					fmt.Printf("[forgejo] error reopening #: %s\n", synccore.SafeError(rerr))
 					errCount++
 					mu.Unlock()
 					return
@@ -235,7 +235,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				comment := fmt.Sprintf("Reopened by DevSecOpsKB: this finding recurred in the latest scan (risk: %s). If it was intentionally dismissed, label the issue `false-positive` or `accepted` to prevent automatic reopening.", titleCase(u.risk))
 				if cerr := c.addComment(ctx, w.Number, comment); cerr != nil {
 					mu.Lock()
-					fmt.Printf("[forgejo] warning: reopened #%d but failed to comment: %v\n", w.Number, cerr)
+					fmt.Printf("[forgejo] warning: reopened #: %s\n", synccore.SafeError(cerr))
 					mu.Unlock()
 				}
 				justReopened = true
@@ -247,7 +247,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			if bodyChanged {
 				if uerr := c.updateIssueBody(ctx, w.Number, desired); uerr != nil {
 					mu.Lock()
-					fmt.Printf("[forgejo] error updating body #%d for %s: %v\n", w.Number, u.key, uerr)
+					fmt.Printf("[forgejo] error updating body #: %s\n", synccore.SafeError(uerr))
 					errCount++
 					mu.Unlock()
 					return
@@ -279,7 +279,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	if created > 0 || initialDups {
 		closed, winners, rerr := c.reconcileDuplicates(ctx)
 		if rerr != nil {
-			fmt.Printf("[forgejo] warning: duplicate reconcile failed: %v\n", rerr)
+			fmt.Printf("[forgejo] warning: duplicate reconcile failed: %s\n", synccore.SafeError(rerr))
 			errCount++
 		} else {
 			dupsClosed = closed

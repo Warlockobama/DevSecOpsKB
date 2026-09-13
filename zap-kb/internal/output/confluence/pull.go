@@ -127,7 +127,7 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 	var res PullResult
 	for _, r := range occResults {
 		if r.err != nil {
-			fmt.Printf("[pull] warning: occurrence index %d: %v\n", r.idx, r.err)
+			fmt.Printf("[pull] warning: occurrence index: %s\n", synccore.SafeError(r.err))
 			res.Errors++
 			continue
 		}
@@ -145,7 +145,7 @@ func PullAnalystData(ctx context.Context, ef entities.EntitiesFile, opts PullOpt
 	}
 	for _, r := range findingResults {
 		if r.err != nil {
-			fmt.Printf("[pull] warning: finding index %d: %v\n", r.idx, r.err)
+			fmt.Printf("[pull] warning: finding index: %s\n", synccore.SafeError(r.err))
 			res.Errors++
 			continue
 		}

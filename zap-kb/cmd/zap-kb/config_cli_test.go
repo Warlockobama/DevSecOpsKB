@@ -143,7 +143,15 @@ func runCLI(t *testing.T, binary string, additions []string, args ...string) {
 func cleanCLIEnvironment(additions ...string) []string {
 	env := make([]string, 0, len(os.Environ())+len(additions))
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(strings.ToUpper(entry), "ZAP_URL=") {
+		upper := strings.ToUpper(entry)
+		private := false
+		for _, prefix := range []string{"ZAP_", "JIRA_", "CONFLUENCE_", "FORGEJO_", "API_KEY=", "ATLASSIAN_"} {
+			if strings.HasPrefix(upper, prefix) {
+				private = true
+				break
+			}
+		}
+		if !private {
 			env = append(env, entry)
 		}
 	}

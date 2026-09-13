@@ -6,7 +6,9 @@ package synccore
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -208,18 +210,28 @@ func HTTPError(system string, resp *http.Response) error {
 	return fmt.Errorf("%s: http %d: %s", system, resp.StatusCode, msg)
 }
 
-// SanitizeErrorBody truncates an API error body to 200 bytes and redacts
-// substrings that look like credentials before the message reaches logs.
+// SanitizeErrorBody returns only allowlisted server categories. Arbitrary
+// server text cannot be made safe by matching a few credential patterns.
 func SanitizeErrorBody(s string) string {
-	if len(s) > 200 {
-		s = TruncateBytes(s, 200) + "…"
+	if strings.Contains(s, "refs/heads/") {
+		return "refs/heads/ unavailable"
 	}
-	for _, pat := range []string{"Authorization", "authorization", "token=", "apikey=", "api_key=", "password="} {
-		if idx := strings.Index(s, pat); idx >= 0 {
-			s = s[:idx] + "<redacted>…"
-		}
+	if strings.TrimSpace(s) == "" {
+		return ""
 	}
-	return s
+	return "remote request rejected; response details omitted"
+}
+
+// SafeError is the diagnostic contract for untyped local/transport errors.
+// It deliberately never copies an error string, URL, filename, or server body.
+func SafeError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "operation timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "operation canceled"
+	}
+	return "operation failed; private details omitted"
 }
 
 // TruncateBytes returns s truncated to at most n bytes, stepping back so a

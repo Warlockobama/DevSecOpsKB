@@ -13,10 +13,11 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // defaultForgejoRedact is the redaction list applied to data published to
-// Forgejo (issue bodies and wiki pages) unless overridden. It scrubs
+// Forgejo (issue bodies and wiki pages). Extra modes add to these defaults. It scrubs
 // credential-bearing headers (Authorization, cookies, API-key headers) and
 // credential/PII patterns in scanner evidence (password hashes, emails, JWTs)
 // while leaving URLs and the rest of the evidence intact so issues stay
@@ -53,7 +54,8 @@ type forgejoPublishOptions struct {
 	// listing, whose cost is the size of the wiki rather than the size of the
 	// publish. Zero keeps forgejo's own default.
 	WikiRequestTO time.Duration
-	Redact        string // redaction list for published content; "off"/"none" disables
+	SharedRedact  entities.RedactOptions
+	Redact        string // additional modes; "off"/"none" disables only sink defaults
 
 	// Vault / persistence context.
 	Format        string
@@ -77,7 +79,7 @@ func forgejoRedactOptions(list string) (entities.RedactOptions, bool) {
 	if v == "" {
 		v = defaultForgejoRedact
 	}
-	return entities.ParseRedactOptionList(v), true
+	return entities.ParseRedactOptionList(defaultForgejoRedact + "," + v), true
 }
 
 // forgejoTicketURL returns an obsidian.Options.TicketURLFn that resolves this
@@ -139,16 +141,22 @@ func redactedCopy(ent entities.EntitiesFile, ro entities.RedactOptions) (entitie
 // the CronJob report partial failure instead of silently succeeding.
 func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) int {
 	failures := 0
+	if err := validateForgejoRedact(opts.Redact); err != nil {
+		log.Print(err)
+		return 1
+	}
 
 	// Build the publish view: redacted copy by default, raw when disabled.
 	pubEnt := *ent
 	ro, redactOn := forgejoRedactOptions(opts.Redact)
+	ro = mergeRedactOptions(ro, opts.SharedRedact)
+	redactOn = redactOn || opts.SharedRedact.Enabled()
 	if redactOn {
 		cp, err := redactedCopy(*ent, ro)
 		if err != nil {
 			// Abort the Forgejo publish (so unredacted data is never pushed) but
 			// return rather than killing the whole multi-sink pipeline.
-			log.Printf("error: forgejo redaction failed — skipping Forgejo publish: %v", err)
+			log.Printf("error: forgejo redaction failed — skipping Forgejo publish: %v", synccore.SafeError(err))
 			return failures + 1
 		}
 		pubEnt = cp
@@ -185,7 +193,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			// A wholesale export failure (auth/connectivity) would fail the pull
 			// and wiki steps the same way; return early with a failure so CI/cron
 			// sees a non-zero exit, without aborting other sinks via log.Fatalf.
-			log.Printf("error: forgejo export: %v", err)
+			log.Printf("error: forgejo export: %v", synccore.SafeError(err))
 			return failures + 1
 		}
 		fmt.Printf("Forgejo: created=%d reopened=%d updated=%d skipped=%d errors=%d duplicates_closed=%d\n",
@@ -215,7 +223,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				ReadOnly: !opts.SyncKBStatus,
 			})
 			if perr != nil {
-				log.Printf("warning: forgejo status pull failed: %v", perr)
+				log.Printf("warning: forgejo status pull failed: %v", synccore.SafeError(perr))
 			} else if opts.SyncKBStatus {
 				*ent = pres.Updated
 				fmt.Printf("Forgejo pull: updated=%d unchanged=%d notfound=%d unmapped=%d errors=%d\n",
@@ -237,7 +245,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 				RunInputArtifact: opts.RunInArtifact,
 			}, *ent)
 			if werr != nil {
-				log.Printf("warning: could not save Forgejo state to entities file: %v", werr)
+				log.Printf("warning: could not save Forgejo state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {
 				fmt.Printf("Forgejo: wrote current ticket/state data to %s\n", savePath)
 			}
@@ -269,29 +277,26 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		// The Forgejo-branded vault options: prose names Forgejo instead of
 		// Jira, and this repo's issue refs ("owner/repo#N") become live links.
 		vaultOpts := obsidian.Options{
-			ScanLabel:   opts.ScanLabel,
-			SiteLabel:   opts.SiteLabel,
-			ZapBaseURL:  opts.ZapBaseURL,
-			Tracker:     "Forgejo",
-			TicketURLFn: forgejoTicketURL(opts.BaseURL, opts.Owner, opts.Repo),
+			ScanLabel:        opts.ScanLabel,
+			SiteLabel:        entities.RedactText(opts.SiteLabel, ro),
+			ZapBaseURL:       entities.RedactText(opts.ZapBaseURL, ro),
+			Redact:           mergeRedactOptions(ro, opts.SharedRedact),
+			CarryForwardRoot: opts.Vault,
+			Tracker:          "Forgejo",
+			TicketURLFn:      forgejoTicketURL(opts.BaseURL, opts.Owner, opts.Repo),
 		}
-		if redactOn {
+		{
 			tmp, terr := os.MkdirTemp("", "forgejo-wiki-vault-")
 			if terr != nil {
-				log.Printf("warning: could not create redacted wiki vault dir: %v", terr)
+				log.Printf("warning: could not create redacted wiki vault dir: %v", synccore.SafeError(terr))
 				return failures + 1
 			}
 			defer os.RemoveAll(tmp)
 			if err := writeVaultSnapshot(tmp, pubEnt, vaultOpts); err != nil {
-				log.Printf("warning: could not write redacted vault for forgejo wiki: %v", err)
+				log.Printf("warning: could not write redacted vault for forgejo wiki: %v", synccore.SafeError(err))
 				return failures + 1
 			}
 			wikiVault = tmp
-		} else if strings.TrimSpace(opts.Format) != "obsidian" {
-			if err := writeVaultSnapshot(wikiVault, pubEnt, vaultOpts); err != nil {
-				log.Printf("warning: could not write vault for forgejo wiki: %v", err)
-				return failures + 1
-			}
 		}
 		wikiCtx, wcancel := wikiPublishContext(context.Background(), opts.WikiTimeout)
 		defer wcancel()
@@ -305,7 +310,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			Timeout:     opts.WikiRequestTO,
 		})
 		if werr != nil {
-			log.Printf("error: forgejo wiki export failed: %v", werr)
+			log.Printf("error: forgejo wiki export failed: %v", synccore.SafeError(werr))
 			failures++
 		} else {
 			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d pruned=%d link_fixes=%d errors=%d\n",

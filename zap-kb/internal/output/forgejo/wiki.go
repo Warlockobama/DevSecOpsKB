@@ -234,7 +234,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (summar
 		content, err := readVaultMarkdown(p.path)
 		if err != nil {
 			summary.Errors++
-			fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
+			fmt.Printf("[forgejo wiki] error reading: %s\n", synccore.SafeError(err))
 		} else {
 			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
@@ -243,11 +243,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (summar
 				return summary, fmt.Errorf("forgejo wiki: %s: %w", wikiBranchBugAdvice, err)
 			case err != nil && ctx.Err() != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] publish stopped: %v\n", ctx.Err())
+				fmt.Printf("[forgejo wiki] publish stopped: %s\n", synccore.SafeError(ctx.Err()))
 				return summary, nil
 			case err != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
+				fmt.Printf("[forgejo wiki] error upserting: %s\n", synccore.SafeError(err))
 			case action == "created":
 				summary.Created++
 			case action == "updated":
@@ -283,7 +283,7 @@ publishPages:
 				mu.Lock()
 				summary.Errors++
 				mu.Unlock()
-				fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
+				fmt.Printf("[forgejo wiki] error reading: %s\n", synccore.SafeError(err))
 				return
 			}
 			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
@@ -295,7 +295,7 @@ publishPages:
 				return
 			case err != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
+				fmt.Printf("[forgejo wiki] error upserting: %s\n", synccore.SafeError(err))
 			case action == "created":
 				summary.Created++
 			case action == "updated":
@@ -309,7 +309,7 @@ publishPages:
 	metrics.end()
 	if err := ctx.Err(); err != nil {
 		summary.Errors++
-		fmt.Printf("[forgejo wiki] publish stopped: %v\n", err)
+		fmt.Printf("[forgejo wiki] publish stopped: %s\n", synccore.SafeError(err))
 		return summary, nil
 	}
 
@@ -332,7 +332,7 @@ publishPages:
 		subURLs, lerr := c.listWikiPages(ctx)
 		if lerr != nil {
 			summary.Errors++
-			fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %v\n", lerr)
+			fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %s\n", synccore.SafeError(lerr))
 		} else {
 			linkForSub := func(name string) string {
 				if su := subURLs[name]; su != "" {
@@ -343,7 +343,7 @@ publishPages:
 			for _, p := range allPages {
 				if err := ctx.Err(); err != nil {
 					summary.Errors++
-					fmt.Printf("[forgejo wiki] link repair stopped: %v\n", err)
+					fmt.Printf("[forgejo wiki] link repair stopped: %s\n", synccore.SafeError(err))
 					break
 				}
 				su := subURLs[p.name]
@@ -362,10 +362,10 @@ publishPages:
 				if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
 					summary.Errors++
 					if ctx.Err() != nil {
-						fmt.Printf("[forgejo wiki] link repair stopped: %v\n", ctx.Err())
+						fmt.Printf("[forgejo wiki] link repair stopped: %s\n", synccore.SafeError(ctx.Err()))
 						break
 					}
-					fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
+					fmt.Printf("[forgejo wiki] error repairing links on: %s\n", synccore.SafeError(perr))
 					continue
 				}
 				summary.LinkFixes++
@@ -389,16 +389,16 @@ publishPages:
 		for _, title := range stale {
 			if err := ctx.Err(); err != nil {
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] prune stopped: %v\n", err)
+				fmt.Printf("[forgejo wiki] prune stopped: %s\n", synccore.SafeError(err))
 				break
 			}
 			if derr := c.deleteWikiPage(ctx, existing[title]); derr != nil {
 				summary.Errors++
 				if ctx.Err() != nil {
-					fmt.Printf("[forgejo wiki] prune stopped: %v\n", ctx.Err())
+					fmt.Printf("[forgejo wiki] prune stopped: %s\n", synccore.SafeError(ctx.Err()))
 					break
 				}
-				fmt.Printf("[forgejo wiki] error pruning %q: %v\n", title, derr)
+				fmt.Printf("[forgejo wiki] error pruning: %s\n", synccore.SafeError(derr))
 				continue
 			}
 			summary.Pruned++

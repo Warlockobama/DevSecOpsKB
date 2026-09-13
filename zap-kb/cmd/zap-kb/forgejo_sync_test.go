@@ -26,8 +26,8 @@ func TestForgejoRedactOptions(t *testing.T) {
 	}
 	// Custom list is honored.
 	ro, on = forgejoRedactOptions("domain,body")
-	if !on || !ro.Domain || !ro.Body || ro.Auth {
-		t.Fatalf("custom = (%+v, %v), want domain+body only", ro, on)
+	if !on || !ro.Domain || !ro.Body || !ro.Auth || !ro.Cookies || !ro.Headers || !ro.Secrets {
+		t.Fatalf("custom = (%+v, %v), want domain+body plus protective defaults", ro, on)
 	}
 }
 

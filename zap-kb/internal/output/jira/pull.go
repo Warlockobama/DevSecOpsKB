@@ -159,7 +159,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 	rawAssignees := make(map[string]string)
 	for _, r := range results {
 		if r.err != nil {
-			fmt.Printf("[jira pull] warning: %s: %v\n", r.ref.key, r.err)
+			fmt.Printf("[jira pull] warning: %s\n", synccore.SafeError(r.err))
 			res.Errors++
 			continue
 		}

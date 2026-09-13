@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	neturl "net/url"
@@ -17,6 +18,10 @@ import (
 )
 
 type Options struct {
+	// Redact is applied after analyst carry-forward, before any Markdown is emitted.
+	Redact entities.RedactOptions
+	// CarryForwardRoot supplies only matching entity analyst metadata to a fresh snapshot.
+	CarryForwardRoot string
 	// Optional human-friendly label for this run/session. Printed in INDEX and
 	// added to frontmatter of findings/occurrences as scan.label.
 	ScanLabel string
@@ -65,6 +70,23 @@ type Options struct {
 //	  findings/{findingId}.md
 //	  occurrences/{occurrenceId}.md
 func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
+	if opts.Redact.Enabled() {
+		raw, err := json.Marshal(ef)
+		if err != nil {
+			return fmt.Errorf("cannot copy output entities")
+		}
+		var cp entities.EntitiesFile
+		if err := json.Unmarshal(raw, &cp); err != nil {
+			return fmt.Errorf("cannot copy output entities")
+		}
+		ef = cp
+		opts.SiteLabel = entities.RedactText(opts.SiteLabel, opts.Redact)
+		opts.ZapBaseURL = entities.RedactText(opts.ZapBaseURL, opts.Redact)
+		opts.JiraBaseURL = entities.RedactText(opts.JiraBaseURL, opts.Redact)
+		opts.JiraStatusByKey = entities.RedactStringMap(opts.JiraStatusByKey, opts.Redact)
+		opts.JiraAssigneeByKey = entities.RedactStringMap(opts.JiraAssigneeByKey, opts.Redact)
+	}
+
 	defDir := filepath.Join(root, "definitions")
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
@@ -82,11 +104,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	// should start from the input entities file, not from stale local markdown.
 	existingOccMeta := map[string]occMeta{}
 	if opts.CarryForwardOccurrenceMeta {
-		existingOccMeta = loadOccurrenceMeta(occDir)
+		metaDir := occDir
+		if opts.CarryForwardRoot != "" {
+			metaDir = filepath.Join(opts.CarryForwardRoot, "occurrences")
+		}
+		existingOccMeta = loadOccurrenceMeta(metaDir)
 	}
 	existingFindingMeta := map[string]*entities.Analyst{}
 	if opts.CarryForwardFindingMeta {
-		existingFindingMeta = loadFindingMeta(findDir)
+		metaDir := findDir
+		if opts.CarryForwardRoot != "" {
+			metaDir = filepath.Join(opts.CarryForwardRoot, "findings")
+		}
+		existingFindingMeta = loadFindingMeta(metaDir)
 	}
 
 	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
@@ -111,6 +141,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			ef.Findings[i].Analyst = mergeFindingAnalyst(ef.Findings[i].Analyst, prior)
 		}
+	}
+
+	entities.RedactEntities(&ef, opts.Redact)
+	for id, meta := range existingOccMeta {
+		entities.RedactOutput(meta.Analyst, opts.Redact)
+		existingOccMeta[id] = meta
 	}
 
 	// Index by ids for quick joins.

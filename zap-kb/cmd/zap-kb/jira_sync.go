@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type jiraSyncContext struct {
 }
 
 type confluencePublishOptions struct {
+	Redact            entities.RedactOptions
 	BaseURL           string
 	Username          string
 	APIToken          string
@@ -177,8 +179,17 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 	if strings.TrimSpace(vault) == "" {
 		return confluence.VaultSummary{}, fmt.Errorf("vault path is required for Confluence export")
 	}
-	if strings.TrimSpace(format) != "obsidian" {
+	sourceVault := vault
+	tmp, tmpErr := os.MkdirTemp("", "confluence-output-")
+	if tmpErr != nil {
+		return confluence.VaultSummary{}, fmt.Errorf("cannot create Confluence snapshot")
+	}
+	defer os.RemoveAll(tmp)
+	vault = tmp
+	{
 		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+			Redact:            opts.Redact,
+			CarryForwardRoot:  sourceVault,
 			ScanLabel:         opts.ScanLabel,
 			SiteLabel:         opts.SiteLabel,
 			ZapBaseURL:        opts.ZapBaseURL,
@@ -194,6 +205,7 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer confCancel()
 		sum, err := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
+			Redact:            opts.Redact,
 			BaseURL:           opts.BaseURL,
 			Username:          opts.Username,
 			APIToken:          opts.APIToken,
@@ -218,6 +230,7 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 	confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer confCancel()
 	if err := confluence.Export(confCtx, vault, confluence.Options{
+		Redact:       opts.Redact,
 		BaseURL:      opts.BaseURL,
 		Username:     opts.Username,
 		APIToken:     opts.APIToken,

@@ -19,6 +19,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
@@ -61,6 +62,7 @@ func main() {
 		runIn               string
 		zipOut              string
 		redactOpts          string
+		runAlerts           string
 		wizard              bool
 		pruneScanLabel      string
 		pruneSiteLabel      string
@@ -159,7 +161,8 @@ func main() {
 	flag.StringVar(&runOut, "run-out", "", "Write a pipeline-friendly run artifact JSON (entities+meta[+alerts])")
 	flag.StringVar(&runIn, "run-in", "", "Read a run artifact JSON (or bare entities JSON) and use it as -entities-in; also picks up scan/site labels if present")
 	flag.StringVar(&zipOut, "zip-out", "", "Zip outputs to this path (includes run-out, entities out, and obsidian dir if generated)")
-	flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body,notes")
+	flag.StringVar(&runAlerts, "run-alerts", "keep", "Run artifact alert retention: keep (sanitized by -redact) or omit")
+	flag.StringVar(&redactOpts, "redact", "", "Comma/space list of redactions: domain,query,cookies,auth,headers,body,notes,secrets")
 	flag.BoolVar(&wizard, "wizard", true, "Launch an interactive setup wizard when no flags are provided (disable with -wizard=false)")
 	// Prune options (vault-only maintenance): when -prune-scan is set, performs pruning and exits
 	flag.StringVar(&pruneScanLabel, "prune-scan", "", "Prune occurrence notes from the Obsidian vault with this scan label; no fetch or export performed")
@@ -217,7 +220,7 @@ func main() {
 	flag.BoolVar(&forgejoWikiPrune, "forgejo-wiki-prune", false, "Delete KB-owned Forgejo wiki pages (Definitions/Findings/Occurrences) that are absent from the current publish.")
 	flag.DurationVar(&forgejoWikiTimeout, "forgejo-wiki-timeout", 30*time.Minute, "Deadline for the whole wiki publish: page upserts, link repair and prune share it. The API client is throttled to one request per 250ms and an unchanged page still costs a read, so budget from the page count rather than from the number of changes. 0 disables the deadline.")
 	flag.DurationVar(&forgejoWikiHTTPTO, "forgejo-wiki-request-timeout", 30*time.Second, "Timeout for a SINGLE wiki API request, as distinct from -forgejo-wiki-timeout, which budgets the whole pass. The binding call is the paged page listing link repair does before it can rewrite anything: its cost grows with the wiki, not with the publish, so on a large vault the first listing can exceed the 30s default while the pass deadline is barely touched. 0 keeps the default.")
-	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes,secrets; 'off' disables. 'secrets' scrubs credential/PII patterns (hashes, emails, JWTs) from evidence. The local entities file keeps unredacted data.")
+	flag.StringVar(&forgejoRedact, "forgejo-redact", defaultForgejoRedact, "Redactions applied to content published to Forgejo (issues + wiki): comma list of domain,query,cookies,auth,headers,body,notes,secrets; additional modes preserve auth,cookies,headers,secrets defaults; 'off' disables sink defaults only. 'secrets' scrubs credential/PII patterns (hashes, emails, JWTs) from evidence. Local outputs follow -redact.")
 	flag.BoolVar(&allowAgentPublish, "allow-agent-publish", false, "Allow Confluence/Jira publish from sourceTool values like zap-agent (disabled by default)")
 	flag.BoolVar(&allowCustomPublish, "allow-custom-publish", false, "Allow Confluence/Jira publish when the input contains custom definitions (disabled by default)")
 	flag.BoolVar(&zapAlertsOnly, "zap-alerts-only", false, "Keep only scanner-native ZAP alerts with numeric plugin IDs; excludes custom/project detections and other scanner sources.")
@@ -232,6 +235,16 @@ func main() {
 	if showVersion {
 		fmt.Println(buildinfo.String())
 		return
+	}
+	outputPolicy, policyErr := entities.ParseRedactOptions(redactOpts)
+	if policyErr != nil {
+		log.Fatal(policyErr)
+	}
+	if err := validateForgejoRedact(forgejoRedact); err != nil {
+		log.Fatal(err)
+	}
+	if runAlerts != "keep" && runAlerts != "omit" {
+		log.Fatal("invalid -run-alerts; use keep or omit")
 	}
 	supplied := suppliedFlags(flag.CommandLine)
 
@@ -282,14 +295,14 @@ func main() {
 	if cwdErr != nil {
 		// Surface the failure: policy still loads from user-config/defaults,
 		// but operators deserve a warning when project-local lookup is skipped.
-		log.Printf("[warn] cannot determine working directory for triage policy lookup: %v", cwdErr)
+		log.Printf("[warn] cannot determine working directory for triage policy lookup: %v", synccore.SafeError(cwdErr))
 		cwdForPolicy = ""
 	}
 	triagePolicy, policySrc, perr := config.LoadPolicy(cwdForPolicy)
 	if perr != nil {
 		// Broken YAML should surface loudly; silently falling back to defaults
 		// hides policy drift from operators who think their overrides are live.
-		log.Fatalf("triage policy: %v", perr)
+		log.Fatalf("triage policy: %v", synccore.SafeError(perr))
 	}
 	if policySrc != "" {
 		fmt.Fprintf(os.Stderr, "[info] triage policy loaded from %s\n", policySrc)
@@ -307,7 +320,7 @@ func main() {
 		// perform prune
 		del, listed, perr := obsidian.PruneByScan(vdir, pruneScanLabel, pruneSiteLabel, pruneDryRun)
 		if perr != nil {
-			log.Fatalf("prune: %v", perr)
+			log.Fatalf("prune: %v", synccore.SafeError(perr))
 		}
 		if pruneDryRun {
 			fmt.Printf("Prune dry-run: %d files would be removed.\n", del)
@@ -328,7 +341,7 @@ func main() {
 		ef.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 		ef.SourceTool = source
 		if err := obsidian.WriteVault(vdir, ef, obsidian.Options{ScanLabel: "", SiteLabel: "", ZapBaseURL: strings.TrimSpace(zapBase), TriageGuidanceFn: zapmeta.TriageGuidance}); err != nil {
-			log.Fatalf("refresh index: %v", err)
+			log.Fatalf("refresh index: %v", synccore.SafeError(err))
 		}
 		fmt.Println("Refreshed INDEX.md and DASHBOARD.md")
 		return
@@ -362,7 +375,7 @@ func main() {
 			SourceTool:      &source,
 		}
 		if err := runWizard(wiz); err != nil {
-			log.Fatalf("wizard: %v", err)
+			log.Fatalf("wizard: %v", synccore.SafeError(err))
 		}
 	}
 
@@ -417,18 +430,18 @@ func main() {
 		// Read alerts from file and skip API calls
 		f, err := os.Open(infile)
 		if err != nil {
-			log.Fatalf("open -in file: %v", err)
+			log.Fatal("open -in file: operation failed (private details omitted)")
 		}
 		defer f.Close()
 		dec := json.NewDecoder(f)
 		if err := dec.Decode(&alerts); err != nil {
-			log.Fatalf("decode -in file: %v", err)
+			log.Fatal("decode -in file: operation failed (private details omitted)")
 		}
 	} else if fetchAllowed { // fetch only when not enrich-only
 		// Fetch from ZAP API
 		client, err = zapclient.NewClient(zapURL, apiKey)
 		if err != nil {
-			log.Fatalf("new client: %v", err)
+			log.Fatal("new client: operation failed (private details omitted)")
 		}
 		// Default = all alerts; -count N restricts to first N
 		if count > 0 {
@@ -441,7 +454,7 @@ func main() {
 			})
 		}
 		if err != nil {
-			log.Fatalf("get alerts: %v", err)
+			log.Fatal("get alerts: operation failed (private details omitted)")
 		}
 	} else {
 		// Helpful note for offline init/enrich-only runs
@@ -474,9 +487,12 @@ func main() {
 	// always dedup before write
 	alerts = zapclient.DeduplicateAlerts(alerts)
 
+	// Preview uses a separate view; raw evidence still builds stable identities.
+	previewAlerts := append([]zapclient.Alert(nil), alerts...)
+	entities.RedactOutput(&previewAlerts, outputPolicy)
 	// preview
 	fmt.Printf("Fetched %d alerts (after dedup)\n", len(alerts))
-	for i, a := range alerts {
+	for i, a := range previewAlerts {
 		if i >= 5 {
 			break
 		}
@@ -486,7 +502,7 @@ func main() {
 
 	// Build entities model (or merge/enrich) if needed by chosen output
 	var ent entities.EntitiesFile
-	if format == "entities" || format == "both" || format == "obsidian" {
+	if format == "entities" || format == "both" || format == "obsidian" || runOut != "" {
 		if strings.TrimSpace(runIn) != "" || strings.TrimSpace(entitiesIn) != "" {
 			ent = entIn
 		}
@@ -618,7 +634,7 @@ func main() {
 				ATTACK: mitreATTACKCache,
 			})
 			if err != nil {
-				log.Fatalf("load MITRE caches: %v", err)
+				log.Fatal("load MITRE caches: operation failed (private details omitted)")
 			}
 			entities.EnrichMITREWithCatalogs(ent.Definitions, mitreCatalogs)
 		}
@@ -633,12 +649,6 @@ func main() {
 		}
 		if dropped := entities.DropMismatchedTraffic(&ent); dropped > 0 {
 			fmt.Printf("Dropped mismatched traffic samples: %d\n", dropped)
-		}
-
-		// Optional redaction pass
-		if strings.TrimSpace(redactOpts) != "" {
-			ro := entities.ParseRedactOptionList(redactOpts)
-			entities.RedactEntities(&ent, ro)
 		}
 
 		// Normalize tool/custom definition origin and analyst status once before
@@ -670,22 +680,36 @@ func main() {
 		}
 	}
 
+	// All emitted views derive from validated evidence, after identity creation.
+	if outputPolicy.Enabled() {
+		var copyErr error
+		ent, copyErr = redactedCopy(ent, outputPolicy)
+		if copyErr != nil {
+			log.Fatal("cannot create sanitized output view")
+		}
+	}
+	alerts = append([]zapclient.Alert(nil), alerts...)
+	entities.RedactOutput(&alerts, outputPolicy)
+	siteLabel = entities.RedactText(siteLabel, outputPolicy)
+	zapBase = entities.RedactText(zapBase, outputPolicy)
+	baseURL = entities.RedactText(baseURL, outputPolicy)
+	detectDetails = entities.RedactText(detectDetails, outputPolicy)
 	// write
 	switch format {
 	case "entities":
 		if err := jsondump.WritePretty(out, ent); err != nil {
-			log.Fatalf("write json: %v", err)
+			log.Fatalf("write json: %v", synccore.SafeError(err))
 		}
 	case "flat":
 		if err := jsondump.WritePretty(out, alerts); err != nil {
-			log.Fatalf("write json: %v", err)
+			log.Fatalf("write json: %v", synccore.SafeError(err))
 		}
 	case "both":
 		if err := jsondump.WritePretty(out, alerts); err != nil {
-			log.Fatalf("write json flat: %v", err)
+			log.Fatalf("write json flat: %v", synccore.SafeError(err))
 		}
 		if err := jsondump.WritePretty(out+".entities.json", ent); err != nil {
-			log.Fatalf("write json entities: %v", err)
+			log.Fatalf("write json entities: %v", synccore.SafeError(err))
 		}
 	case "obsidian":
 		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
@@ -693,15 +717,16 @@ func main() {
 			SiteLabel:   siteLabel,
 			ZapBaseURL:  zapBase,
 			JiraBaseURL: jiraURL,
+			Redact:      outputPolicy,
 		}); err != nil {
-			log.Fatalf("write obsidian: %v", err)
+			log.Fatalf("write obsidian: %v", synccore.SafeError(err))
 		}
 	default:
-		log.Fatalf("unknown -format %q (use entities|flat|both|obsidian)", format)
+		log.Fatal("unknown -format (use entities|flat|both|obsidian)")
 	}
 
 	if err := validatePublishSource(ent, strings.TrimSpace(confURL) != "", strings.TrimSpace(jiraURL) != "", allowAgentPublish, allowCustomPublish); err != nil {
-		log.Fatalf("publish source: %v", err)
+		log.Fatalf("publish source: %v", synccore.SafeError(err))
 	}
 
 	// Optional Confluence export - when Jira is also enabled, publish after Jira
@@ -718,6 +743,7 @@ func main() {
 			Full:             confFull,
 			Concurrency:      confConcurrency,
 			ScanLabel:        scanLabel,
+			Redact:           outputPolicy,
 			SiteLabel:        siteLabel,
 			ZapBaseURL:       zapBase,
 			JiraBaseURL:      jiraURL,
@@ -728,7 +754,7 @@ func main() {
 			JiraProjectKey:   jiraProject,
 		})
 		if err != nil {
-			log.Fatalf("%v", err)
+			log.Fatalf("%v", synccore.SafeError(err))
 		}
 		publishSummary.Confluence = &publishConfluenceSummary{
 			Created: confSum.Created,
@@ -777,7 +803,7 @@ func main() {
 			UsernameMap: parseJiraUserMap(jiraUserMap),
 		})
 		if err != nil {
-			log.Fatalf("jira export: %v", err)
+			log.Fatalf("jira export: %v", synccore.SafeError(err))
 		}
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
 		publishSummary.Jira = &publishJiraSummary{
@@ -812,7 +838,7 @@ func main() {
 				ReadOnly:   !jiraSyncKBStatus,
 			})
 			if pullErr != nil {
-				log.Printf("warning: jira status pull failed: %v", pullErr)
+				log.Printf("warning: jira status pull failed: %v", synccore.SafeError(pullErr))
 			} else {
 				if jiraSyncKBStatus {
 					ent = pullRes.Updated
@@ -829,6 +855,7 @@ func main() {
 				}
 			}
 		}
+		entities.RedactEntities(&ent, outputPolicy)
 		if !jiraDryRun && shouldPersistJiraEntities(addedTicketKeys, updatedEpicRefs, jiraSyncKBStatus, ent) {
 			var artPtr *runartifact.Artifact
 			if runInIsArtifact {
@@ -842,7 +869,7 @@ func main() {
 				RunInputArtifact: artPtr,
 			}, ent)
 			if werr != nil {
-				log.Printf("warning: could not save Jira state to entities file: %v", werr)
+				log.Printf("warning: could not save Jira state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {
 				fmt.Printf("Jira: wrote current ticket/state data to %s\n", savePath)
 			}
@@ -850,6 +877,7 @@ func main() {
 		if format == "obsidian" && !jiraDryRun && hasFindingTicketRefs(ent) {
 			if err := writeVaultSnapshot(vault, ent, obsidian.Options{
 				ScanLabel:         scanLabel,
+				Redact:            outputPolicy,
 				SiteLabel:         siteLabel,
 				ZapBaseURL:        zapBase,
 				JiraBaseURL:       jiraURL,
@@ -857,7 +885,7 @@ func main() {
 				JiraAssigneeByKey: jiraAssigneeByKey,
 				JiraStatusSynced:  jiraStatusSynced,
 			}); err != nil {
-				log.Fatalf("rewrite obsidian after jira: %v", err)
+				log.Fatalf("rewrite obsidian after jira: %v", synccore.SafeError(err))
 			}
 		}
 
@@ -873,6 +901,7 @@ func main() {
 				Full:              confFull,
 				Concurrency:       confConcurrency,
 				ScanLabel:         scanLabel,
+				Redact:            outputPolicy,
 				SiteLabel:         siteLabel,
 				ZapBaseURL:        zapBase,
 				JiraBaseURL:       jiraURL,
@@ -884,7 +913,7 @@ func main() {
 				JiraProjectKey:    jiraProject,
 			})
 			if err != nil {
-				log.Fatalf("%v", err)
+				log.Fatalf("%v", synccore.SafeError(err))
 			}
 			publishSummary.Confluence = &publishConfluenceSummary{
 				Created: confSum.Created,
@@ -905,7 +934,7 @@ func main() {
 						Concurrency: jiraConcurrency,
 					})
 					if lerr != nil {
-						log.Printf("warning: jira evidence link sync failed: %v", lerr)
+						log.Printf("warning: jira evidence link sync failed: %v", synccore.SafeError(lerr))
 					} else {
 						fmt.Printf("Jira evidence links: added=%d skipped=%d errors=%d\n", linkSum.Added, linkSum.Skipped, linkSum.Errors)
 						publishSummary.EvidenceLinks = &publishEvidenceLinkSummary{
@@ -956,6 +985,7 @@ func main() {
 			WikiTimeout:       forgejoWikiTimeout,
 			WikiRequestTO:     forgejoWikiHTTPTO,
 			Redact:            forgejoRedact,
+			SharedRedact:      outputPolicy,
 			Format:            format,
 			Vault:             vault,
 			Out:               out,
@@ -975,7 +1005,7 @@ func main() {
 		} else {
 			rs, ru, rerr := computeReportWindow(reportSince, reportUntil, reportLookback)
 			if rerr != nil {
-				log.Fatalf("report window: %v", rerr)
+				log.Fatalf("report window: %v", synccore.SafeError(rerr))
 			}
 			if err := obsidian.GenerateReport(vault, obsidian.ReportOptions{
 				OutPath:   reportOut,
@@ -984,7 +1014,7 @@ func main() {
 				Until:     ru,
 				ScanLabel: reportScanLabel,
 			}); err != nil {
-				log.Fatalf("report: %v", err)
+				log.Fatalf("report: %v", synccore.SafeError(err))
 			}
 			fmt.Printf("Wrote report to %s\n", reportOut)
 		}
@@ -992,13 +1022,14 @@ func main() {
 
 	if strings.TrimSpace(publishSummaryOut) != "" {
 		if err := writeAtlassianPublishSummary(publishSummaryOut, publishSummary); err != nil {
-			log.Fatalf("%v", err)
+			log.Fatalf("%v", synccore.SafeError(err))
 		}
 		fmt.Printf("Wrote Atlassian publish summary to %s\n", publishSummaryOut)
 	}
 
 	// Optionally write a run artifact (entities + meta [+alerts]) for pipelines
 	if strings.TrimSpace(runOut) != "" {
+		entities.RedactEntities(&ent, outputPolicy)
 		meta := runartifact.Meta{
 			SourceTool:       ent.SourceTool,
 			GeneratedAt:      ent.GeneratedAt,
@@ -1010,8 +1041,12 @@ func main() {
 			IncludeTraffic:   includeTraffic,
 		}
 		art := runartifact.Artifact{Schema: "zap-kb/run/v1", Meta: meta, Entities: ent, Alerts: alerts}
+		entities.RedactOutput(&art.Meta, outputPolicy)
+		if runAlerts == "omit" {
+			art.Alerts = nil
+		}
 		if err := runartifact.Write(runOut, art); err != nil {
-			log.Fatalf("write -run-out: %v", err)
+			log.Fatalf("write -run-out: %v", synccore.SafeError(err))
 		}
 		fmt.Printf("Wrote run artifact to %s\n", runOut)
 	}
@@ -1022,14 +1057,22 @@ func main() {
 		if strings.TrimSpace(runOut) != "" {
 			ins = append(ins, runOut)
 		}
-		if strings.TrimSpace(out) != "" {
+		if format != "obsidian" && strings.TrimSpace(out) != "" {
 			ins = append(ins, out)
 		}
 		if format == "both" {
 			ins = append(ins, out+".entities.json")
 		}
 		if format == "obsidian" && strings.TrimSpace(vault) != "" {
-			ins = append(ins, vault)
+			snapshot, snapshotErr := os.MkdirTemp("", "zap-kb-archive-")
+			if snapshotErr != nil {
+				log.Fatal("cannot create archive snapshot")
+			}
+			defer os.RemoveAll(snapshot)
+			if err := writeVaultSnapshot(snapshot, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, JiraBaseURL: jiraURL, CarryForwardRoot: vault, Redact: outputPolicy}); err != nil {
+				log.Fatal("cannot render archive snapshot")
+			}
+			ins = append(ins, snapshot)
 		}
 		if strings.TrimSpace(publishSummaryOut) != "" {
 			ins = append(ins, publishSummaryOut)
@@ -1038,7 +1081,7 @@ func main() {
 			ins = append(ins, out)
 		}
 		if err := ziputil.Zip(zipOut, ins...); err != nil {
-			log.Fatalf("zip: %v", err)
+			log.Fatalf("zip: %v", synccore.SafeError(err))
 		}
 		fmt.Printf("Zipped outputs to %s\n", zipOut)
 	}

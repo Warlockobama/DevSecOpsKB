@@ -61,6 +61,8 @@ func redactSecretsText(s string) string {
 	return s
 }
 
+// ParseRedactOptionList is the compatibility helper for trusted constant lists.
+// User-supplied configuration must use ParseRedactOptions to reject unknown modes.
 func ParseRedactOptionList(list string) RedactOptions {
 	ro := RedactOptions{}
 	for _, f := range strings.FieldsFunc(strings.ToLower(list), func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
@@ -90,6 +92,7 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 	if e == nil {
 		return
 	}
+	RedactOutput(e, ro)
 	for i := range e.Findings {
 		if ro.Notes && e.Findings[i].Analyst != nil {
 			e.Findings[i].Analyst.Notes = ""
@@ -196,8 +199,20 @@ func RedactEntities(e *EntitiesFile, ro RedactOptions) {
 
 func redactURL(raw string, ro RedactOptions) string {
 	u, err := neturl.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme == "" {
+	if err != nil {
+		if ro.Domain || ro.Query || ro.Auth {
+			return "<redacted-url>"
+		}
 		return raw
+	}
+	if u.Scheme == "" && !strings.HasPrefix(raw, "/") {
+		return raw
+	}
+	if u.Scheme != "" && u.Host == "" {
+		return raw
+	}
+	if ro.Auth && u.User != nil {
+		u.User = nil
 	}
 	if ro.Domain && u.Host != "" {
 		// preserve TLD-style shape if possible
@@ -286,6 +301,11 @@ func redactRawHeaderBlock(raw string, ro RedactOptions) string {
 			// and "HTTP/1.1 200 OK" have whitespace before any colon (or none).
 			// Reuse the _line rule via redactHeaders so URL host/query redaction
 			// stays in one place.
+			parts := strings.Fields(trimmed)
+			if !(strings.HasPrefix(trimmed, "HTTP/") || (len(parts) >= 3 && strings.HasPrefix(parts[len(parts)-1], "HTTP/"))) {
+				lines[i] = "<redacted: unparsed header line>" + suffix
+				continue
+			}
 			if ro.Domain || ro.Query {
 				scrubbed := redactHeaders([]Header{{Name: "_line", Value: trimmed}}, ro)
 				lines[i] = scrubbed[0].Value + suffix
@@ -326,7 +346,7 @@ func redactHeaders(hs []Header, ro RedactOptions) []Header {
 		if ro.Cookies && (name == "cookie" || name == "set-cookie") {
 			v = "<redacted>"
 		}
-		if ro.Auth && name == "authorization" {
+		if ro.Auth && (name == "authorization" || name == "proxy-authorization") {
 			v = "<redacted>"
 		}
 		if ro.Headers {
@@ -344,6 +364,7 @@ func redactHeaders(hs []Header, ro RedactOptions) []Header {
 				v = redactURL(v, ro)
 			}
 		}
+		v = RedactText(v, ro)
 		out = append(out, Header{Name: h.Name, Value: v})
 	}
 	return out
