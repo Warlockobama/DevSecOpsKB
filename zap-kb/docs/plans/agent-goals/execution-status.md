@@ -11,9 +11,9 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 01 Configuration | Terra High | Integrated; local acceptance passed | `24ee34a`, `0803341`; combined CLI tests pass |
 | 02 Validation | Sol High | Running | Based on integrated configuration |
 | 03 Redaction | Astra High | Queued after 02 | Pending |
-| 04 Jira/outcomes | Astra High | API/result contract work running | Published-image failures reproduced with local mocks |
-| 05 Taxonomy | Sol High | Queued | Pending |
-| 06 Wiki | Astra High | Benchmark and package work running | Pending final result integration |
+| 04 Jira/outcomes | Astra High | API/result contract integrated; CLI phase waits for 03 | `6dea1c9`; published-image failures reproduced with local mocks |
+| 05 Taxonomy | Sol High | Mapping and PR reconciliation running | Pipeline integration waits for 02/03 |
+| 06 Wiki | Astra High | Initial optimization and metrics integrated; disposable measurements running | `3713743`, `23e1f50`; large-wiki runtime acceptance remains open |
 | 07 Publication state | Astra High | Queued | Pending |
 | 08 CI/release | Terra High | Initial phase integrated | `5313680`, `f4aae32`; final image/suite acceptance pending |
 | 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
