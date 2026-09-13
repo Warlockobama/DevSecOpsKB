@@ -1,6 +1,8 @@
 # DevSecOpsKB reliability goals
 
-Date: 12 September 2026. Status: proposed implementation backlog; no fixes are implied complete by this document.
+Date: 12 September 2026. Status: implementation in progress; see the
+[integration acceptance report](../reliability-acceptance-2026-09.md) for verified
+results and remaining work. This document defines the acceptance reference.
 
 For assignment to individual agents, use the [agent goal documents](agent-goals/README.md). They preserve the outcomes below while dividing ownership, recommending models/reasoning levels, and specifying integration order. This document remains the product acceptance reference.
 
