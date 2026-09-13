@@ -23,6 +23,7 @@ Starting paths: Repository root `.github/workflows/`; module `Makefile`, `Docker
 - Inventory actual Go, tagged integration, and browser e2e suites and their prerequisites. Repair stale paths and make the event-to-suite mapping explicit without silently skipping a broken test.
 - Wire the CLI contract tests delivered by 01–05 into the appropriate required build path. Integrate the benchmark/smoke commands from 06 in an explicitly bounded workflow.
 - Record source revision in built binaries/images and pin deployment references reproducibly. Provide a way to compare a running digest/revision with the reviewed source.
+- Support 04's reported Jira Cloud failure from a published image: identify its exact tag/digest and entrypoint when supplied, build the corrected image locally, and exercise actual container configuration plus create/rejection behavior against a controlled Jira API stub. Distinguish historical image behavior, corrected-image behavior, and live-tenant acceptance.
 - Update relevant build/release docs and links using verified commands. Prepare exact build/test/release steps and rollback references.
 - Validate locally and through available non-publishing checks. Do not push an image, trigger a production rollout, or change protected-branch settings simply to finish CI wiring.
 

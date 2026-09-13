@@ -25,6 +25,7 @@ Starting paths: `cmd/zap-kb/main.go`, `atlassian_cmd.go`, `atlassian_config.go`,
 - Verify current official Atlassian contracts for site and scoped-token gateway URLs, API versus browser URLs, Cloud detection, ADF, project/issue-type metadata, required fields, parent/component/assignee behavior, and supported auth methods. Preserve Data Center behavior.
 - Do not create after a failed dedup lookup. Classify rejection/auth/permission/not-found, rate limiting, transient server failures, and transport failures. Reconcile an ambiguous create outcome before retrying.
 - Add bounded optional remote readiness checks with clear permission requirements. Keep configuration completeness distinct from publish readiness.
+- Reproduce the owner's published-container-image path, not only a freshly built host CLI. Record the exact image tag/digest when available, inspect its entrypoint and advertised environment/flag mapping, and compare whether it sends the intended Jira Cloud create request with a corrected local image. Use synthetic credentials and a controlled API stub; retain sanitized request categories and outcomes. Coordinate image/version evidence with 08.
 - Cover Jira-owned workflow, preserved Confluence analyst blocks and cross-links, and partial success when either workplace destination fails. 10 owns the later walkthrough/live pilot.
 
 ## Acceptance evidence
@@ -33,6 +34,7 @@ Starting paths: `cmd/zap-kb/main.go`, `atlassian_cmd.go`, `atlassian_config.go`,
 - CLI tests cover all-success, one/all destinations failed, failed lookup, invalid credentials, permissions, missing required field, 429, exhausted retries, ambiguous create, cancellation, and persisted output.
 - Cloud gateway and site URLs select the correct dialect without breaking Data Center. Readiness output states exactly what was checked.
 - Prepare a designated-tenant create/readback/repeat/no-duplicate and intentional-rejection procedure. Execute it only when test access is available; record local contract completion and live Cloud acceptance separately.
+- A container-level regression proves an eligible finding reaches the Cloud create endpoint with the intended project/type and that both success and rejection return truthful outcomes. Compare the reported published image with the corrected image when its exact reference is known. If unavailable, identify that missing reference and do not infer the historical cause from the host build.
 
 ## Escalation and handoff
 
