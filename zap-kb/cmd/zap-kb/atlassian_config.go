@@ -188,7 +188,7 @@ func resolveDeploymentStrict(flagValue string, flagSet bool, envKey, sinkURL str
 	}
 	u, err := url.Parse(sinkURL)
 	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		return "", "auto:url", fmt.Errorf("invalid %s URL %q", strings.ToLower(strings.TrimSuffix(envKey, "_DEPLOYMENT")), sinkURL)
+		return "", "auto:url", fmt.Errorf("invalid %s URL: expected an absolute http or https URL", strings.TrimSuffix(envKey, "_DEPLOYMENT"))
 	}
 	host := strings.ToLower(u.Hostname())
 	if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") {
@@ -218,7 +218,10 @@ func validateOptionalHTTPURL(label, value string) error {
 	}
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme == "" || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("invalid %s %q: expected an http or https URL", label, value)
+		return fmt.Errorf("invalid %s: expected an absolute http or https URL", label)
+	}
+	if u.User != nil {
+		return fmt.Errorf("invalid %s: userinfo is not allowed; use the dedicated credential settings", label)
 	}
 	return nil
 }

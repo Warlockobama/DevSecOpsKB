@@ -55,6 +55,43 @@ func TestCLIZapURLPrecedence(t *testing.T) {
 	})
 }
 
+func TestCLIConfigErrorsDoNotLeakURLValues(t *testing.T) {
+	binary := buildTestCLI(t)
+	cases := []struct {
+		name    string
+		args    []string
+		markers []string
+	}{
+		{
+			name:    "malformed URL",
+			args:    []string{"-jira-url=malformed-SYNTHETIC-URL-TOKEN"},
+			markers: []string{"SYNTHETIC-URL-TOKEN"},
+		},
+		{
+			name:    "userinfo URL",
+			args:    []string{"-confluence-url=https://operator:SYNTHETIC-USERINFO-SECRET@confluence.example.test/wiki?token=SYNTHETIC-QUERY-TOKEN"},
+			markers: []string{"SYNTHETIC-USERINFO-SECRET", "SYNTHETIC-QUERY-TOKEN"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"atlassian", "check"}, tc.args...)
+			cmd := exec.Command(binary, args...)
+			cmd.Env = cleanCLIEnvironment()
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("CLI accepted invalid URL: %s", output)
+			}
+			text := string(output)
+			for _, marker := range tc.markers {
+				if strings.Contains(text, marker) {
+					t.Fatalf("CLI diagnostic leaked %q: %s", marker, text)
+				}
+			}
+		})
+	}
+}
+
 func buildTestCLI(t *testing.T) string {
 	t.Helper()
 	name := "zap-kb"

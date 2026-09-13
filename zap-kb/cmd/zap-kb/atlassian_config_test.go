@@ -203,6 +203,48 @@ func TestResolveAtlassianConfig_RejectsMalformedURLAndInvalidDeployment(t *testi
 	}
 }
 
+func TestResolveAtlassianConfig_URLDiagnosticsDoNotLeakSensitiveValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		input atlassianConfigInput
+		want  string
+	}{
+		{
+			name: "malformed URL",
+			input: atlassianConfigInput{
+				JiraURL: "malformed-SYNTHETIC-URL-TOKEN",
+				FlagSet: map[string]bool{"jira-url": true},
+			},
+			want: "expected an absolute http or https URL",
+		},
+		{
+			name: "userinfo",
+			input: atlassianConfigInput{
+				ConfluenceURL: "https://operator:SYNTHETIC-USERINFO-SECRET@confluence.example.test/wiki?token=SYNTHETIC-QUERY-TOKEN",
+				FlagSet:       map[string]bool{"confluence-url": true},
+			},
+			want: "userinfo is not allowed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := resolveAtlassianConfigStrict(tc.input, fakeEnv(nil))
+			if err == nil {
+				t.Fatal("expected URL validation error")
+			}
+			text := err.Error()
+			if !strings.Contains(text, tc.want) {
+				t.Fatalf("error %q does not explain the rejected setting", text)
+			}
+			for _, marker := range []string{"SYNTHETIC-URL-TOKEN", "SYNTHETIC-USERINFO-SECRET", "SYNTHETIC-QUERY-TOKEN"} {
+				if strings.Contains(text, marker) {
+					t.Fatalf("URL diagnostic leaked %q: %s", marker, text)
+				}
+			}
+		})
+	}
+}
+
 func TestResolveAtlassianConfig_ExplicitCloudGateway(t *testing.T) {
 	cfg, err := resolveAtlassianConfigStrict(atlassianConfigInput{
 		JiraURL:        "https://api.atlassian.com/ex/jira/cloud-id",
