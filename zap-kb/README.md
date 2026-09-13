@@ -8,6 +8,11 @@ The module can:
 - Enrich definitions with MITRE taxonomy references, estimated CVSS, and optional detection references from ZAP docs/GitHub.
 - Publish an Obsidian vault with findings, occurrences, and definitions.
 
+For the shortest end-to-end path, use the [firing-range demonstration and
+workplace pilot](docs/demo-and-workplace-pilot.md). Its disposable check publishes
+a retained run artifact to real local Forgejo issues and wiki pages, reads both
+back, and verifies identical and changed replay behavior.
+
 ## Quick Start
 1. Install Go: https://golang.org/dl/
 2. From the `zap-kb` directory:

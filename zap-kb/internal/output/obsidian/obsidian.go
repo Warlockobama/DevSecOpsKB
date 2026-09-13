@@ -1369,7 +1369,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		var b strings.Builder
 		var triageSection strings.Builder
 		var domainSection strings.Builder
-		b.WriteString("# Index\n\n")
+		b.WriteString("# DevSecOpsKB\n\n")
 
 		scanName := strings.TrimSpace(opts.ScanLabel)
 		if len(scanLabels) == 1 {
@@ -1406,16 +1406,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString(summaryLine + "\n")
 		b.WriteString("\n")
 
-		b.WriteString("## Quick navigation\n")
-		b.WriteString("- [Triage board](triage-board.md)\n")
-		fmt.Fprintf(&b, "- [%s](issues.md)\n", findNounP)
-		b.WriteString("- [Occurrences](occurrences.md)\n")
-		b.WriteString("- [Rules](rules.md)\n")
-		b.WriteString("- [By domain](by-domain.md)\n")
-		b.WriteString("- [Alias Legend](LEGEND.md)\n")
-		b.WriteString("- [Triage Workflow Guide](TRIAGE-GUIDE.md)\n")
-		b.WriteString("- [Scans](by-scan.md)\n")
-		b.WriteString("- [Executive Summary](EXECUTIVE-SUMMARY.md)\n")
+		b.WriteString("## Explore\n")
+		b.WriteString("- History: [Scans](by-scan.md) | [By domain](by-domain.md)\n")
+		fmt.Fprintf(&b, "- Evidence: [Rules](rules.md) | [%s](issues.md) | [Occurrences](occurrences.md)\n", findNounP)
+		b.WriteString("- Workflow: [Triage board](triage-board.md) | [Guide](TRIAGE-GUIDE.md)\n")
+		b.WriteString("- Overview: [Executive summary](EXECUTIVE-SUMMARY.md) | [Dashboard](DASHBOARD.md) | [Alias legend](LEGEND.md)\n")
 		b.WriteString("\n")
 
 		trackerIssueCounts := map[string]int{}
@@ -1474,6 +1469,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			b.WriteString("\n")
 		}
+		// Home stops after the actionable queue. Detailed evidence tables are
+		// emitted below into their dedicated drill-down pages.
+		landingContent := b.String()
 
 		// operationalPluginIDs holds plugin IDs for tool-health rules that are
 		// not actionable findings for the target application.
@@ -1737,17 +1735,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
-		indexContent := b.String()
-		if err := os.WriteFile(index, []byte(indexContent), 0o644); err != nil {
+		fullIndexContent := b.String()
+		if err := os.WriteFile(index, []byte(landingContent), 0o644); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "issues.md", findNounP, extractMarkdownSection(indexContent, findNounP)); err != nil {
+		findingsContent := extractMarkdownSection(fullIndexContent, findNounP)
+		operationalContent := extractMarkdownSection(fullIndexContent, "Operational / Tool info")
+		if strings.TrimSpace(operationalContent) != "" {
+			findingsContent += "\n" + operationalContent
+		}
+		if err := writeSectionPage(root, "issues.md", findNounP, findingsContent); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(indexContent, "Occurrences")); err != nil {
+		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(fullIndexContent, "Occurrences")); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "rules.md", "Rules", extractMarkdownSection(indexContent, "Rules")); err != nil {
+		if err := writeSectionPage(root, "rules.md", "Rules", extractMarkdownSection(fullIndexContent, "Rules")); err != nil {
 			return err
 		}
 		// Companion pages for quick navigation

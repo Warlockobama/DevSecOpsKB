@@ -116,7 +116,14 @@ func TestWriteVault_TableCellsEscapePipesForForgejo(t *testing.T) {
 		assertMarkdownTablesWellFormed(t, rel, body)
 	}
 
-	index := readOptionalVaultFile(t, root, "INDEX.md")
+	rendered := strings.Join([]string{
+		readOptionalVaultFile(t, root, "INDEX.md"),
+		readOptionalVaultFile(t, root, "issues.md"),
+		readOptionalVaultFile(t, root, "occurrences.md"),
+		readOptionalVaultFile(t, root, "rules.md"),
+		readOptionalVaultFile(t, root, "by-domain.md"),
+		readOptionalVaultFile(t, root, "by-scan.md"),
+	}, "\n")
 	for _, want := range []string{
 		"Rule \\| Name",
 		"http://redacted.test/path\\|segment",
@@ -126,8 +133,8 @@ func TestWriteVault_TableCellsEscapePipesForForgejo(t *testing.T) {
 		"domain\\|name",
 		"scan\\|a",
 	} {
-		if !strings.Contains(index, want) {
-			t.Fatalf("INDEX.md missing escaped table value %q:\n%s", want, index)
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered navigation pages missing escaped table value %q:\n%s", want, rendered)
 		}
 	}
 
@@ -1131,7 +1138,7 @@ func TestDefaultBodyTruncateBytes(t *testing.T) {
 	}
 }
 
-// --- Issue #48: Operational rules segregated in INDEX.md ---
+// --- Issue #48: Operational rules segregated on the Findings page ---
 
 // TestWriteVault_OperationalRulesSegregated verifies that a finding with
 // pluginID 10116 appears in the operational section and not in the main issues table.
@@ -1159,15 +1166,15 @@ func TestWriteVault_OperationalRulesSegregated(t *testing.T) {
 		t.Fatalf("WriteVault: %v", err)
 	}
 
-	indexData, err := os.ReadFile(filepath.Join(root, "INDEX.md"))
+	indexData, err := os.ReadFile(filepath.Join(root, "issues.md"))
 	if err != nil {
-		t.Fatalf("ReadFile INDEX.md: %v", err)
+		t.Fatalf("ReadFile issues.md: %v", err)
 	}
 	index := string(indexData)
 
 	// Operational section must exist.
 	if !strings.Contains(index, "## Operational / Tool info") {
-		t.Errorf("INDEX.md missing '## Operational / Tool info' section:\n%s", index)
+		t.Errorf("issues.md missing '## Operational / Tool info' section:\n%s", index)
 	}
 
 	// find-op must appear in the operational section.
@@ -1184,7 +1191,7 @@ func TestWriteVault_OperationalRulesSegregated(t *testing.T) {
 	mainSection := index[:opIdx]
 	issuesIdx := strings.Index(mainSection, "## Issues")
 	if issuesIdx < 0 {
-		t.Fatalf("INDEX.md missing '## Issues' section before operational section:\n%s", mainSection)
+		t.Fatalf("issues.md missing '## Issues' section before operational section:\n%s", mainSection)
 	}
 	issuesTable := mainSection[issuesIdx:]
 	if strings.Contains(issuesTable, "find-op") {
@@ -1541,10 +1548,10 @@ func TestWriteVault_ForgejoTrackerLinkifiesRepoRefs(t *testing.T) {
 	if strings.Contains(idx, "Jira") {
 		t.Errorf("INDEX must not mention Jira when the tracker is Forgejo:\n%s", idx)
 	}
-	if !strings.Contains(idx, "## Findings") || strings.Contains(idx, "## Issues") {
-		t.Errorf("INDEX section should be 'Findings', not 'Issues':\n%s", idx)
+	if strings.Contains(idx, "## Findings") || strings.Contains(idx, "## Issues") {
+		t.Errorf("INDEX should keep detailed finding tables on the drill-down page:\n%s", idx)
 	}
-	if !strings.Contains(idx, "[Findings](issues.md)") {
+	if !strings.Contains(idx, "[Findings](issues.md)") || !strings.Contains(idx, "History: [Scans](by-scan.md)") {
 		t.Errorf("INDEX quick-nav should link 'Findings':\n%s", idx)
 	}
 
@@ -1948,9 +1955,8 @@ func TestWriteVault_IndexQuickNavigationPublishesCompanionPages(t *testing.T) {
 	}
 	indexBody := string(indexData)
 	for _, want := range []string{
-		"- [Issues](issues.md)",
-		"- [Occurrences](occurrences.md)",
-		"- [Rules](rules.md)",
+		"- History: [Scans](by-scan.md)",
+		"- Evidence: [Rules](rules.md) | [Issues](issues.md) | [Occurrences](occurrences.md)",
 		"## Priority queue",
 	} {
 		if !strings.Contains(indexBody, want) {
