@@ -1,6 +1,6 @@
 # Agent assignments for DevSecOpsKB reliability
 
-Date: 12 September 2026. Status: prepared for dispatch; no implementation agents have been started by preparing these documents.
+Date: 12 September 2026. Status: execution started after the owner's launch instruction. See [assignment progress and integrated evidence](execution-status.md).
 
 Use these assignments with the [original reliability goals](../reliability-goals-2026-09.md) and [live publishing review](../../production-publishing-review-2026-09.md). The original document defines product outcomes; this directory divides delivery responsibility. Assignment numbers are identifiers, not severity rankings.
 
@@ -32,7 +32,7 @@ Luna Medium is an optional choice for polishing an already verified runbook or c
 
 Each implementing agent receives its assignment and [shared execution contract](SHARED.md). The numbered document includes its starting context, owned work, dependencies, acceptance evidence, and escalation rule. Configure the model in the agent/task settings; putting a model name in a prompt does not itself select that model.
 
-The goals currently exist as local uncommitted files. Before starting an isolated worktree from another revision, make the documents available there by an explicit copy or a reviewed documentation commit. Do not assume default main already contains them. These instructions do not ask agents to commit unrelated local changes.
+The goals were snapshotted in signed documentation commit `c847100` before implementation agents started. The original checkout still contains its uncommitted documentation draft; implementation branches inherit the snapshot and subsequent clarifications. Before starting another worktree, ensure it includes the current documents. Do not assume default main already contains them or commit unrelated local changes.
 
 Use one worktree/branch per assignment, with a `codex/` branch prefix. One coordinator handles integration; assignment 11 defines that role. It can operate from the start, then perform the final review after implementation. A second review task is unnecessary unless the implementer also owns the coordinator role and an independent review is wanted.
 
@@ -65,4 +65,4 @@ The highest collision areas are `cmd/zap-kb/main.go`, run-artifact serialization
 
 Require each delivery to include changed behavior, tests/results, compatibility effects, and unresolved external acceptance. Use assignment 11's final matrix to distinguish Forgejo readiness, mock-tested Atlassian behavior, and workplace live acceptance. No personal Atlassian tenant is required to complete the local Forgejo demonstration.
 
-Preparing this pack does not start tasks, deploy a build, publish findings, or change a running sink.
+The owner's launch instruction authorizes the bounded local implementation described in the shared contract. Deployment, production publication and changes to a running sink remain separate rollout actions.
