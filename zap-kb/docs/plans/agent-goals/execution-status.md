@@ -14,10 +14,10 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 04 Jira/outcomes | Astra High | API/result contract integrated; CLI phase waits for 03 | `6dea1c9`; published-image failures reproduced with local mocks |
 | 05 Taxonomy | Sol High | Reviewed package changes integrated; pipeline phase waits for 03 | `bf8138b`; preserves imported taxonomy and exposes unsupported mapping gaps |
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
-| 07 Publication state | Astra High | State design and cross-repository package work running | Local CLI on `4e3a5be` overwrites a newer atomic source replacement after delayed Jira create |
-| 08 CI/release | Terra High | Initial phase integrated; portable container/benchmark checks in progress | `5313680`, `f4aae32`; final image/suite acceptance pending |
+| 07 Publication state | Astra High | Reference journal and durable producer handoff integrated; final CLI wiring waits for 04 | Primary `c18bca5`, companion `158826a`; stale-source CLI regression still pending |
+| 08 CI/release | Terra High | CI preparation integrated; final corrected image acceptance pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness reproduces the two pending 04 defects |
 | 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
-| 10 Demo/workplace | Sol Medium | Queued | Workplace live acceptance needs designated tenant access |
+| 10 Demo/workplace | Sol Medium | Walkthrough and disposable acceptance preparation running | Final local signoff waits for behavioral integration; workplace acceptance needs designated tenant access |
 | 11 Integration | Astra High | Coordinating | Final combined checks pending |
 
 No production scan, publication, deployment, shared-ingest replacement, or external hosting is part of this implementation run. Disposable local test instances may be used. Source code changes, tests, and documentation will be delivered with explicit local/live acceptance boundaries.
@@ -37,3 +37,14 @@ interleaving through the CLI without touching live ingest. It is not evidence of
 historical production data loss. The ignored reproducer and result are under
 `integration/out/goal-pack/probe_state_race.py` and `state-race-baseline/result.json`;
 assignment 07 must turn this into a portable regression and preserve source B.
+
+Coordinator checkpoint `158826a` in the companion integration worktree: full
+uncached worker tests, vet and kb-source build passed. The reference journal
+package alone does not fix the CLI source rewrite; final wiring remains pending.
+The source retains cumulative snapshots with documented storage growth and no
+automatic pruning. A fresh manual backfill must also preserve the existing
+cursor, beyond the implemented stale-plan rejection; that edge case is under review.
+
+An additional valid-input boundary regression found during 03 review is fixed
+in `958f14b`: a finding with zero occurrences now renders instead of panicking.
+The public WriteVault regression and complete Obsidian package pass.
