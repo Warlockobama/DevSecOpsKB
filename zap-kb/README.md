@@ -128,6 +128,11 @@ See `docs/schema/entities-v1.md` for the entities schema and how definitions, fi
 Publishing (or pruning) also generates `DASHBOARD.md` in the vault with vault‑wide summaries (by scan, severity, domains, and top rules), complementing the workflow-aware `INDEX.md`. The index now highlights issues by status, provides a complete issue list, and includes an occurrence feed alongside the historical scan/domain sections.
 
 ## CI Integration
+
+The maintained suite/event map and the immutable release/rollback procedure
+are in [docs/ci-and-release.md](docs/ci-and-release.md). Use `zap-kb -version`
+to read the source revision embedded in a binary or running container.
+
 There are two ways to populate the KB in a pipeline after your ZAP stage:
 
 - Online (recommended): connect to the running ZAP instance via API and fetch alerts directly.

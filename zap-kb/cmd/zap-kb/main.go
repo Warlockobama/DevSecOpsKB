@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/config"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
@@ -121,8 +122,10 @@ func main() {
 		allowCustomPublish  bool
 		zapAlertsOnly       bool
 		publishSummaryOut   string
+		showVersion         bool
 	)
 	flag.StringVar(&zapURL, "zap-url", "http://127.0.0.1:8090", "ZAP API base URL (env: ZAP_URL)")
+	flag.BoolVar(&showVersion, "version", false, "Print build version, source revision, and build time, then exit")
 	flag.StringVar(&apiKey, "api-key", "", "ZAP API key (env: ZAP_API_KEY)")
 	flag.StringVar(&baseURL, "baseurl", "", "Filter alerts by baseurl (optional)")
 	flag.IntVar(&count, "count", 0, "Number of alerts to fetch (0 = all)")
@@ -226,6 +229,10 @@ func main() {
 	}
 
 	flag.Parse()
+	if showVersion {
+		fmt.Println(buildinfo.String())
+		return
+	}
 
 	// Environment variable fallbacks for credentials and URLs.
 	// Flags take precedence; env vars are checked only when the flag is empty.

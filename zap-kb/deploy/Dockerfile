@@ -10,8 +10,14 @@
 # Build context is the module dir (zap-kb/):
 #   docker build -f deploy/Dockerfile -t zap-kb:atlassian .
 ARG GO_VERSION=1.24
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG BUILD_TIME=unknown
 
 FROM golang:${GO_VERSION}-alpine AS build
+ARG VERSION
+ARG REVISION
+ARG BUILD_TIME
 WORKDIR /src
 # Warm the module cache before copying sources.
 COPY go.mod go.sum ./
@@ -19,14 +25,20 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 # Fully static (CGO off) so the binary runs on any minimal base.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zap-kb ./cmd/zap-kb
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Version=${VERSION} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Revision=${REVISION} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/zap-kb ./cmd/zap-kb
 
 FROM alpine:3.20
+ARG VERSION
+ARG REVISION
+ARG BUILD_TIME
 LABEL org.opencontainers.image.title="zap-kb-atlassian"
 LABEL org.opencontainers.image.description="ZAP → Atlassian (Jira + Confluence) KB publisher — post-scan"
 LABEL org.opencontainers.image.source="https://github.com/Warlockobama/DevSecOpsKB"
 LABEL org.opencontainers.image.documentation="https://github.com/Warlockobama/DevSecOpsKB/blob/main/zap-kb/deploy/README.md"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${REVISION}"
+LABEL org.opencontainers.image.created="${BUILD_TIME}"
 
 # ca-certificates: outbound HTTPS to Jira/Confluence Cloud.
 # tzdata: stable RFC3339 timestamps.

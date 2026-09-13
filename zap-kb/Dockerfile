@@ -2,8 +2,14 @@
 
 ARG GO_VERSION=1.24
 ARG ZAP_IMAGE=ghcr.io/zaproxy/zaproxy:stable
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG BUILD_TIME=unknown
 
 FROM golang:${GO_VERSION}-bookworm AS build
+ARG VERSION
+ARG REVISION
+ARG BUILD_TIME
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -12,15 +18,21 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zap-kb ./cmd/zap-kb
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Version=${VERSION} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Revision=${REVISION} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.BuildTime=${BUILD_TIME}" -o /out/zap-kb ./cmd/zap-kb
 
 FROM ${ZAP_IMAGE} AS runtime
 
 ARG RUNTIME_UID=1000
 ARG RUNTIME_GID=1000
+ARG VERSION
+ARG REVISION
+ARG BUILD_TIME
 
 LABEL org.opencontainers.image.title="zap-kb"
 LABEL org.opencontainers.image.description="OWASP ZAP runtime with the compiled DevSecOps KB zap-kb CLI"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${REVISION}"
+LABEL org.opencontainers.image.created="${BUILD_TIME}"
 
 USER root
 COPY --from=build /out/zap-kb /usr/local/bin/zap-kb

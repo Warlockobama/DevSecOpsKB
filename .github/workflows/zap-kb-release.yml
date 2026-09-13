@@ -32,6 +32,10 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           version="${GITHUB_REF_NAME:-manual}"
+          revision="$(git rev-parse HEAD)"
+          build_time="$(git show -s --format=%cI HEAD)"
+          ldflags="-s -w -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Version=${version} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.Revision=${revision} -X github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo.BuildTime=${build_time}"
+          printf 'version=%s\nrevision=%s\nbuild_time=%s\n' "$version" "$revision" "$build_time" > dist/BUILD-INFO.txt
           targets=(
             "linux amd64"
             "linux arm64"
@@ -43,11 +47,11 @@ jobs:
             read -r goos goarch <<< "$target"
             name="zap-kb-${version}-${goos}-${goarch}"
             if [ "$goos" = "windows" ]; then
-              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}.exe" ./cmd/zap-kb
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" -o "dist/${name}.exe" ./cmd/zap-kb
               (cd dist && zip "${name}.zip" "${name}.exe")
               rm "dist/${name}.exe"
             else
-              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "dist/${name}" ./cmd/zap-kb
+              GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" -o "dist/${name}" ./cmd/zap-kb
               tar -C dist -czf "dist/${name}.tar.gz" "$name"
               rm "dist/${name}"
             fi
