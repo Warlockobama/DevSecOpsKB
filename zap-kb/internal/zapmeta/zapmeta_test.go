@@ -5,6 +5,65 @@ import (
 	"testing"
 )
 
+func TestCanonicalPluginIDLookupAliases(t *testing.T) {
+	tests := map[string]string{
+		"zap-10098": "10098",
+		"ZAP-10098": "10098",
+		"zap-authenticated-basket-item-enumeration":        "auth-basket-items-enumeration",
+		"nuclei-auth-basket-items-enumeration":             "auth-basket-items-enumeration",
+		"custom-zap-auth-basket-items-enumeration":         "auth-basket-items-enumeration",
+		"custom-nuclei-auth-basket-object-reference":       "auth-basket-object-reference",
+		"custom-zap-authenticated-user-directory-exposure": "auth-user-directory-exposure",
+	}
+	for input, want := range tests {
+		if got := CanonicalPluginID(input); got != want {
+			t.Errorf("CanonicalPluginID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestLookupCustomTaxonomyAcceptsLegacyAndCurrentAliases(t *testing.T) {
+	for _, pluginID := range []string{
+		"zap-authenticated-basket-object-reference-exposure",
+		"zap-auth-basket-object-reference",
+		"nuclei-auth-basket-object-reference",
+		"custom-zap-auth-basket-object-reference",
+		"custom-nuclei-auth-basket-object-reference",
+	} {
+		got := LookupCustomTaxonomy(pluginID)
+		if got == nil || got.CWEID != 639 {
+			t.Errorf("LookupCustomTaxonomy(%q) = %+v, want CWE-639", pluginID, got)
+		}
+	}
+}
+
+func TestLookupCustomTaxonomyLeavesCollectionExposureUnmapped(t *testing.T) {
+	for _, pluginID := range []string{
+		"zap-authenticated-basket-item-enumeration",
+		"custom-nuclei-auth-basket-items-enumeration",
+		"custom-zap-auth-complaints-exposure",
+		"custom-nuclei-auth-user-directory-exposure",
+	} {
+		if got := LookupCustomTaxonomy(pluginID); got != nil {
+			t.Errorf("LookupCustomTaxonomy(%q) = %+v, want unresolved collection exposure", pluginID, got)
+		}
+	}
+}
+
+func TestLookupPluginAcceptsPrefixedNumericZAPID(t *testing.T) {
+	got := LookupPlugin("zap-10098")
+	if got == nil || got.CWEID != 942 {
+		t.Fatalf("LookupPlugin(zap-10098) = %+v, want CWE-942", got)
+	}
+}
+
+func TestLookupFalsePositiveGuidanceAcceptsPrefixedNumericZAPID(t *testing.T) {
+	got := LookupFalsePositiveGuidance("zap-10098")
+	if got == nil || len(got.Conditions) == 0 {
+		t.Fatalf("LookupFalsePositiveGuidance(zap-10098) = %+v, want guidance", got)
+	}
+}
+
 func TestScrapeCWEID_LinkInHTML(t *testing.T) {
 	html := `<a href="https://cwe.mitre.org/data/definitions/79.html">CWE-79</a>`
 	got := scrapeCWEID(html, "40012")

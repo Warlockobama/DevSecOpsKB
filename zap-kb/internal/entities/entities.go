@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 const inlineTrafficSnippetLimit = 8192
@@ -323,7 +324,7 @@ func DefinitionOriginValue(origin, pluginID string, det *Detection) string {
 		return DefinitionOriginTool
 	}
 	if det == nil {
-		if pluginID != "" && !isNumericPluginID(pluginID) {
+		if pluginID != "" && !isNumericPluginID(zapmeta.CanonicalPluginID(pluginID)) {
 			return DefinitionOriginCustom
 		}
 	}
@@ -332,6 +333,9 @@ func DefinitionOriginValue(origin, pluginID string, det *Detection) string {
 
 func isProjectSpecificPluginID(pluginID string) bool {
 	id := strings.ToLower(strings.TrimSpace(pluginID))
+	if strings.HasPrefix(id, "custom-") {
+		return true
+	}
 	if !strings.HasPrefix(id, "zap-") {
 		return false
 	}

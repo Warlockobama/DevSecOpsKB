@@ -68,7 +68,7 @@ var cweFallback = map[string]int{
 // ScrapeDetection best-effort scrapes ZAP alert docs for a plugin id and identifies
 // the implementing Java class path and logic type. Network failures return (nil, nil).
 func ScrapeDetection(ctx context.Context, pluginID string) (*Result, error) {
-	pid := strings.TrimLeft(strings.TrimSpace(pluginID), "0")
+	pid := strings.TrimLeft(CanonicalPluginID(pluginID), "0")
 	if pid == "" {
 		return nil, nil
 	}
@@ -454,7 +454,7 @@ func fromRuleSource(ruleSource string) string {
 // cweFallback map — no network calls. Returns nil if the plugin ID is unknown.
 // This is intentionally lightweight for use in offline enrichment paths.
 func LookupPlugin(pluginID string) *Result {
-	pid := strings.TrimSpace(pluginID)
+	pid := CanonicalPluginID(pluginID)
 	if pid == "" {
 		return nil
 	}

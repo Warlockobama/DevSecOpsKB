@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -132,7 +133,7 @@ func TestEnrichTaxonomy_PopulatesCAPEC(t *testing.T) {
 	}
 }
 
-func TestEnrichCustomTaxonomy_AuthenticatedRule_GetsIDOR(t *testing.T) {
+func TestEnrichCustomTaxonomy_BasketItemsRuleIsExplicitlyUnmapped(t *testing.T) {
 	defs := []Definition{
 		{
 			DefinitionID: "def-auth-basket",
@@ -142,12 +143,179 @@ func TestEnrichCustomTaxonomy_AuthenticatedRule_GetsIDOR(t *testing.T) {
 	EnrichCustomTaxonomy(defs)
 	d := defs[0]
 	if d.Taxonomy == nil {
-		t.Fatal("expected Taxonomy to be set after EnrichCustomTaxonomy")
+		t.Fatal("expected taxonomy gap marker after EnrichCustomTaxonomy")
 	}
-	if d.Taxonomy.CWEID != 639 {
-		t.Errorf("CWEID = %d, want 639", d.Taxonomy.CWEID)
+	if d.Taxonomy.CWEID != 0 {
+		t.Errorf("CWEID = %d, want unresolved", d.Taxonomy.CWEID)
 	}
-	if len(d.Taxonomy.OWASPTop10) == 0 || d.Taxonomy.OWASPTop10[0] != "A01:2021-Broken Access Control" {
-		t.Errorf("OWASPTop10 = %v, want [A01:2021-Broken Access Control]", d.Taxonomy.OWASPTop10)
+	if !reflect.DeepEqual(d.Taxonomy.Tags, []string{"taxonomy-unmapped-custom"}) {
+		t.Errorf("taxonomy tags = %v, want mapping gap", d.Taxonomy.Tags)
+	}
+}
+
+func TestEnrichCustomTaxonomy_AliasPrecedenceAndIdentity(t *testing.T) {
+	for _, pluginID := range []string{
+		"zap-authenticated-basket-object-reference-exposure",
+		"zap-auth-basket-object-reference",
+		"nuclei-auth-basket-object-reference",
+		"custom-zap-auth-basket-object-reference",
+	} {
+		t.Run(pluginID, func(t *testing.T) {
+			defs := []Definition{{
+				DefinitionID: "def-stable",
+				PluginID:     pluginID,
+				Origin:       DefinitionOriginCustom,
+				Taxonomy: &Taxonomy{
+					CWEID:             200,
+					CWEName:           "Exposure of Sensitive Information",
+					CWEURI:            "https://cwe.mitre.org/data/definitions/200.html",
+					CAPECIDs:          []int{118},
+					CAPEC:             []TaxonomyRef{{ID: "CAPEC-118"}},
+					OWASPTop10:        []string{"A05:2021"},
+					MappingConfidence: "scanner-cwe",
+				},
+				Detection: &Detection{MatchReason: "portable synthetic detector trace"},
+			}}
+
+			EnrichCustomTaxonomy(defs)
+			EnrichTaxonomy(defs)
+			EnrichMITRE(defs)
+
+			got := defs[0]
+			if got.DefinitionID != "def-stable" || got.PluginID != pluginID {
+				t.Fatalf("identity changed: definition=%q plugin=%q", got.DefinitionID, got.PluginID)
+			}
+			if got.Detection == nil || got.Detection.MatchReason != "portable synthetic detector trace" {
+				t.Fatalf("detection trace changed: %+v", got.Detection)
+			}
+			if got.Taxonomy.CWEID != 639 || got.Taxonomy.CWEName != "Authorization Bypass Through User-Controlled Key" {
+				t.Fatalf("taxonomy = %+v, want curated CWE-639", got.Taxonomy)
+			}
+			if len(got.Taxonomy.CAPECIDs) != 1 || got.Taxonomy.CAPECIDs[0] != 122 {
+				t.Fatalf("CAPEC IDs = %v, want [122]", got.Taxonomy.CAPECIDs)
+			}
+			if len(got.Taxonomy.OWASPTop10) != 1 || got.Taxonomy.OWASPTop10[0] != "A01:2021-Broken Access Control" {
+				t.Fatalf("OWASP = %v", got.Taxonomy.OWASPTop10)
+			}
+			if got.Taxonomy.MappingConfidence != "curated" || len(got.Taxonomy.Sources) < 2 {
+				t.Fatalf("taxonomy attribution = %+v", got.Taxonomy)
+			}
+			if len(got.Taxonomy.ATTACK) != 0 {
+				t.Fatalf("ATT&CK must remain unresolved for object authorization bypass, got %v", got.Taxonomy.ATTACK)
+			}
+
+			first := *got.Taxonomy
+			EnrichCustomTaxonomy(defs)
+			EnrichTaxonomy(defs)
+			EnrichMITRE(defs)
+			if !reflect.DeepEqual(first, *defs[0].Taxonomy) {
+				t.Fatalf("repeat enrichment changed taxonomy:\nfirst=%+v\nsecond=%+v", first, *defs[0].Taxonomy)
+			}
+		})
+	}
+}
+
+func TestEnrichCustomTaxonomy_PreservesImportedTaxonomyWithoutKnownProvenance(t *testing.T) {
+	for _, confidence := range []string{"", "high", "analyst-reviewed", "advisory-reviewed"} {
+		t.Run("confidence="+confidence, func(t *testing.T) {
+			want := &Taxonomy{
+				CWEID:             284,
+				CWEName:           "Improper Access Control",
+				CWEURI:            "https://cwe.mitre.org/data/definitions/284.html",
+				CAPECIDs:          []int{1},
+				ATTACK:            []string{"T1190"},
+				OWASPTop10:        []string{"A01:2021"},
+				MappingConfidence: confidence,
+				Sources:           []TaxonomySource{{Name: "Analyst advisory", URL: "https://example.invalid/advisory"}},
+			}
+			defs := []Definition{{
+				DefinitionID: "def-reviewed",
+				PluginID:     "custom-nuclei-auth-basket-object-reference",
+				Origin:       DefinitionOriginCustom,
+				Taxonomy:     want,
+			}}
+			before := *want
+			EnrichCustomTaxonomy(defs)
+			if !reflect.DeepEqual(before, *defs[0].Taxonomy) {
+				t.Fatalf("imported taxonomy changed:\nbefore=%+v\nafter=%+v", before, *defs[0].Taxonomy)
+			}
+		})
+	}
+}
+
+func TestEnrichCustomTaxonomy_UnmappedCustomIsExplicitlyIncomplete(t *testing.T) {
+	defs := []Definition{{
+		DefinitionID: "def-unmapped",
+		PluginID:     "custom-nuclei-new-unreviewed-rule",
+		Origin:       DefinitionOriginCustom,
+		Taxonomy: &Taxonomy{
+			CWEID:             200,
+			OWASPTop10:        []string{"A05:2021"},
+			MappingConfidence: "scanner-cwe",
+			Tags:              []string{"portable-fixture"},
+		},
+	}}
+	EnrichCustomTaxonomy(defs)
+	got := defs[0].Taxonomy
+	if got.CWEID != 200 || len(got.OWASPTop10) != 1 || got.MappingConfidence != "scanner-cwe" {
+		t.Fatalf("unmapped custom taxonomy was destructively changed: %+v", got)
+	}
+	if !reflect.DeepEqual(got.Tags, []string{"portable-fixture", "taxonomy-unmapped-custom"}) {
+		t.Fatalf("taxonomy gap tag = %v", got.Tags)
+	}
+	if gaps := UnmappedCustomRules(defs); !reflect.DeepEqual(gaps, []string{"custom-nuclei-new-unreviewed-rule"}) {
+		t.Fatalf("UnmappedCustomRules = %v", gaps)
+	}
+}
+
+func TestEnrichCustomTaxonomy_RemovesOnlyLegacyCuratedT1078(t *testing.T) {
+	defs := []Definition{
+		{
+			DefinitionID: "def-generated",
+			PluginID:     "custom-zap-auth-basket-object-reference",
+			Origin:       DefinitionOriginCustom,
+			Taxonomy: &Taxonomy{
+				CWEID:             639,
+				ATTACK:            []string{"T1078"},
+				ATTACKTechniques:  []TaxonomyRef{{ID: "T1078"}},
+				MappingConfidence: "curated",
+				Sources:           []TaxonomySource{{Name: "MITRE CWE"}, {Name: "MITRE ATT&CK"}},
+			},
+		},
+		{
+			DefinitionID: "def-owned",
+			PluginID:     "custom-zap-auth-basket-object-reference",
+			Origin:       DefinitionOriginCustom,
+			Taxonomy: &Taxonomy{
+				CWEID:             639,
+				ATTACK:            []string{"T1078"},
+				MappingConfidence: "high",
+			},
+		},
+	}
+	EnrichCustomTaxonomy(defs)
+	if len(defs[0].Taxonomy.ATTACK) != 0 || len(defs[0].Taxonomy.ATTACKTechniques) != 0 {
+		t.Fatalf("legacy generated ATT&CK mapping retained: %+v", defs[0].Taxonomy)
+	}
+	if len(defs[0].Taxonomy.Sources) != 1 || defs[0].Taxonomy.Sources[0].Name != "MITRE CWE" {
+		t.Fatalf("legacy ATT&CK source migration = %+v", defs[0].Taxonomy.Sources)
+	}
+	if !reflect.DeepEqual(defs[1].Taxonomy.ATTACK, []string{"T1078"}) {
+		t.Fatalf("imported ATT&CK mapping changed: %+v", defs[1].Taxonomy)
+	}
+}
+
+func TestEnrichCustomTaxonomy_NativeRuleIsNeverReclassified(t *testing.T) {
+	want := &Taxonomy{CWEID: 200, MappingConfidence: "scanner-cwe"}
+	defs := []Definition{{
+		DefinitionID: "def-native",
+		PluginID:     "nuclei-auth-basket-items-enumeration",
+		Origin:       DefinitionOriginTool,
+		Taxonomy:     want,
+	}}
+	before := *want
+	EnrichCustomTaxonomy(defs)
+	if !reflect.DeepEqual(before, *defs[0].Taxonomy) {
+		t.Fatalf("native taxonomy changed: before=%+v after=%+v", before, *defs[0].Taxonomy)
 	}
 }

@@ -1,5 +1,7 @@
 package zapmeta
 
+import "strings"
+
 // CustomTaxonomy holds static taxonomy overrides for custom/internal ZAP rule plugin IDs
 // that are not in the standard ZAP alerts catalogue.
 type CustomTaxonomy struct {
@@ -10,42 +12,57 @@ type CustomTaxonomy struct {
 	OWASPTop10 []string
 }
 
-// customTaxonomyMap maps plugin IDs to their static taxonomy.
-// The 4 authenticated-* rules are custom IDOR/access-control findings.
+// CanonicalPluginID returns a source-agnostic key for metadata lookup. It does
+// not change the plugin ID stored on a definition, finding, or occurrence.
+// Matching is case-insensitive and accepts the legacy source-prefixed form as
+// well as the current custom-<source>-<slug> contract.
+func CanonicalPluginID(pluginID string) string {
+	id := strings.ToLower(strings.TrimSpace(pluginID))
+	if strings.HasPrefix(id, "custom-") {
+		id = strings.TrimPrefix(id, "custom-")
+	}
+	for _, prefix := range []string{"zap-", "nuclei-", "burp-"} {
+		if strings.HasPrefix(id, prefix) {
+			id = strings.TrimPrefix(id, prefix)
+			break
+		}
+	}
+	if alias, ok := customTaxonomyAliases[id]; ok {
+		return alias
+	}
+	return id
+}
+
+// customTaxonomyAliases connects historical rule names to the current stable
+// slugs. These are lookup aliases only; identity fields remain untouched.
+var customTaxonomyAliases = map[string]string{
+	"authenticated-basket-item-enumeration":          "auth-basket-items-enumeration",
+	"authenticated-basket-object-reference-exposure": "auth-basket-object-reference",
+	"authenticated-complaints-exposure":              "auth-complaints-exposure",
+	"authenticated-user-directory-exposure":          "auth-user-directory-exposure",
+}
+
+var idorTaxonomy = CustomTaxonomy{
+	CWEID:      639,
+	CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
+	CAPECIDs:   []int{122},
+	OWASPTop10: []string{"A01:2021-Broken Access Control"},
+	// ATT&CK is intentionally unresolved. T1078 describes obtaining or abusing
+	// account credentials; these detectors establish object authorization
+	// bypass with an authenticated test session, not credential compromise.
+}
+
+// customTaxonomyMap maps canonical custom-rule slugs to curated taxonomy. Only
+// the object-reference detector controls a record key and therefore meets the
+// CWE-639 mapping criteria. Collection-exposure rules remain unmapped until a
+// more specific weakness is justified by their detector condition.
 var customTaxonomyMap = map[string]CustomTaxonomy{
-	"zap-authenticated-basket-item-enumeration": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-basket-object-reference-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-complaints-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
-	"zap-authenticated-user-directory-exposure": {
-		CWEID:      639,
-		CWEURI:     "https://cwe.mitre.org/data/definitions/639.html",
-		CAPECIDs:   []int{122},
-		ATTACK:     []string{"T1078"},
-		OWASPTop10: []string{"A01:2021-Broken Access Control"},
-	},
+	"auth-basket-object-reference": idorTaxonomy,
 }
 
 // LookupCustomTaxonomy returns the static taxonomy for a plugin ID, or nil if not found.
 func LookupCustomTaxonomy(pluginID string) *CustomTaxonomy {
-	t, ok := customTaxonomyMap[pluginID]
+	t, ok := customTaxonomyMap[CanonicalPluginID(pluginID)]
 	if !ok {
 		return nil
 	}
@@ -89,7 +106,7 @@ var falsePositiveMap = map[string]FalsePositiveGuidance{
 
 // LookupFalsePositiveGuidance returns FP conditions for a plugin ID, or nil if not found.
 func LookupFalsePositiveGuidance(pluginID string) *FalsePositiveGuidance {
-	g, ok := falsePositiveMap[pluginID]
+	g, ok := falsePositiveMap[CanonicalPluginID(pluginID)]
 	if !ok {
 		return nil
 	}
