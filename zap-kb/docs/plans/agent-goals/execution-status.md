@@ -42,8 +42,10 @@ Coordinator checkpoint `158826a` in the companion integration worktree: full
 uncached worker tests, vet and kb-source build passed. The reference journal
 package alone does not fix the CLI source rewrite; final wiring remains pending.
 The source retains cumulative snapshots with documented storage growth and no
-automatic pruning. A fresh manual backfill must also preserve the existing
-cursor, beyond the implemented stale-plan rejection; that edge case is under review.
+automatic pruning. Follow-up `8255102` verifies the existing manual-backfill
+behavior through Render, persisted plan and Commit: older evidence is admitted
+while the cursor and boundary IDs remain unchanged. It also rejects malformed
+normal plans that would regress the checkpoint, before changing durable files.
 
 An additional valid-input boundary regression found during 03 review is fixed
 in `958f14b`: a finding with zero occurrences now renders instead of panicking.
