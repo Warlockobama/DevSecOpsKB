@@ -101,6 +101,11 @@ Environment variables used by the script:
 - `ZAP_URL` (maps to `-zap-url`)
 - `ZAP_API_KEY` (maps to `-api-key`)
 
+Explicit flags take precedence over environment variables, which take
+precedence over built-in defaults. See [Atlassian configuration
+precedence](docs/atlassian-cloud.md#configuration-precedence) for the complete
+advertised setting table, including empty-flag behavior.
+
 Python helper `scripts/flatten_report.py` converts ZAP's JSON-plus report (site -> alerts -> instances) into the flat alert list accepted by `zap-kb -in`. It also supports on-the-fly filtering:
 
 ```bash

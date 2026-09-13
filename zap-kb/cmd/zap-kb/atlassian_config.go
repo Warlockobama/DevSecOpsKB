@@ -21,6 +21,11 @@ type atlassianConfigInput struct {
 	JiraUser             string
 	JiraToken            string
 	JiraDeployment       string
+	// FlagSet records flags which were supplied by the caller. A supplied empty
+	// flag is intentional and must not silently fall back to an environment
+	// value. Callers which build this struct directly may omit FlagSet: nonempty
+	// values retain the historical meaning of an explicit flag.
+	FlagSet map[string]bool
 }
 
 type atlassianConfig struct {
@@ -55,6 +60,15 @@ type atlassianTargets struct {
 	JiraDeployment       string `json:"jiraDeployment,omitempty"`
 }
 
+type atlassianTargetSources struct {
+	ConfluenceURL        string `json:"confluenceUrl"`
+	ConfluenceSpace      string `json:"confluenceSpace"`
+	ConfluenceDeployment string `json:"confluenceDeployment"`
+	JiraURL              string `json:"jiraUrl"`
+	JiraProject          string `json:"jiraProject"`
+	JiraDeployment       string `json:"jiraDeployment"`
+}
+
 type atlassianCredentialSources struct {
 	ConfluenceUser  string `json:"confluenceUser"`
 	ConfluenceToken string `json:"confluenceToken"`
@@ -66,6 +80,7 @@ type atlassianCheckOutput struct {
 	Ready             bool                       `json:"ready"`
 	Missing           []string                   `json:"missing"`
 	Targets           atlassianTargets           `json:"targets"`
+	TargetSources     atlassianTargetSources     `json:"targetSources"`
 	CredentialSources atlassianCredentialSources `json:"credentialSources"`
 }
 
@@ -98,30 +113,51 @@ type publishEvidenceLinkSummary struct {
 	Errors  int `json:"errors"`
 }
 
+// resolveAtlassianConfig preserves the package-level compatibility helper used
+// by existing callers. CLI entry points use resolveAtlassianConfigStrict so
+// invalid operator input stops before side effects.
 func resolveAtlassianConfig(input atlassianConfigInput, getenv func(string) string) atlassianConfig {
+	cfg, _ := resolveAtlassianConfigStrict(input, getenv)
+	return cfg
+}
+
+func resolveAtlassianConfigStrict(input atlassianConfigInput, getenv func(string) string) (atlassianConfig, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
 	cfg := atlassianConfig{}
-	cfg.ConfluenceURL, cfg.ConfluenceURLSource = resolveFlagEnv(input.ConfluenceURL, "CONFLUENCE_URL", getenv)
-	cfg.ConfluenceSpace, cfg.ConfluenceSpaceSource = resolveFlagEnv(input.ConfluenceSpace, "CONFLUENCE_SPACE", getenv)
-	cfg.ConfluenceUser, cfg.ConfluenceUserSource = resolveFlagEnv(input.ConfluenceUser, "CONFLUENCE_USER", getenv)
-	cfg.ConfluenceToken, cfg.ConfluenceTokenSource = resolveFlagEnv(input.ConfluenceToken, "CONFLUENCE_TOKEN", getenv)
-	cfg.JiraURL, cfg.JiraURLSource = resolveFlagEnv(input.JiraURL, "JIRA_URL", getenv)
-	cfg.JiraProject, cfg.JiraProjectSource = resolveFlagEnv(input.JiraProject, "JIRA_PROJECT", getenv)
-	cfg.JiraUser, cfg.JiraUserSource = resolveFlagEnv(input.JiraUser, "JIRA_USER", getenv)
-	if strings.TrimSpace(cfg.JiraUser) == "" && strings.TrimSpace(cfg.ConfluenceUser) != "" {
+	cfg.ConfluenceURL, cfg.ConfluenceURLSource = resolveFlagEnv(input.ConfluenceURL, input.supplied("confluence-url", input.ConfluenceURL), "CONFLUENCE_URL", getenv)
+	cfg.ConfluenceSpace, cfg.ConfluenceSpaceSource = resolveFlagEnv(input.ConfluenceSpace, input.supplied("confluence-space", input.ConfluenceSpace), "CONFLUENCE_SPACE", getenv)
+	cfg.ConfluenceUser, cfg.ConfluenceUserSource = resolveFlagEnv(input.ConfluenceUser, input.supplied("confluence-user", input.ConfluenceUser), "CONFLUENCE_USER", getenv)
+	cfg.ConfluenceToken, cfg.ConfluenceTokenSource = resolveFlagEnv(input.ConfluenceToken, input.supplied("confluence-token", input.ConfluenceToken), "CONFLUENCE_TOKEN", getenv)
+	cfg.JiraURL, cfg.JiraURLSource = resolveFlagEnv(input.JiraURL, input.supplied("jira-url", input.JiraURL), "JIRA_URL", getenv)
+	cfg.JiraProject, cfg.JiraProjectSource = resolveFlagEnv(input.JiraProject, input.supplied("jira-project", input.JiraProject), "JIRA_PROJECT", getenv)
+	cfg.JiraUser, cfg.JiraUserSource = resolveFlagEnv(input.JiraUser, input.supplied("jira-user", input.JiraUser), "JIRA_USER", getenv)
+	if strings.TrimSpace(cfg.JiraUser) == "" && cfg.JiraUserSource != "flag" && strings.TrimSpace(cfg.ConfluenceUser) != "" {
 		cfg.JiraUser = cfg.ConfluenceUser
 		cfg.JiraUserSource = "fallback:CONFLUENCE_USER"
 	}
-	cfg.JiraToken, cfg.JiraTokenSource = resolveFlagEnv(input.JiraToken, "JIRA_API_TOKEN", getenv)
-	if strings.TrimSpace(cfg.JiraToken) == "" && strings.TrimSpace(cfg.ConfluenceToken) != "" {
+	cfg.JiraToken, cfg.JiraTokenSource = resolveFlagEnv(input.JiraToken, input.supplied("jira-token", input.JiraToken), "JIRA_API_TOKEN", getenv)
+	if strings.TrimSpace(cfg.JiraToken) == "" && cfg.JiraTokenSource != "flag" && strings.TrimSpace(cfg.ConfluenceToken) != "" {
 		cfg.JiraToken = cfg.ConfluenceToken
 		cfg.JiraTokenSource = "fallback:CONFLUENCE_TOKEN"
 	}
-	cfg.ConfluenceDeployment, cfg.ConfluenceDeploymentSource = resolveDeployment(input.ConfluenceDeployment, "CONFLUENCE_DEPLOYMENT", cfg.ConfluenceURL, getenv)
-	cfg.JiraDeployment, cfg.JiraDeploymentSource = resolveDeployment(input.JiraDeployment, "JIRA_DEPLOYMENT", cfg.JiraURL, getenv)
-	return cfg
+	var err error
+	cfg.ConfluenceDeployment, cfg.ConfluenceDeploymentSource, err = resolveDeploymentStrict(input.ConfluenceDeployment, input.supplied("confluence-deployment", input.ConfluenceDeployment), "CONFLUENCE_DEPLOYMENT", cfg.ConfluenceURL, getenv)
+	if err != nil {
+		return atlassianConfig{}, err
+	}
+	cfg.JiraDeployment, cfg.JiraDeploymentSource, err = resolveDeploymentStrict(input.JiraDeployment, input.supplied("jira-deployment", input.JiraDeployment), "JIRA_DEPLOYMENT", cfg.JiraURL, getenv)
+	if err != nil {
+		return atlassianConfig{}, err
+	}
+	if err := validateOptionalHTTPURL("Confluence URL", cfg.ConfluenceURL); err != nil {
+		return atlassianConfig{}, err
+	}
+	if err := validateOptionalHTTPURL("Jira URL", cfg.JiraURL); err != nil {
+		return atlassianConfig{}, err
+	}
+	return cfg, nil
 }
 
 // resolveDeployment resolves a sink's deployment kind ("cloud" or
@@ -130,39 +166,61 @@ func resolveAtlassianConfig(input atlassianConfigInput, getenv func(string) stri
 // *.atlassian.net hosts are Cloud, anything else self-hosted Data Center.
 // Returns "" when the sink URL is also unset (sink disabled).
 func resolveDeployment(flagValue, envKey, sinkURL string, getenv func(string) string) (string, string) {
-	explicit, source := resolveFlagEnv(flagValue, envKey, getenv)
+	deployment, source, _ := resolveDeploymentStrict(flagValue, strings.TrimSpace(flagValue) != "", envKey, sinkURL, getenv)
+	return deployment, source
+}
+
+func resolveDeploymentStrict(flagValue string, flagSet bool, envKey, sinkURL string, getenv func(string) string) (string, string, error) {
+	explicit, source := resolveFlagEnv(flagValue, flagSet, envKey, getenv)
 	switch strings.ToLower(explicit) {
 	case "cloud":
-		return "cloud", source
+		return "cloud", source, nil
 	case "datacenter", "dc", "server":
-		return "datacenter", source
+		return "datacenter", source, nil
 	case "", "auto":
 		// fall through to URL detection
 	default:
-		fmt.Fprintf(os.Stderr, "warning: unknown %s value %q, auto-detecting from URL\n", envKey, explicit)
+		return "", source, fmt.Errorf("invalid %s value %q: expected auto, cloud, or datacenter", envKey, explicit)
 	}
 	sinkURL = strings.TrimSpace(sinkURL)
 	if sinkURL == "" {
-		return "", "unset"
+		return "", "unset", nil
 	}
-	if u, err := url.Parse(sinkURL); err == nil {
-		host := strings.ToLower(u.Hostname())
-		if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") {
-			return "cloud", "auto:url"
-		}
-		return "datacenter", "auto:url"
+	u, err := url.Parse(sinkURL)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return "", "auto:url", fmt.Errorf("invalid %s URL %q", strings.ToLower(strings.TrimSuffix(envKey, "_DEPLOYMENT")), sinkURL)
 	}
-	return "cloud", "auto:default"
+	host := strings.ToLower(u.Hostname())
+	if host == "atlassian.net" || strings.HasSuffix(host, ".atlassian.net") {
+		return "cloud", "auto:url", nil
+	}
+	return "datacenter", "auto:url", nil
 }
 
-func resolveFlagEnv(flagValue, envKey string, getenv func(string) string) (string, string) {
-	if v := strings.TrimSpace(flagValue); v != "" {
-		return v, "flag"
+func resolveFlagEnv(flagValue string, flagSet bool, envKey string, getenv func(string) string) (string, string) {
+	if flagSet {
+		return strings.TrimSpace(flagValue), "flag"
 	}
 	if v := strings.TrimSpace(getenv(envKey)); v != "" {
 		return v, "env:" + envKey
 	}
 	return "", "unset"
+}
+
+func (input atlassianConfigInput) supplied(name, value string) bool {
+	return input.FlagSet[name] || strings.TrimSpace(value) != ""
+}
+
+func validateOptionalHTTPURL(label, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid %s %q: expected an http or https URL", label, value)
+	}
+	return nil
 }
 
 func (cfg atlassianConfig) targets() atlassianTargets {
@@ -173,6 +231,17 @@ func (cfg atlassianConfig) targets() atlassianTargets {
 		JiraURL:              strings.TrimSpace(cfg.JiraURL),
 		JiraProject:          strings.TrimSpace(cfg.JiraProject),
 		JiraDeployment:       cfg.JiraDeployment,
+	}
+}
+
+func (cfg atlassianConfig) targetSources() atlassianTargetSources {
+	return atlassianTargetSources{
+		ConfluenceURL:        cfg.ConfluenceURLSource,
+		ConfluenceSpace:      cfg.ConfluenceSpaceSource,
+		ConfluenceDeployment: cfg.ConfluenceDeploymentSource,
+		JiraURL:              cfg.JiraURLSource,
+		JiraProject:          cfg.JiraProjectSource,
+		JiraDeployment:       cfg.JiraDeploymentSource,
 	}
 }
 
@@ -226,6 +295,7 @@ func buildAtlassianCheckOutput(cfg atlassianConfig) atlassianCheckOutput {
 		Ready:             len(missing) == 0,
 		Missing:           missing,
 		Targets:           cfg.targets(),
+		TargetSources:     cfg.targetSources(),
 		CredentialSources: cfg.credentialSources(),
 	}
 }

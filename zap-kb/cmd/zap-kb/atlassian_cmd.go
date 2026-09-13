@@ -47,7 +47,13 @@ func runAtlassianCheck(args []string) {
 		os.Exit(1)
 	}
 
-	out := buildAtlassianCheckOutput(resolveAtlassianConfig(input, os.Getenv))
+	input.FlagSet = suppliedFlags(fs)
+	cfg, err := resolveAtlassianConfigStrict(input, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "atlassian check: configuration: %v\n", err)
+		os.Exit(1)
+	}
+	out := buildAtlassianCheckOutput(cfg)
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "atlassian check: encode: %v\n", err)

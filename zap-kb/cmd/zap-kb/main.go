@@ -233,24 +233,19 @@ func main() {
 		fmt.Println(buildinfo.String())
 		return
 	}
+	supplied := suppliedFlags(flag.CommandLine)
 
-	// Environment variable fallbacks for credentials and URLs.
-	// Flags take precedence; env vars are checked only when the flag is empty.
-	// This keeps credentials out of the process table and shell history.
-	envFallback := func(p *string, envKey string) {
-		if strings.TrimSpace(*p) == "" {
-			if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
-				*p = v
-			}
-		}
-	}
-	envFallback(&zapURL, "ZAP_URL")
-	envFallback(&apiKey, "ZAP_API_KEY")
-	envFallback(&jiraServerID, "JIRA_SERVER_ID")
-	envFallback(&jiraServerName, "JIRA_SERVER_NAME")
-	envFallback(&forgejoToken, "FORGEJO_TOKEN")
+	// Explicit flags win even when they deliberately set false, zero, or an
+	// empty string. Otherwise use a non-blank environment value, then the flag
+	// default. Keep sources separate from values so credentials never appear in
+	// diagnostics.
+	zapURL, _ = resolveStringFlagEnvDefault(zapURL, supplied["zap-url"], "ZAP_URL", "http://127.0.0.1:8090", os.Getenv)
+	apiKey, _ = resolveStringFlagEnvDefault(apiKey, supplied["api-key"], "ZAP_API_KEY", "", os.Getenv)
+	jiraServerID, _ = resolveStringFlagEnvDefault(jiraServerID, supplied["jira-server-id"], "JIRA_SERVER_ID", "", os.Getenv)
+	jiraServerName, _ = resolveStringFlagEnvDefault(jiraServerName, supplied["jira-server-name"], "JIRA_SERVER_NAME", "", os.Getenv)
+	forgejoToken, _ = resolveStringFlagEnvDefault(forgejoToken, supplied["forgejo-token"], "FORGEJO_TOKEN", "", os.Getenv)
 
-	atlassianCfg := resolveAtlassianConfig(atlassianConfigInput{
+	atlassianCfg, cfgErr := resolveAtlassianConfigStrict(atlassianConfigInput{
 		ConfluenceURL:        confURL,
 		ConfluenceSpace:      confSpace,
 		ConfluenceUser:       confUser,
@@ -261,7 +256,11 @@ func main() {
 		JiraUser:             jiraUser,
 		JiraToken:            jiraToken,
 		JiraDeployment:       jiraDeployment,
+		FlagSet:              supplied,
 	}, os.Getenv)
+	if cfgErr != nil {
+		log.Fatalf("configuration: %v", cfgErr)
+	}
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
 	confUser = atlassianCfg.ConfluenceUser
@@ -1278,7 +1277,7 @@ func runPullCommand(args []string) {
 		os.Exit(1)
 	}
 
-	atlassianCfg := resolveAtlassianConfig(atlassianConfigInput{
+	atlassianCfg, cfgErr := resolveAtlassianConfigStrict(atlassianConfigInput{
 		ConfluenceURL:   confURL,
 		ConfluenceSpace: confSpace,
 		ConfluenceUser:  confUser,
@@ -1287,7 +1286,12 @@ func runPullCommand(args []string) {
 		JiraUser:        jiraUser,
 		JiraToken:       jiraToken,
 		JiraDeployment:  jiraDeployment,
+		FlagSet:         suppliedFlags(fs),
 	}, os.Getenv)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "pull: configuration: %v\n", cfgErr)
+		os.Exit(1)
+	}
 	confURL = atlassianCfg.ConfluenceURL
 	confSpace = atlassianCfg.ConfluenceSpace
 	confUser = atlassianCfg.ConfluenceUser

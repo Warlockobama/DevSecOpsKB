@@ -43,10 +43,24 @@ Mount a host directory when you want to keep outputs:
 ```bash
 docker run --rm -v "$PWD/out:/zap/wrk/out" devsecopskb/zap-kb-zap:local \
   -format entities \
-  -out out/entities.json \
-  -zap-url "$ZAP_URL" \
-  -api-key "$ZAP_API_KEY"
+  -out out/entities.json
 ```
+
+Pass the ZAP endpoint and API key as environment variables when the container
+is not using its localhost default; no duplicate `-zap-url` or `-api-key`
+flags are needed:
+
+```bash
+docker run --rm \
+  -e ZAP_URL="https://zap.example.test" \
+  -e ZAP_API_KEY="${ZAP_API_KEY}" \
+  -v "$PWD/out:/zap/wrk/out" devsecopskb/zap-kb-zap:local \
+  -format entities -out out/entities.json
+```
+
+An explicit empty flag, such as `-zap-url=`, disables the corresponding
+environment value for that run. See `docs/atlassian-cloud.md` for the complete
+flag/environment/default precedence table.
 
 ## Run ZAP And `zap-kb` In One Container
 

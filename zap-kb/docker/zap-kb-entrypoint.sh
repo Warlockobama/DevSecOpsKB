@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+# Keep this file LF-terminated: it is executed directly as the container entrypoint.
+
 if [ "$#" -eq 0 ]; then
 	exec zap-kb -h
 fi
