@@ -27,6 +27,24 @@ Starting paths: Main repository usage/concepts/release docs and bounded integrat
 - Prepare workplace steps for an existing DAST report: test project/space, metadata/permissions, redaction, Jira workflow, Confluence analyst blocks, cross-links, repeat publish and partial failure. Use 04's verified API behavior.
 - Use a disposable instance for write acceptance. If no tenant exists, complete the local walkthrough and runnable workplace procedure while leaving tenant acceptance pending.
 
+### Product clarification from the owner
+
+The workplace goal is triage where developers already work: Jira/Confluence,
+with detection history, earlier instances, prior decisions and supporting
+evidence readily available. A later experiment will compare human-only,
+LLM-only and human-with-LLM triage. The agent may use an Atlassian connector to
+investigate the published issues and pages. A separate database is not a
+prerequisite and is not an implementation requirement for this pack.
+
+Prepare the pilot around connector-readable page bodies, explicit evidence and
+history links, and a clear distinction between an AI recommendation and an
+accepted analyst decision. Check what information an API reader receives when
+a browser normally renders a macro; required context must remain retrievable.
+Keep immutable JSON artifacts for replay and record consulted issue/page
+versions in the proposed evaluation procedure. Evaluation implementation is a
+future phase; this assignment prepares its prerequisites without contacting a
+workplace tenant or changing workflow automatically.
+
 ## Acceptance evidence
 
 - A clean operator can follow the documented demo using the stated revisions/configuration. Record actual artifact-to-issue/wiki readback, not just a successful Job status.
