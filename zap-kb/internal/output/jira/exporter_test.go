@@ -217,8 +217,8 @@ func TestExport_DryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if sum.Created != 1 {
-		t.Errorf("dry-run should report 1 would-create, got %d", sum.Created)
+	if sum.Created != 0 || sum.Skipped != 1 || !sum.DryRun {
+		t.Errorf("dry-run must report deliberately skipped publication: %+v", sum)
 	}
 }
 

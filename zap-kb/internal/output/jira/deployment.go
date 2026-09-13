@@ -1,6 +1,37 @@
 package jira
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
+
+// IsCloudURL recognizes site and scoped-token gateway API roots, including
+// roots used with a local mock port. API roots are distinct from browser URLs.
+func IsCloudURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if strings.HasSuffix(host, ".atlassian.net") {
+		return true
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	return host == "api.atlassian.com" && len(parts) == 3 && parts[0] == "ex" && parts[1] == "jira" && parts[2] != ""
+}
+
+// BrowserBase returns a usable human-facing root. A gateway cannot identify
+// its tenant's browser hostname: callers must supply the separate site URL.
+func BrowserBase(apiBase, siteBase string) string {
+	if strings.TrimSpace(siteBase) != "" {
+		return strings.TrimRight(siteBase, "/")
+	}
+	u, err := url.Parse(apiBase)
+	if err != nil || strings.EqualFold(u.Hostname(), "api.atlassian.com") {
+		return ""
+	}
+	return strings.TrimRight(apiBase, "/")
+}
 
 // Deployment values accepted by Options.Deployment / PullOptions.Deployment.
 // Cloud (the default) speaks REST v3 with ADF descriptions; Data Center only
