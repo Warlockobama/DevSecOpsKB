@@ -79,7 +79,8 @@ var wikiSubdirs = []string{"definitions", "findings", "occurrences"}
 // pages (see rewriteVaultLinks). Publishing is two-pass: pages are upserted
 // with link targets taken from the pre-publish listing's server-issued
 // sub_urls (client-side escaping only for pages that don't exist yet), then
-// the page list is re-fetched and any page whose links differ under the
+// when a target was absent or an upsert failed, the page list is re-fetched
+// and any page whose links differ under the
 // post-publish sub_urls is PATCHed — the server's page-name escaping is the
 // only authoritative source for addressing hierarchical titles
 // ("Findings/fin-1"), and rendering with known sub_urls up front keeps
@@ -185,6 +186,13 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 		return summary, fmt.Errorf("forgejo wiki: list pages: %w", err)
 	}
+	needsLinkDiscovery := false
+	for _, p := range allPages {
+		if existing[p.name] == "" {
+			needsLinkDiscovery = true
+			break
+		}
+	}
 
 	// Render links with the server-issued sub_urls already known from the
 	// pre-publish listing, falling back to client-side escaping for pages that
@@ -233,16 +241,25 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 	}
 
+publishPages:
 	for _, p := range pages {
+		// Acquire before starting the goroutine: a canceled pass must stop
+		// scheduling work rather than allocate a goroutine for every wiki page.
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break publishPages
+		}
 		wg.Add(1)
 		go func(p page) {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
 				return
 			}
-			defer func() { <-sem }()
 
 			content, err := readVaultMarkdown(p.path)
 			if err != nil {
@@ -278,52 +295,62 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		return summary, nil
 	}
 
-	// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
-	// pages just created, re-render every page's links against those tokens,
-	// and PATCH the pages whose content changed. On servers whose page-name
-	// escaping matches url.PathEscape this finds nothing and costs one listing
-	// call; on servers with a divergent scheme it is the only way hierarchical
-	// cross-links ("Findings/fin-1") resolve instead of 404ing.
-	subURLs, lerr := c.listWikiPages(ctx)
-	if lerr != nil {
-		summary.Errors++
-		fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %v\n", lerr)
-	} else {
-		linkForSub := func(name string) string {
-			if su := subURLs[name]; su != "" {
-				return su
+	// Existing page content is still fetched on EVERY run; there is no cache
+	// to invalidate or hash manifest to trust. If every desired page was in
+	// the initial authoritative listing and all upserts succeeded, pass 1
+	// already used the final target names. Skip the second full traversal and
+	// re-render. A missing target or error retains discovery, including a
+	// concurrently created target whose POST collided. This is a per-pass
+	// snapshot, not an atomic transaction: a concurrent rename/delete can still
+	// require the next run, as it could after the old second listing too.
+	if needsLinkDiscovery || summary.Errors > 0 {
+		// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
+		// pages just created, re-render every page's links against those tokens,
+		// and PATCH the pages whose content changed. On servers whose page-name
+		// escaping matches url.PathEscape this finds nothing and costs one listing
+		// call; on servers with a divergent scheme it is the only way hierarchical
+		// cross-links ("Findings/fin-1") resolve instead of 404ing.
+		subURLs, lerr := c.listWikiPages(ctx)
+		if lerr != nil {
+			summary.Errors++
+			fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %v\n", lerr)
+		} else {
+			linkForSub := func(name string) string {
+				if su := subURLs[name]; su != "" {
+					return su
+				}
+				return escapePageName(name)
 			}
-			return escapePageName(name)
-		}
-		for _, p := range allPages {
-			if err := ctx.Err(); err != nil {
-				summary.Errors++
-				fmt.Printf("[forgejo wiki] link repair stopped: %v\n", err)
-				break
-			}
-			su := subURLs[p.name]
-			if su == "" {
-				continue // page never landed; already counted as an error
-			}
-			raw, rerr := readVaultMarkdown(p.path)
-			if rerr != nil {
-				continue // unreadable file was already counted in pass 1
-			}
-			pass1 := rewriteVaultLinks(raw, p.relDir, pageNames, linkFor)
-			pass2 := rewriteVaultLinks(raw, p.relDir, pageNames, linkForSub)
-			if pass2 == pass1 {
-				continue
-			}
-			if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
-				summary.Errors++
-				if ctx.Err() != nil {
-					fmt.Printf("[forgejo wiki] link repair stopped: %v\n", ctx.Err())
+			for _, p := range allPages {
+				if err := ctx.Err(); err != nil {
+					summary.Errors++
+					fmt.Printf("[forgejo wiki] link repair stopped: %v\n", err)
 					break
 				}
-				fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
-				continue
+				su := subURLs[p.name]
+				if su == "" {
+					continue // page never landed; already counted as an error
+				}
+				raw, rerr := readVaultMarkdown(p.path)
+				if rerr != nil {
+					continue // unreadable file was already counted in pass 1
+				}
+				pass1 := rewriteVaultLinks(raw, p.relDir, pageNames, linkFor)
+				pass2 := rewriteVaultLinks(raw, p.relDir, pageNames, linkForSub)
+				if pass2 == pass1 {
+					continue
+				}
+				if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
+					summary.Errors++
+					if ctx.Err() != nil {
+						fmt.Printf("[forgejo wiki] link repair stopped: %v\n", ctx.Err())
+						break
+					}
+					fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
+					continue
+				}
+				summary.LinkFixes++
 			}
-			summary.LinkFixes++
 		}
 	}
 
