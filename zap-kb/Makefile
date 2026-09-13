@@ -6,7 +6,7 @@ BUILD_TIME ?= unknown
 BUILDINFO_PKG := github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/buildinfo
 LDFLAGS := -s -w -X $(BUILDINFO_PKG).Version=$(VERSION) -X $(BUILDINFO_PKG).Revision=$(REVISION) -X $(BUILDINFO_PKG).BuildTime=$(BUILD_TIME)
 
-.PHONY: build run test test-cli-contract test-offline-e2e test-forgejo-e2e container-build container-check clean
+.PHONY: build run test test-cli-contract e2e test-offline-e2e test-forgejo-e2e container-build container-check clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(APP_NAME) ./cmd/$(APP_NAME)
@@ -19,6 +19,8 @@ test:
 
 test-cli-contract:
 	go test ./cmd/$(APP_NAME)/...
+
+e2e: test-offline-e2e
 
 test-offline-e2e:
 	go test -tags e2e ./e2e/...
