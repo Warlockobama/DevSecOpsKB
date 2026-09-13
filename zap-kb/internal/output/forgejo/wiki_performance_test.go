@@ -90,3 +90,41 @@ func TestWikiConcurrentRenameFallsBackAndNextRunConverges(t *testing.T) {
 		t.Fatalf("recovered noop mutated %d pages", remote.mutations)
 	}
 }
+
+func TestWikiInterruptedFreshLinkRepairConverges(t *testing.T) {
+	vault, names, files := scaleVault(t, 8)
+	remote := newScaleWiki()
+	srv := httptest.NewServer(remote)
+	defer srv.Close()
+	opts := WikiOptions{BaseURL: srv.URL, Token: "synthetic", Owner: "scale", Repo: "disposable", RequestDelay: time.Nanosecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Eight creates land, then cancellation interrupts the repair pass just
+	// after its first mutation. Some committed pages still have guessed links.
+	remote.cancelAfter, remote.cancel = 9, cancel
+	sum, err := ExportWiki(ctx, vault, opts)
+	if err == nil && sum.Errors == 0 {
+		t.Fatal("interrupted repair reported success")
+	}
+	if sum.Created != 8 {
+		t.Fatalf("expected all creates before repair interruption: %+v", sum)
+	}
+	remote.reset()
+	sum, err = ExportWiki(context.Background(), vault, opts)
+	if err != nil || sum.Errors != 0 || sum.Created != 0 || sum.Updated == 0 {
+		t.Fatalf("repair recovery: %+v %v", sum, err)
+	}
+	// The initial path snapshot is now complete. Pass one's content compares
+	// repair the remaining broken links without needing a second traversal.
+	remote.verify(t, names, files)
+	remote.reset()
+	sum, err = ExportWiki(context.Background(), vault, opts)
+	if err != nil || sum.Errors != 0 || sum.Skipped != 8 {
+		t.Fatalf("recovery noop: %+v %v", sum, err)
+	}
+	remote.mu.Lock()
+	defer remote.mu.Unlock()
+	if remote.mutations != 0 {
+		t.Fatalf("recovery noop mutated %d pages", remote.mutations)
+	}
+}

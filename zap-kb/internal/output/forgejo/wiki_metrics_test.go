@@ -51,16 +51,18 @@ func TestWikiMetricsCountRetryAttempts(t *testing.T) {
 }
 
 func TestWikiMetricsSurviveDiscoveryCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/wiki/pages") {
+			timer := time.AfterFunc(50*time.Millisecond, cancel)
+			defer timer.Stop()
 			<-r.Context().Done()
 			return
 		}
 		w.Write([]byte(`{"has_wiki":true}`))
 	}))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
 	sum, err := ExportWiki(ctx, t.TempDir(), WikiOptions{BaseURL: srv.URL, Token: "synthetic", Owner: "scale", Repo: "disposable", RequestDelay: time.Nanosecond})
 	if err == nil {
 		t.Fatal("canceled discovery returned success")
