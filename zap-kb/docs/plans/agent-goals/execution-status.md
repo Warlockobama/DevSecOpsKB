@@ -10,9 +10,9 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 |---|---|---|---|
 | 01 Configuration | Terra High | Integrated; local acceptance passed | `24ee34a`, `0803341`; combined CLI tests pass |
 | 02 Validation | Sol High | Integrated; local acceptance passed | `0e55b2b`; combined CLI/import/entity/taxonomy tests pass |
-| 03 Redaction | Astra High | Running from validated input boundary | Based on `bf8138b` |
-| 04 Jira/outcomes | Astra High | API/result contract integrated; CLI phase waits for 03 | `6dea1c9`; published-image failures reproduced with local mocks |
-| 05 Taxonomy | Sol High | Reviewed package changes integrated; pipeline phase waits for 03 | `bf8138b`; preserves imported taxonomy and exposes unsupported mapping gaps |
+| 03 Redaction | Astra High | Integrated; combined local acceptance passed | `f817a36`; output policy and marker regressions pass |
+| 04 Jira/outcomes | Astra High | API/result contract integrated; final CLI phase running | `6dea1c9`; published-image failures reproduced with local mocks |
+| 05 Taxonomy | Sol High | Reviewed package changes integrated; final pipeline phase running | `bf8138b`; preserves imported taxonomy and exposes unsupported mapping gaps |
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
 | 07 Publication state | Astra High | Reference journal and durable producer handoff integrated; final CLI wiring waits for 04 | Primary `c18bca5`, companion `158826a`; stale-source CLI regression still pending |
 | 08 CI/release | Terra High | CI preparation integrated; final corrected image acceptance pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness reproduces the two pending 04 defects |
@@ -27,6 +27,9 @@ The [published image Jira review](../../published-image-jira-review-2026-09.md) 
 Coordinator checkpoint `4e3a5be`: combined `go test ./...` passed from `zap-kb`.
 Checkpoint `bf8138b`: uncached combined CLI, run-artifact, entity and taxonomy
 package tests passed. Redaction and final outcome/state integration are pending.
+Checkpoint `f817a36`: complete uncached Go suite, vet and CLI build passed with
+03 redaction and 07 journal packages integrated. Final CLI outcome/state changes
+and the corrected container remain pending.
 
 The local state race used one synthetic finding and a loopback Jira stub. The
 publisher read source A; the stub paused the create response; a simulated producer
