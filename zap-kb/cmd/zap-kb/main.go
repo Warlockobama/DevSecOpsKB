@@ -20,6 +20,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publicationstate"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/ziputil"
@@ -131,6 +132,7 @@ func runMain() {
 		allowCustomPublish   bool
 		zapAlertsOnly        bool
 		publishSummaryOut    string
+		publicationStateDir  string
 		jiraSiteURL          string
 		jiraCreateFieldsFile string
 		jiraTimeout          time.Duration
@@ -238,6 +240,7 @@ func runMain() {
 	flag.StringVar(&jiraSiteURL, "jira-site-url", "", "Human-facing Jira site URL (env: JIRA_SITE_URL); required for browser links when Jira API uses the scoped-token gateway")
 	flag.StringVar(&jiraCreateFieldsFile, "jira-create-fields-file", "", "JSON file containing optional/custom Jira create fields (env: JIRA_CREATE_FIELDS_FILE)")
 	flag.StringVar(&publishSummaryOut, "publish-summary-out", "", "Write a redacted Atlassian publish summary JSON to this path.")
+	flag.StringVar(&publicationStateDir, "publication-state-dir", "", "Directory for durable issue/epic references, separate from immutable scanner input (env: PUBLICATION_STATE_DIR).")
 	// Subcommands own their flag sets, so dispatch before parsing global flags.
 	if handler, args, ok := lookupSubcommand(os.Args[1:]); ok {
 		handler(args)
@@ -275,6 +278,7 @@ func runMain() {
 	jiraServerID, _ = resolveStringFlagEnvDefault(jiraServerID, supplied["jira-server-id"], "JIRA_SERVER_ID", "", os.Getenv)
 	jiraServerName, _ = resolveStringFlagEnvDefault(jiraServerName, supplied["jira-server-name"], "JIRA_SERVER_NAME", "", os.Getenv)
 	forgejoToken, _ = resolveStringFlagEnvDefault(forgejoToken, supplied["forgejo-token"], "FORGEJO_TOKEN", "", os.Getenv)
+	publicationStateDir, _ = resolveStringFlagEnvDefault(publicationStateDir, supplied["publication-state-dir"], "PUBLICATION_STATE_DIR", "", os.Getenv)
 
 	atlassianCfg, cfgErr := resolveAtlassianConfigStrict(atlassianConfigInput{
 		ConfluenceURL:        confURL,
@@ -411,12 +415,10 @@ func runMain() {
 	}
 
 	var (
-		client          *zapclient.Client
-		alerts          []zapclient.Alert
-		entIn           entities.EntitiesFile
-		runInArtifact   runartifact.Artifact
-		runInIsArtifact bool
-		err             error
+		client *zapclient.Client
+		alerts []zapclient.Alert
+		entIn  entities.EntitiesFile
+		err    error
 	)
 	// If -run-in is provided, load entities and default labels/meta from it.
 	if strings.TrimSpace(runIn) != "" {
@@ -425,11 +427,6 @@ func runMain() {
 			fatalf("read -run-in: %v", rerr)
 		}
 		reportInputNormalizations("-run-in", validation)
-		if validation.Format == runartifact.FormatRunWrapper {
-			runInArtifact = a
-			runInArtifact.Publication = nil
-			runInIsArtifact = true
-		}
 		entIn = a.Entities
 		if len(a.Alerts) > 0 {
 			alerts = append(alerts, a.Alerts...)
@@ -727,6 +724,45 @@ func runMain() {
 	if strings.TrimSpace(jiraURL) != "" || strings.TrimSpace(confURL) != "" || strings.TrimSpace(forgejoURL) != "" || strings.TrimSpace(publishSummaryOut) != "" {
 		publishSummaryOut = publicationSummaryPath(publishSummaryOut, runOut, out, format, vault)
 	}
+	stateEnabled := strings.TrimSpace(jiraURL) != "" || (strings.TrimSpace(forgejoURL) != "" && forgejoIssues)
+	if stateEnabled {
+		publicationStateDir = defaultPublicationStateDir(publicationStateDir, runIn, entitiesIn, infile)
+	}
+	immutableInputs := map[string]string{"-in": infile, "-entities-in": entitiesIn, "-run-in": runIn}
+	derivedOutputs := map[string]string{
+		"-run-out":               runOut,
+		"-zip-out":               zipOut,
+		"-publish-summary-out":   publishSummaryOut,
+		"-report-out":            reportOut,
+		"-publication-state-dir": publicationStateDir,
+	}
+	switch format {
+	case "entities", "flat":
+		derivedOutputs["-out"] = out
+	case "both":
+		derivedOutputs["-out"] = out
+		derivedOutputs["-out entities derivative"] = out + ".entities.json"
+	case "obsidian":
+		derivedOutputs["-obsidian-dir"] = vault
+	}
+	if err := validateImmutableInputPaths(immutableInputs, derivedOutputs); err != nil {
+		fatalf("path ownership: %v", err)
+	}
+	stateStore := publicationstate.Store{Dir: publicationStateDir}
+	jiraStateDestination := ""
+	forgejoStateDestination := ""
+	if strings.TrimSpace(jiraURL) != "" {
+		jiraStateDestination = publicationstate.Destination("jira", jiraURL, jiraProject)
+		if err := stateStore.Apply(jiraStateDestination, &ent); err != nil {
+			fatalf("apply Jira publication state: %v", synccore.SafeError(err))
+		}
+	}
+	if strings.TrimSpace(forgejoURL) != "" && forgejoIssues {
+		forgejoStateDestination = publicationstate.Destination("forgejo", forgejoURL, forgejoOwner+"/"+forgejoRepo)
+		if err := stateStore.Apply(forgejoStateDestination, &ent); err != nil {
+			fatalf("apply Forgejo publication state: %v", synccore.SafeError(err))
+		}
+	}
 	results := &publishSummary.Publication
 	summarySaved, runSaved := false, false
 	var savedRunArtifact *runartifact.Artifact
@@ -834,6 +870,13 @@ func runMain() {
 			})
 		}()
 		recordPublication(results, "jira", "publish", sum.Created+sum.Relinked, sum.Skipped, sum.Errors, err, jiraDryRun, sum.Diagnostics...)
+		if !jiraDryRun && (len(sum.TicketKeys) > 0 || len(sum.EpicKeys) > 0) {
+			stateErr := stateStore.Record(jiraStateDestination, ent, sum.TicketKeys, sum.EpicKeys, publicationResultFor(results, "jira"))
+			recordPublication(results, "jira", "state", len(sum.TicketKeys)+len(sum.EpicKeys), 0, 0, stateErr, false)
+			if stateErr != nil {
+				log.Printf("warning: could not record Jira publication state: %v", synccore.SafeError(stateErr))
+			}
+		}
 		fmt.Printf("Jira: created=%d skipped=%d errors=%d relinked=%d\n", sum.Created, sum.Skipped, sum.Errors, sum.Relinked)
 		publishSummary.Jira = &publishJiraSummary{
 			Created:  sum.Created,
@@ -889,19 +932,12 @@ func runMain() {
 		}
 		entities.RedactEntities(&ent, outputPolicy)
 		if !jiraDryRun && shouldPersistJiraEntities(addedTicketKeys, updatedEpicRefs, jiraSyncKBStatus, ent) {
-			var artPtr *runartifact.Artifact
-			if runInIsArtifact {
-				artPtr = &runInArtifact
-			}
 			savePath, werr := persistJiraEntities(jiraSyncContext{
-				Format:           format,
-				Out:              out,
-				EntitiesIn:       entitiesIn,
-				RunIn:            runIn,
-				RunInputArtifact: artPtr,
+				Format: format,
+				Out:    out,
 			}, ent)
 			if werr != nil {
-				recordPublication(results, "local", "jira_state", 0, 0, 0, werr, false)
+				recordPublication(results, "local", "jira_derived_output", 0, 0, 0, werr, false)
 				log.Printf("warning: could not save Jira state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {
 				fmt.Printf("Jira: wrote current ticket/state data to %s\n", savePath)
@@ -1008,10 +1044,6 @@ func runMain() {
 				extraLabels = append(extraLabels, l)
 			}
 		}
-		var artPtr *runartifact.Artifact
-		if runInIsArtifact {
-			artPtr = &runInArtifact
-		}
 		forgejoFailures = runForgejoPublish(&ent, forgejoPublishOptions{
 			Context: runCtx, Results: results,
 			BaseURL:           forgejoURL,
@@ -1035,9 +1067,8 @@ func runMain() {
 			Format:            format,
 			Vault:             vault,
 			Out:               out,
-			EntitiesIn:        entitiesIn,
-			RunIn:             runIn,
-			RunInArtifact:     artPtr,
+			StateStore:        &stateStore,
+			StateDestination:  forgejoStateDestination,
 			ScanLabel:         scanLabel,
 			SiteLabel:         siteLabel,
 			ZapBaseURL:        zapBase,

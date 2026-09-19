@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
 func testEntitiesFile() entities.EntitiesFile {
@@ -139,66 +137,17 @@ func TestPersistJiraEntities_BothWritesEntitiesOutput(t *testing.T) {
 	}
 }
 
-func TestPersistJiraEntities_ObsidianRunArtifactPreservesEnvelope(t *testing.T) {
-	runPath := filepath.Join(t.TempDir(), "run.json")
-	original := runartifact.Artifact{
-		Schema: "zap-kb/run/v1",
-		Meta: runartifact.Meta{
-			ScanLabel:  "scan-2026-04-06",
-			SiteLabel:  "prod",
-			SourceTool: "zap",
-		},
-		Entities: testEntitiesFile(),
-		Alerts: []zapclient.Alert{{
-			Alert:    "CSP Header Not Set",
-			PluginID: "10038",
-			URL:      "https://example.com/login",
-		}},
-	}
-	if err := runartifact.Write(runPath, original); err != nil {
-		t.Fatalf("seed run artifact: %v", err)
-	}
-
-	updated := testEntitiesFile()
-	updated.Findings[0].Analyst = &entities.Analyst{TicketRefs: []string{"SEC-42"}}
-	savePath, err := persistJiraEntities(jiraSyncContext{
-		Format:           "obsidian",
-		RunIn:            runPath,
-		RunInputArtifact: &original,
-	}, updated)
-	if err != nil {
-		t.Fatalf("persistJiraEntities: %v", err)
-	}
-	if savePath != runPath {
-		t.Fatalf("savePath = %q, want %q", savePath, runPath)
-	}
-
-	readBack, err := runartifact.Read(runPath)
-	if err != nil {
-		t.Fatalf("read updated run artifact: %v", err)
-	}
-	if readBack.Meta.ScanLabel != original.Meta.ScanLabel || readBack.Meta.SiteLabel != original.Meta.SiteLabel {
-		t.Fatalf("run artifact metadata was not preserved: %+v", readBack.Meta)
-	}
-	if len(readBack.Alerts) != 1 || readBack.Alerts[0].PluginID != "10038" {
-		t.Fatalf("run artifact alerts were not preserved: %+v", readBack.Alerts)
-	}
-	if readBack.Entities.Findings[0].Analyst == nil || len(readBack.Entities.Findings[0].Analyst.TicketRefs) != 1 || readBack.Entities.Findings[0].Analyst.TicketRefs[0] != "SEC-42" {
-		t.Fatalf("updated finding ticket refs not written back: %+v", readBack.Entities.Findings[0].Analyst)
-	}
-}
-
-func TestPersistJiraEntities_ObsidianRejectsOutFallback(t *testing.T) {
+func TestPersistJiraEntities_ObsidianLeavesSourceArtifactsImmutable(t *testing.T) {
 	ent := testEntitiesFile()
-	_, err := persistJiraEntities(jiraSyncContext{
+	savePath, err := persistJiraEntities(jiraSyncContext{
 		Format: "obsidian",
 		Out:    filepath.Join(t.TempDir(), "alerts.json"),
 	}, ent)
-	if err == nil {
-		t.Fatal("expected error when obsidian writeback only has -out available")
+	if err != nil {
+		t.Fatalf("persistJiraEntities: %v", err)
 	}
-	if got := err.Error(); got != "persistJiraEntities: obsidian format requires -run-in or -entities-in to persist finding ticket keys safely" {
-		t.Fatalf("unexpected error: %v", err)
+	if savePath != "" {
+		t.Fatalf("savePath = %q, want no source write", savePath)
 	}
 }
 

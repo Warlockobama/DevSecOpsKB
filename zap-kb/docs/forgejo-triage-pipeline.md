@@ -116,9 +116,10 @@ The KB doesn't need mutating — Forgejo is the source of truth — but you can 
 the mapped statuses for KB-side reporting:
 - A normal re-publish does a **read-only status pull** and reports the mapped
   `open|triaged|fixed|accepted|fp` per issue.
-- Add **`-forgejo-sync-kb-status`** to persist the mapped status into
-  `analyst.status` in the entities file (use only when a downstream consumer
-  needs KB-side snapshots).
+- Add **`-forgejo-sync-kb-status`** to include the mapped status in explicit
+  derived outputs such as `-out` or `-run-out` (use only when a downstream
+  consumer needs KB-side snapshots). The source passed to `-entities-in` or
+  `-run-in` is never rewritten.
 ```bash
 zap-kb \
   -entities-in out/entities.json \

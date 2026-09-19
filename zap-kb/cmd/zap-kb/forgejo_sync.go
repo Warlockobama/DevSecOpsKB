@@ -13,7 +13,7 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publicationstate"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
@@ -60,16 +60,15 @@ type forgejoPublishOptions struct {
 	SharedRedact  entities.RedactOptions
 	Redact        string // additional modes; "off"/"none" disables only sink defaults
 
-	// Vault / persistence context.
-	Format        string
-	Vault         string
-	Out           string
-	EntitiesIn    string
-	RunIn         string
-	RunInArtifact *runartifact.Artifact
-	ScanLabel     string
-	SiteLabel     string
-	ZapBaseURL    string
+	// Vault / publication-state context.
+	Format           string
+	Vault            string
+	Out              string
+	StateStore       *publicationstate.Store
+	StateDestination string
+	ScanLabel        string
+	SiteLabel        string
+	ZapBaseURL       string
 }
 
 // forgejoRedactOptions resolves the -forgejo-redact flag value into redaction
@@ -131,9 +130,10 @@ func redactedCopy(ent entities.EntitiesFile, ro entities.RedactOptions) (entitie
 }
 
 // runForgejoPublish pushes findings to Forgejo as issues, pulls their state
-// back, persists ticket refs into the entities file (so re-runs dedup without a
-// remote scan), and — when opts.Wiki is set — publishes the vault to the repo
-// wiki. It mutates *ent in place when status write-back is enabled.
+// back, persists ticket refs into separate publication state (so re-runs dedup
+// without mutating scanner input), and — when opts.Wiki is set — publishes the
+// vault to the repo wiki. It mutates *ent in place when status write-back is
+// enabled.
 //
 // Published content (issue bodies, wiki pages) is rendered from a redacted
 // copy of the entities by default; the KB-side entities file keeps the
@@ -206,6 +206,14 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			WikiURLBase:       wikiURLBase,
 		})
 		record("issues", sum.Created+sum.Reopened+sum.BodiesUpdated, sum.Skipped, sum.Errors, err, opts.DryRun)
+		if !opts.DryRun && opts.StateStore != nil && (len(sum.TicketRefs) > 0) {
+			stateErr := opts.StateStore.Record(opts.StateDestination, *ent, sum.TicketRefs, nil, publicationResultFor(result, "forgejo"))
+			record("state", len(sum.TicketRefs), 0, 0, stateErr, false)
+			if stateErr != nil {
+				failures++
+				log.Printf("warning: could not record Forgejo publication state: %v", synccore.SafeError(stateErr))
+			}
+		}
 		if err != nil {
 			failures++
 		}
@@ -255,18 +263,15 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 
 		entities.RedactEntities(ent, opts.SharedRedact)
 
-		// Persist ticket refs / status back to the entities file so the next run
-		// short-circuits dedup. Reuses the shared persistence helper.
+		// Refresh only derived entities outputs. Scanner/run inputs remain
+		// immutable; durable references were recorded above in publication state.
 		if !opts.DryRun && (addedTicketKeys > 0 || (opts.SyncKBStatus && hasFindingTicketRefs(*ent))) {
 			savePath, werr := persistJiraEntities(jiraSyncContext{
-				Format:           opts.Format,
-				Out:              opts.Out,
-				EntitiesIn:       opts.EntitiesIn,
-				RunIn:            opts.RunIn,
-				RunInputArtifact: opts.RunInArtifact,
+				Format: opts.Format,
+				Out:    opts.Out,
 			}, *ent)
 			if werr != nil {
-				record("state", 0, 0, 0, werr, false)
+				record("derived_output", 0, 0, 0, werr, false)
 				failures++
 				log.Printf("warning: could not save Forgejo state to entities file: %v", synccore.SafeError(werr))
 			} else if savePath != "" {

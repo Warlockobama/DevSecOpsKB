@@ -1,6 +1,7 @@
 # Publication state and immutable input
 
-Assignment 07 package phase; final CLI wiring follows assignments 03 and 04.
+Assignment 07 implementation, including final CLI wiring after assignments 03
+and 04.
 
 Producer artifacts and publication references have separate owners:
 
@@ -50,7 +51,7 @@ implemented. See the companion `workers/kb-source/durable-handoff.md`.
 
 | Case | Package behavior / integration requirement |
 | --- | --- |
-| Old publisher snapshot, newer atomic input replacement | Journal record touches only state. Reloading newer input and applying refs preserves both occurrences. Final CLI must replace historical `persistJiraEntities` input writes. |
+| Old publisher snapshot, newer atomic input replacement | Journal record touches only state. Reloading newer input and applying refs preserves both occurrences. The CLI no longer writes `-entities-in` or `-run-in`. |
 | Concurrent publishers | Unique atomic events retain all confirmed refs; no shared JSON rewrite. |
 | Crash before event rename | Ignore pending file; exporter reconciliation finds any remotely created issue on retry. |
 | Crash after event rename | Apply restores confirmed references on restart. |
@@ -60,10 +61,10 @@ implemented. See the companion `workers/kb-source/durable-handoff.md`.
 | Optional workflow writeback | Default journal overlays refs only. Explicit status synchronization must use an explicit derivative destination, never silently overwrite source input. |
 | Additive exportPolicy | Modeled on EntitiesFile; equal merge policies survive, mixed/unstamped policies clear the claim. Other unknown additive fields remain accepted but unmodeled in typed derivatives; original immutable bytes remain retained. |
 
-No live publication or migration was executed. The package tests use strict input
-validation, synthetic references, temporary directories and channels to pause a
-remote completion while replacing input. Final CLI acceptance must also exercise
-the historical public writeback path after 03/04 integration. Filesystem/volume
+No live publication or migration was executed. The package and CLI-layer tests
+use strict input validation, synthetic references, temporary directories and
+channels to pause a remote completion while replacing input. Direct and
+hard-link source/output aliases fail before output or remote work. Filesystem/volume
 backups remain required; file sync does not promise directory-entry durability
 across host power loss on every filesystem.
 
@@ -73,11 +74,13 @@ Companion implementation: `devsecopsfiringranve` commit
 Commit lock compares Render's expected head and cursor hashes before writing;
 stale plans/backfills must re-render. Abandoned locks require operator inspection.
 
-Locally verified package phase: primary `go test ./...`, `go vet ./...`,
-`go build ./cmd/zap-kb`, `go test -race ./internal/output/publicationstate`, and
-format/diff checks passed. Companion affected and full workers tests, full vet,
-`go build ./publisher-worker/cmd/kb-source`, and affected `-race` passed.
-Final CLI integration must remove source writeback, reject output/archive/state
-paths aliasing source inputs (including default output names), and execute the
-actual paused HTTP-create race through the CLI. This document does not claim
-that pending integration or any external rollout has passed.
+Locally verified implementation: primary `go test ./...`, `go vet ./...`,
+`go build ./cmd/zap-kb`, `go test -race ./internal/output/publicationstate
+./cmd/zap-kb`, and format/diff checks passed. Companion affected and full
+workers tests, full vet, `go build ./publisher-worker/cmd/kb-source`, affected
+`-race`, and the current Kubernetes render passed.
+The CLI applies destination state before rendering or publishing, records
+exporter-confirmed refs immediately after the issue stage, and refreshes only
+explicit derived outputs. `-publication-state-dir` / `PUBLICATION_STATE_DIR`
+selects the journal root; otherwise it defaults beside the selected input.
+External rollout remains intentionally unclaimed.

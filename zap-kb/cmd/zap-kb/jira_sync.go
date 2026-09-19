@@ -11,16 +11,12 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 type jiraSyncContext struct {
-	Format           string
-	Out              string
-	EntitiesIn       string
-	RunIn            string
-	RunInputArtifact *runartifact.Artifact
+	Format string
+	Out    string
 }
 
 type confluencePublishOptions struct {
@@ -125,21 +121,10 @@ func persistJiraEntities(ctx jiraSyncContext, ent entities.EntitiesFile) (string
 	case "both":
 		return writeEntitiesFile(strings.TrimSpace(ctx.Out)+".entities.json", ent)
 	case "obsidian":
-		if art := ctx.RunInputArtifact; art != nil && strings.TrimSpace(ctx.RunIn) != "" {
-			updated := *art
-			updated.Entities = ent
-			if err := runartifact.Write(ctx.RunIn, updated); err != nil {
-				return "", err
-			}
-			return ctx.RunIn, nil
-		}
-		if path := strings.TrimSpace(ctx.RunIn); path != "" {
-			return writeEntitiesFile(path, ent)
-		}
-		if path := strings.TrimSpace(ctx.EntitiesIn); path != "" {
-			return writeEntitiesFile(path, ent)
-		}
-		return "", fmt.Errorf("persistJiraEntities: obsidian format requires -run-in or -entities-in to persist finding ticket keys safely")
+		// The vault and optional -run-out are derived outputs. Producer-owned
+		// -run-in and -entities-in artifacts are immutable; publication refs are
+		// persisted by publicationstate.Store instead.
+		return "", nil
 	}
 	return "", nil
 }
