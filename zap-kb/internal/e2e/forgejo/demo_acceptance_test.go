@@ -3,6 +3,7 @@
 package forgejoe2e
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -120,6 +121,17 @@ func TestDemoArtifactToForgejo(t *testing.T) {
 	}
 	if got := len(env.ListIssues(t, repo)); got != 1 {
 		t.Fatalf("identical rerun produced %d grouped issues, want 1", got)
+	}
+	afterPublish, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read source artifact after publication: %v", err)
+	}
+	if !bytes.Equal(afterPublish, original) {
+		t.Fatal("publisher mutated the source run artifact")
+	}
+	stateEvents, err := filepath.Glob(filepath.Join(dir, ".zap-kb-publication-state", "*", "*.json"))
+	if err != nil || len(stateEvents) == 0 {
+		t.Fatalf("separate publication journal missing after confirmed issue: paths=%v err=%v", stateEvents, err)
 	}
 
 	env.AddIssueLabel(t, repo, issues[0].Number, "accepted")
