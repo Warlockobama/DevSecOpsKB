@@ -10,13 +10,13 @@ assignment ownership and the latest integration checkpoint.
 
 | Goal | Implemented and verified so far | Remaining acceptance |
 | --- | --- | --- |
-| G1 Jira and sink outcomes | Reviewed Jira API/result packages `6dea1c9`; controlled published-image create, rejection and gateway probes | Final CLI outcomes/configuration and corrected container; designated Jira/Confluence tenant |
-| G2 Shared redaction | `f817a36`; CLI marker tests across preview, JSON, raw alerts, metadata, Markdown, remote payloads, diagnostics and ZIP | Repeat combined checks after outcome/state integration |
-| G3 Input and state integrity | Validator `0e55b2b`; journal `c18bca5`; companion durable handoff `158826a`, monotonic guard `59880d0` | CLI journal wiring, source/output aliases and paused-create source-race regression |
-| G4 Taxonomy | Reviewed mappings/aliases `bf8138b`; unsupported collection-rule mappings remain explicit gaps | Production enrichment call and CLI/entities/run/render acceptance |
-| G5 Configuration | `24ee34a`, `0803341`; explicit flag/environment/default and safe-error tests | Final Cloud gateway/container combination |
+| G1 Jira and sink outcomes | Jira package `6dea1c9` and final CLI outcomes `050846a`; combined failure matrix passes and corrected source passed the isolated container contract before integration | Re-run corrected container on the eventual final candidate; designated Jira/Confluence tenant |
+| G2 Shared redaction | `f817a36`; combined marker tests pass across preview, JSON, raw alerts, metadata, Markdown, remote payloads, diagnostics and ZIP | Live destination acceptance remains external |
+| G3 Input and state integrity | Validator `0e55b2b`, unsafe-ID guard `b6d586b`, journal `c18bca5`; companion durable handoff `158826a`, monotonic guard `59880d0` | CLI journal wiring, source/output aliases and paused-create source-race regression |
+| G4 Taxonomy | Mappings/aliases `bf8138b` and production pipeline `d88c8a1`; combined entities/run/render/repeat-import acceptance passes | Unsupported collection-rule mappings remain explicit gaps pending evidence |
+| G5 Configuration | `24ee34a`, `0803341`; explicit flag/environment/default, gateway and safe-error tests pass | Re-run final container combination after G3/G7 completion |
 | G6 Production and wiki review | [Read-only production review](production-publishing-review-2026-09.md); disposable/synthetic tests and [measured limits](wiki-performance-2026-09.md), integrated through `1da68cc` | Large-wiki performance remains open; no production upgrade or throughput claim |
-| G7 Maintainability and release | Provenance/CI `5313680`, `f4aae32`, `58e3aff`; shared validation/policy/result/journal packages | Selected responsibility extractions, final suite map and combined candidate checks |
+| G7 Maintainability and release | Provenance/CI `5313680`, `f4aae32`, `58e3aff`; shared validation/policy/result/journal packages; combined handoff checks pass | Assignment 09 has no implementation; final suite/container/demo rerun follows state wiring |
 
 Forgejo demonstration acceptance is separate from workplace acceptance. The
 disposable walkthrough is being prepared; no live tenant is available, and no
@@ -30,6 +30,11 @@ personal Atlassian subscription is required to finish the local demonstration.
 - At companion `158826a`, full uncached worker tests, vet and kb-source build
   passed. At `59880d0`, the source package passed again after adding the monotonic
   checkpoint guard and public backfill regression.
+- At combined primary `f32871b`, formatting against tracked content, the complete
+  Go suite, uncached race-enabled suite, vet, all-package build and tagged offline
+  e2e suite passed. All 34 commits over refreshed `origin/main` carry matching
+  `Signed-off-by` trailers; the branch contains no merge commit or rewritten
+  individual-agent history.
 - The current Cactus exporter at repository revision `e5b70f8` generated a fresh
   synthetic artifact accepted by the combined CLI at `f817a36`. Finding,
   definition and occurrence IDs, the complete detection trace and source bytes
@@ -37,9 +42,10 @@ personal Atlassian subscription is required to finish the local demonstration.
   import only, without collecting or publishing any live data. The exporter file
   was clean and last changed in `183a4d0`.
 
-The final candidate must rerun the original five CLI cases together, the
-designated offline/container/disposable integrations, and relevant companion
-checks. Separate branch passes do not substitute for that final candidate.
+The original CLI cases now run together in the combined suite. The final
+candidate must still rerun the container and disposable Forgejo integrations
+after publication-state wiring and the selected maintainability work. Separate
+branch service passes do not substitute for that final candidate.
 
 ## Jira image evidence and release boundary
 

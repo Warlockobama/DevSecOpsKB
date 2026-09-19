@@ -9,16 +9,16 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | Assignment | Model / reasoning | Current state | Integrated evidence |
 |---|---|---|---|
 | 01 Configuration | Terra High | Integrated; local acceptance passed | `24ee34a`, `0803341`; combined CLI tests pass |
-| 02 Validation | Sol High | Integrated; local acceptance passed | `0e55b2b`; combined CLI/import/entity/taxonomy tests pass |
+| 02 Validation | Sol High | Integrated; local acceptance passed | `0e55b2b`, `b6d586b`; invalid graphs and path-unsafe identities fail before side effects |
 | 03 Redaction | Astra High | Integrated; combined local acceptance passed | `f817a36`; output policy and marker regressions pass |
-| 04 Jira/outcomes | Astra High | API/result contract integrated; final CLI phase running | `6dea1c9`; published-image failures reproduced with local mocks |
-| 05 Taxonomy | Sol High | Reviewed package changes integrated; final pipeline phase running | `bf8138b`; preserves imported taxonomy and exposes unsupported mapping gaps |
+| 04 Jira/outcomes | Astra High | Integrated; combined local acceptance passed | `6dea1c9`, `050846a`; required sink failures persist truthful outcomes and return nonzero |
+| 05 Taxonomy | Sol High | Integrated; combined local acceptance passed | `bf8138b`, `d88c8a1`; CLI entities/run/render acceptance preserves identities and reviewed mappings |
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
 | 07 Publication state | Astra High | Reference journal and durable producer handoff integrated; final CLI wiring waits for 04 | Primary `c18bca5`, companion `158826a`; stale-source CLI regression still pending |
-| 08 CI/release | Terra High | CI preparation integrated; final corrected image acceptance pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness reproduces the two pending 04 defects |
+| 08 CI/release | Terra High | CI preparation integrated; final candidate container rerun pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness passed on 04's source branch before integration |
 | 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
-| 10 Demo/workplace | Sol Medium | Walkthrough and disposable acceptance preparation running | Final local signoff waits for behavioral integration; workplace acceptance needs designated tenant access |
-| 11 Integration | Astra High | Coordinating | Final combined checks pending |
+| 10 Demo/workplace | Sol Medium | Walkthrough and disposable harness integrated | `f32871b`; final rerun waits for publication-state CLI wiring and 09; workplace acceptance needs designated tenant access |
+| 11 Integration | Astra High | Combined branch review passed; release signoff remains open | `f32871b`; formatting, full tests, uncached race tests, vet, all-package build and tagged offline e2e pass |
 
 No production scan, publication, deployment, shared-ingest replacement, or external hosting is part of this implementation run. Disposable local test instances may be used. Source code changes, tests, and documentation will be delivered with explicit local/live acceptance boundaries.
 
@@ -53,3 +53,12 @@ normal plans that would regress the checkpoint, before changing durable files.
 An additional valid-input boundary regression found during 03 review is fixed
 in `958f14b`: a finding with zero occurrences now renders instead of panicking.
 The public WriteVault regression and complete Obsidian package pass.
+
+Handoff review on 19 September 2026 integrated the completed 02, 04 and 10
+branches as `b6d586b`, `050846a` and `f32871b`. On that combined revision,
+`gofmt` produced no normalized Git diff, `go test ./...`, uncached
+`go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and
+`go test -tags e2e ./e2e` all passed. Every commit between `origin/main` and the
+integration head carries a matching DCO sign-off. The branch is not a release
+candidate yet: 07 still must replace CLI source-file writeback with the separate
+journal and add source/output alias guards, and 09 has no implementation branch.
