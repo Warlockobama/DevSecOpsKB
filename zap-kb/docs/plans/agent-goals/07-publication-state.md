@@ -1,6 +1,6 @@
 # 07 — Separate scan input from mutable publication state
 
-Status: ready to assign, subject to the dependencies below.
+Status: completed and locally verified; external rollout remains out of scope.
 
 Model: **GPT-6 Astra / High** (`gpt-6-astra`, reasoning `high`). This is a recommendation; select it in task settings.
 

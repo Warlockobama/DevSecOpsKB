@@ -12,7 +12,7 @@ assignment ownership and the latest integration checkpoint.
 | --- | --- | --- |
 | G1 Jira and sink outcomes | Jira package `6dea1c9` and final CLI outcomes `050846a`; combined failure matrix passes and corrected source passed the isolated container contract before integration | Re-run corrected container on the eventual final candidate; designated Jira/Confluence tenant |
 | G2 Shared redaction | `f817a36`; combined marker tests pass across preview, JSON, raw alerts, metadata, Markdown, remote payloads, diagnostics and ZIP | Live destination acceptance remains external |
-| G3 Input and state integrity | Validator `0e55b2b`, unsafe-ID guard `b6d586b`, journal `c18bca5`; companion durable handoff `158826a`, monotonic guard `59880d0` | CLI journal wiring, source/output aliases and paused-create source-race regression |
+| G3 Input and state integrity | Validator `0e55b2b`, unsafe-ID guard `b6d586b`, journal `c18bca5`, CLI wiring and alias guards `2c847c6`; companion durable handoff `158826a`, monotonic guard `59880d0`, manifest contract `0b3376f` | Local acceptance complete; deployment and live sink migration remain external |
 | G4 Taxonomy | Mappings/aliases `bf8138b` and production pipeline `d88c8a1`; combined entities/run/render/repeat-import acceptance passes | Unsupported collection-rule mappings remain explicit gaps pending evidence |
 | G5 Configuration | `24ee34a`, `0803341`; explicit flag/environment/default, gateway and safe-error tests pass | Re-run final container combination after G3/G7 completion |
 | G6 Production and wiki review | [Read-only production review](production-publishing-review-2026-09.md); disposable/synthetic tests and [measured limits](wiki-performance-2026-09.md), integrated through `1da68cc` | Large-wiki performance remains open; no production upgrade or throughput claim |
@@ -44,8 +44,10 @@ personal Atlassian subscription is required to finish the local demonstration.
 
 The original CLI cases now run together in the combined suite. The final
 candidate must still rerun the container and disposable Forgejo integrations
-after publication-state wiring and the selected maintainability work. Separate
-branch service passes do not substitute for that final candidate.
+after the selected maintainability work. Publication-state wiring passed its
+paused-create regression, full Go suite, vet, build, focused race suite, and
+companion Kubernetes render. Separate branch service passes do not substitute
+for that final candidate.
 
 ## Jira image evidence and release boundary
 

@@ -14,7 +14,7 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 04 Jira/outcomes | Astra High | Integrated; combined local acceptance passed | `6dea1c9`, `050846a`; required sink failures persist truthful outcomes and return nonzero |
 | 05 Taxonomy | Sol High | Integrated; combined local acceptance passed | `bf8138b`, `d88c8a1`; CLI entities/run/render acceptance preserves identities and reviewed mappings |
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
-| 07 Publication state | Astra High | Reference journal and durable producer handoff integrated; final CLI wiring waits for 04 | Primary `c18bca5`, companion `158826a`; stale-source CLI regression still pending |
+| 07 Publication state | Astra High | Integrated; local acceptance passed across both repositories | Primary `c18bca5`, `2c847c6`; companion `158826a`, `0b3376f`; paused-create regression preserves newer input and confirmed refs |
 | 08 CI/release | Terra High | CI preparation integrated; final candidate container rerun pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness passed on 04's source branch before integration |
 | 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
 | 10 Demo/workplace | Sol Medium | Walkthrough and disposable harness integrated | `f32871b`; final rerun waits for publication-state CLI wiring and 09; workplace acceptance needs designated tenant access |
@@ -43,7 +43,8 @@ assignment 07 must turn this into a portable regression and preserve source B.
 
 Coordinator checkpoint `158826a` in the companion integration worktree: full
 uncached worker tests, vet and kb-source build passed. The reference journal
-package alone does not fix the CLI source rewrite; final wiring remains pending.
+package alone did not fix the CLI source rewrite; `2c847c6` now supplies that
+final wiring.
 The source retains cumulative snapshots with documented storage growth and no
 automatic pruning. Follow-up `8255102` verifies the existing manual-backfill
 behavior through Render, persisted plan and Commit: older evidence is admitted
@@ -60,5 +61,15 @@ branches as `b6d586b`, `050846a` and `f32871b`. On that combined revision,
 `go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and
 `go test -tags e2e ./e2e` all passed. Every commit between `origin/main` and the
 integration head carries a matching DCO sign-off. The branch is not a release
-candidate yet: 07 still must replace CLI source-file writeback with the separate
-journal and add source/output alias guards, and 09 has no implementation branch.
+candidate yet: 07 is now complete locally, but 09 has no implementation branch
+and final candidate container/demo reruns remain.
+
+Assignment 07 checkpoint `2c847c6`, with companion manifest commit `0b3376f`,
+wires the journal into Jira and Forgejo publication. The CLI applies stored refs
+before output, records exporter-confirmed refs immediately after the issue
+stage, never rewrites `-entities-in` or `-run-in`, and rejects direct or hard-link
+source/output aliases. A synthetic Forgejo response was paused while a newer
+source batch replaced the input; publication completed, the newer bytes and
+occurrence survived, and `acme/kb#7` replayed from state. Full Go tests, vet,
+CLI build, race-enabled publication-state/CLI tests, and the companion
+Kubernetes render passed. No live sink, ingest path, or deployment was touched.
