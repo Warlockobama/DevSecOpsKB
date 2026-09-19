@@ -82,5 +82,6 @@ workers tests, full vet, `go build ./publisher-worker/cmd/kb-source`, affected
 The CLI applies destination state before rendering or publishing, records
 exporter-confirmed refs immediately after the issue stage, and refreshes only
 explicit derived outputs. `-publication-state-dir` / `PUBLICATION_STATE_DIR`
-selects the journal root; otherwise it defaults beside the selected input.
+selects the journal root; otherwise it defaults beside the selected derived
+output, falling back beside the input only when no output path is available.
 External rollout remains intentionally unclaimed.

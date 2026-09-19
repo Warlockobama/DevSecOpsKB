@@ -54,7 +54,8 @@ Key flags:
 - `-run-in`: Read a run artifact (or bare entities JSON) and reuse its entities and labels.
 - `-publication-state-dir`: Store confirmed Jira/Forgejo references separately
   from immutable `-entities-in`/`-run-in` inputs. Defaults beside the selected
-  input; set it explicitly for shared-volume deployments.
+  derived output, then beside the input when no output path exists; set it
+  explicitly for shared-volume deployments.
 - `-zip-out`: Zip outputs into one artifact (includes `-run-out`, entity/alerts JSON, and Obsidian dir if generated).
 - `-redact`: Redact sensitive details in outputs. Comma/space list supported: `domain,query,cookies,auth,headers,body`.
  - Prune-only (vault maintenance): `-prune-scan <label>` deletes occurrence notes in the Obsidian vault matching a `scan.label`, optionally narrowed by `-prune-site <domain label>`. Use `-prune-vault` to target a specific vault; add `-prune-dry-run` to preview.

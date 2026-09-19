@@ -493,7 +493,15 @@ func runMain() {
 	}
 	stateEnabled := strings.TrimSpace(jiraURL) != "" || (strings.TrimSpace(forgejoURL) != "" && forgejoIssues)
 	if stateEnabled {
-		publicationStateDir = defaultPublicationStateDir(publicationStateDir, runIn, entitiesIn, infile)
+		stateCandidates := []string{runOut}
+		switch format {
+		case "entities", "flat", "both":
+			stateCandidates = append(stateCandidates, out)
+		case "obsidian":
+			stateCandidates = append(stateCandidates, vault)
+		}
+		stateCandidates = append(stateCandidates, runIn, entitiesIn, infile)
+		publicationStateDir = defaultPublicationStateDir(publicationStateDir, stateCandidates...)
 	}
 	immutableInputs := map[string]string{"-in": infile, "-entities-in": entitiesIn, "-run-in": runIn}
 	derivedOutputs := map[string]string{

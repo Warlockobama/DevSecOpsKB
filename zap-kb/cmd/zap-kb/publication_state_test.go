@@ -48,6 +48,15 @@ func TestDefaultPublicationStateDirUsesInputSibling(t *testing.T) {
 	}
 }
 
+func TestDefaultPublicationStateDirPrefersWritableOutputCandidate(t *testing.T) {
+	runOut := filepath.Join("output", "run.json")
+	readOnlyInput := filepath.Join("fixtures", "alerts.json")
+	want := filepath.Join("output", ".zap-kb-publication-state")
+	if got := defaultPublicationStateDir("", runOut, readOnlyInput); got != want {
+		t.Fatalf("state dir = %q, want writable output sibling %q", got, want)
+	}
+}
+
 func TestCLIRejectsSourceOutputAliasBeforeMutation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "entities.json")
 	raw, err := json.Marshal(testEntitiesFile())
