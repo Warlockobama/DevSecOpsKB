@@ -15,10 +15,10 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 05 Taxonomy | Sol High | Integrated; combined local acceptance passed | `bf8138b`, `d88c8a1`; CLI entities/run/render acceptance preserves identities and reviewed mappings |
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
 | 07 Publication state | Astra High | Integrated; local acceptance passed across both repositories | Primary `c18bca5`, `2c847c6`; companion `158826a`, `0b3376f`; paused-create regression preserves newer input and confirmed refs |
-| 08 CI/release | Terra High | CI preparation integrated; final candidate container rerun pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness passed on 04's source branch before integration |
+| 08 CI/release | Terra High | Integrated; final candidate container contract passed locally | `5313680`, `f4aae32`, `58e3aff`, `2b78dfc`; Cloud create/readback, rejected-create and gateway cases passed on an internal Docker network |
 | 09 Maintainability | Sol High | Integrated; local acceptance and independent review passed | `38238f8`; input, entity/enrichment and primary-output responsibilities extracted with public compatibility and cancellation coverage |
-| 10 Demo/workplace | Sol Medium | Walkthrough and disposable harness integrated | `f32871b`; final rerun waits for publication-state CLI wiring and 09; workplace acceptance needs designated tenant access |
-| 11 Integration | Astra High | Combined branch review passed; release signoff remains open | `f32871b`; formatting, full tests, uncached race tests, vet, all-package build and tagged offline e2e pass |
+| 10 Demo/workplace | Sol Medium | Disposable acceptance passed; workplace acceptance remains external | `f32871b`, `ae80463`; real local Forgejo replay preserved immutable input, separate journal, stable issue identity and analyst label |
+| 11 Integration | Astra High | Local engineering signoff passed; external/live signoff remains open | Full uncached tests, race tests, vet, build, formatting, offline e2e, container Jira contract and disposable Forgejo acceptance pass |
 
 No production scan, publication, deployment, shared-ingest replacement, or external hosting is part of this implementation run. Disposable local test instances may be used. Source code changes, tests, and documentation will be delivered with explicit local/live acceptance boundaries.
 
@@ -85,3 +85,16 @@ output dispatch, and cancellation of a blocked ZAP request. Full uncached Go
 tests, vet, CLI build, focused race tests, formatting, tagged offline e2e, and
 three read-only reviews passed. Broad Obsidian/Confluence file splitting is
 deferred until stronger golden serialized-output fixtures exist.
+
+Final local candidate checks found and fixed one integration defect: implicit
+publication state initially followed a read-only mounted input, causing otherwise
+successful container publication to exit nonzero. Commit `2b78dfc` prefers the
+writable derived-output location and retains explicit shared-volume configuration.
+The isolated publisher-image contract then passed normal Cloud create/readback,
+truthful rejected-create failure and scoped-gateway routing. Disposable Forgejo
+acceptance at `ae80463` published the portable fixture twice plus a changed
+replay, retained one stable grouped issue, preserved the analyst-owned accepted
+label, read back both scan identities, proved the source artifact byte-identical
+after publication, and found a separate journal event. Sanitized local evidence
+reported artifact SHA-256
+`19532203f1a47933c4ec750da4cc414e5ae24e11a7ead54cb10d49ac7319b023`.

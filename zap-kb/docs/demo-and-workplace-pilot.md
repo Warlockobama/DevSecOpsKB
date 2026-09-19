@@ -149,17 +149,18 @@ candidate, not a verified workplace architecture.
 
 | Capability | Implemented | Verified locally | Verified live | Remaining dependency |
 | --- | --- | --- | --- | --- |
-| Portable run artifact and validation | Yes | Existing package coverage | No new production run | Final 02/03/07/09 integration |
-| Disposable artifact-to-Forgejo harness | Prepared | Compile and small live result recorded at handoff | Disposable only | Re-run after final CLI integration |
-| Identical and changed replay | Prepared | Disposable test | Disposable only | Final publication-state CLI behavior |
-| Analyst decision preservation | Prepared | Forgejo label readback | Disposable only | Final 04 outcomes integration |
-| Destination failure evidence | Existing focused fixtures; walkthrough prepared | Existing e2e fault tests | No production write | Final common outcome/redaction wiring |
-| 100-page wiki bound | Yes | Real disposable Forgejo measurement | Disposable only | Re-measure integrated image |
+| Portable run artifact and validation | Yes | Final combined package and CLI coverage | No new production run | None locally |
+| Disposable artifact-to-Forgejo harness | Yes | Final integrated rerun passed | Disposable only | None locally |
+| Identical and changed replay | Yes | One stable grouped issue; two scan identities read back | Disposable only | None locally |
+| Analyst decision preservation | Yes | Accepted label preserved through changed replay | Disposable only | None locally |
+| Destination failure evidence | Yes | Focused fault tests and container rejected-create case pass | No production write | Live destination acceptance |
+| 100-page wiki bound | Yes | Real disposable Forgejo measurement plus final small replay | Disposable only | Large-wiki algorithm/acceptance |
 | 1,000/5,000-page production readiness | No | Bounded trials failed to complete | No | Next wiki algorithm and controlled acceptance |
 | Jira/Confluence workplace pilot | Procedure prepared | Contract mocks only | No | Designated tenant, approved project/space and 04 integration |
 | AI triage comparison | Procedure prerequisites only | No | No | Future evaluation design and verified agent application |
 
-Final signoff must repeat this harness after assignments 03, 04, 07 and 09 are
-integrated, assert that the source artifact bytes remain unchanged, verify the
-separate publication journal/result, and run the designated-tenant procedure when
-access exists. Do not turn missing tenant access into a claimed live pass.
+Final local signoff repeated this harness after assignments 03, 04, 07 and 09.
+It asserted that source artifact bytes remained unchanged, found the separate
+publication journal, preserved one grouped issue and the analyst label, and read
+both scan identities back. The designated-tenant procedure still requires access;
+do not turn that missing tenant into a claimed live pass.

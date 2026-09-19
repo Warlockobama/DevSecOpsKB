@@ -37,10 +37,9 @@ minimal Jira fixture on an internal-only Docker network, and invokes the normal
 `zap-kb` entrypoint with Jira configuration supplied only through the container
 environment. It asserts Cloud v3 create/readback, a nonzero rejected-create
 result with sanitized run/summary artifacts, scoped-gateway Cloud routing, and
-matching OCI/binary revisions. The current tree is expected to fail the rejected
-create and gateway assertions until 04's CLI fix is integrated; that failure is
-the intended pre-dependency signal, never a reason to relax the harness. Do not
-substitute a personal Jira tenant. The historical image review remains separate
+matching OCI/binary revisions. The integrated local candidate passes all three
+cases; future failures are release blockers, never a reason to relax the harness.
+Do not substitute a personal Jira tenant. The historical image review remains separate
 in [published-image-jira-review-2026-09.md](published-image-jira-review-2026-09.md).
 
 ## Local verification
