@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,10 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
+
+// ErrWikiDisabled identifies the safe, operator-actionable repository setting
+// failure without requiring callers to expose repository names or API details.
+var ErrWikiDisabled = errors.New("wiki is not enabled")
 
 // WikiOptions controls publishing the Obsidian markdown vault to a Forgejo wiki.
 type WikiOptions struct {
@@ -619,7 +624,7 @@ func (c *client) ensureWikiReady(ctx context.Context) error {
 		return fmt.Errorf("decode repo: %w", err)
 	}
 	if !repo.HasWiki {
-		return fmt.Errorf("wiki is not enabled on %s/%s — enable it in repo settings (has_wiki) or via PATCH /repos/%s/%s", c.owner, c.repo, c.owner, c.repo)
+		return fmt.Errorf("%w on %s/%s — enable it in repo settings (has_wiki) or via PATCH /repos/%s/%s", ErrWikiDisabled, c.owner, c.repo, c.owner, c.repo)
 	}
 	return nil
 }

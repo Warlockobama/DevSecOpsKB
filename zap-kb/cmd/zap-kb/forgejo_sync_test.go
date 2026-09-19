@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,8 +13,19 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publicationstate"
 )
+
+func TestSafeForgejoWikiErrorPreservesSafeOperatorGuidance(t *testing.T) {
+	got := safeForgejoWikiError(forgejo.ErrWikiDisabled)
+	if got != "wiki is not enabled; enable it in repository settings (has_wiki)" {
+		t.Fatalf("safe wiki error = %q", got)
+	}
+	if got := safeForgejoWikiError(errors.New("private backend detail")); got != "operation failed; private details omitted" {
+		t.Fatalf("generic safe wiki error = %q", got)
+	}
+}
 
 func TestForgejoRedactOptions(t *testing.T) {
 	// Default (empty flag value) enables credential + secrets scrubbing.

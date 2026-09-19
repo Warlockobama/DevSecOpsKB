@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -352,7 +353,7 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 			}
 		}
 		if werr != nil {
-			log.Printf("error: forgejo wiki export failed: %v", synccore.SafeError(werr))
+			log.Printf("error: forgejo wiki export failed: %s", safeForgejoWikiError(werr))
 			failures++
 		} else {
 			fmt.Printf("Forgejo wiki: created=%d updated=%d skipped=%d pruned=%d link_fixes=%d errors=%d\n",
@@ -364,6 +365,13 @@ func runForgejoPublish(ent *entities.EntitiesFile, opts forgejoPublishOptions) i
 		record("wiki", 0, 0, 0, nil, true)
 	}
 	return failures
+}
+
+func safeForgejoWikiError(err error) string {
+	if errors.Is(err, forgejo.ErrWikiDisabled) {
+		return "wiki is not enabled; enable it in repository settings (has_wiki)"
+	}
+	return synccore.SafeError(err)
 }
 
 // wikiPublishContext bounds the wiki pass. A non-positive timeout means the
