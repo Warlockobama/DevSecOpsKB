@@ -16,7 +16,7 @@ The coordinator owns assignment 11 and integrates reviewed commits. At most thre
 | 06 Wiki | Astra High | Bounded engineering/review integrated; large-wiki performance remains open | `3713743`, `23e1f50`, `1da68cc`; real 1,000/5,000-page passes remain incomplete |
 | 07 Publication state | Astra High | Integrated; local acceptance passed across both repositories | Primary `c18bca5`, `2c847c6`; companion `158826a`, `0b3376f`; paused-create regression preserves newer input and confirmed refs |
 | 08 CI/release | Terra High | CI preparation integrated; final candidate container rerun pending | `5313680`, `f4aae32`, `58e3aff`; portable container harness passed on 04's source branch before integration |
-| 09 Maintainability | Sol High | Queued after behavioral contracts | Pending |
+| 09 Maintainability | Sol High | Integrated; local acceptance and independent review passed | `38238f8`; input, entity/enrichment and primary-output responsibilities extracted with public compatibility and cancellation coverage |
 | 10 Demo/workplace | Sol Medium | Walkthrough and disposable harness integrated | `f32871b`; final rerun waits for publication-state CLI wiring and 09; workplace acceptance needs designated tenant access |
 | 11 Integration | Astra High | Combined branch review passed; release signoff remains open | `f32871b`; formatting, full tests, uncached race tests, vet, all-package build and tagged offline e2e pass |
 
@@ -60,9 +60,9 @@ branches as `b6d586b`, `050846a` and `f32871b`. On that combined revision,
 `gofmt` produced no normalized Git diff, `go test ./...`, uncached
 `go test -race -count=1 ./...`, `go vet ./...`, `go build ./...`, and
 `go test -tags e2e ./e2e` all passed. Every commit between `origin/main` and the
-integration head carries a matching DCO sign-off. The branch is not a release
-candidate yet: 07 is now complete locally, but 09 has no implementation branch
-and final candidate container/demo reruns remain.
+integration head carries a matching DCO sign-off. Assignments 07 and 09 are now
+complete locally; final candidate container/demo reruns remain before release
+signoff.
 
 Assignment 07 checkpoint `2c847c6`, with companion manifest commit `0b3376f`,
 wires the journal into Jira and Forgejo publication. The CLI applies stored refs
@@ -73,3 +73,15 @@ source batch replaced the input; publication completed, the newer bytes and
 occurrence survived, and `acme/kb#7` replayed from state. Full Go tests, vet,
 CLI build, race-enabled publication-state/CLI tests, and the companion
 Kubernetes render passed. No live sink, ingest path, or deployment was touched.
+
+Assignment 09 checkpoint `38238f8` extracts validated input loading, optional
+ZAP fetch, entity construction/enrichment/validation, and initial output
+persistence from `main.go`. The process entry point retains signal cancellation,
+sink ordering, final artifact completion, and exit ownership. Architecture docs
+now name each runtime and destination boundary, including Forgejo and separate
+publication state. Public CLI coverage proves run-wrapper alert compatibility,
+explicit alert-file precedence, graph validation, analyst/identity retention,
+output dispatch, and cancellation of a blocked ZAP request. Full uncached Go
+tests, vet, CLI build, focused race tests, formatting, tagged offline e2e, and
+three read-only reviews passed. Broad Obsidian/Confluence file splitting is
+deferred until stronger golden serialized-output fixtures exist.

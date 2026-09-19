@@ -1,6 +1,6 @@
 # 09 — Extract stable responsibilities after reliability fixes
 
-Status: ready to assign, subject to the dependencies below.
+Status: completed and locally verified; deferred renderer splits are documented.
 
 Model: **GPT-5.6 Sol / High** (`gpt-5.6-sol`, reasoning `high`). This is a recommendation; select it in task settings.
 

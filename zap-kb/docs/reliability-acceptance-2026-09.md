@@ -16,7 +16,7 @@ assignment ownership and the latest integration checkpoint.
 | G4 Taxonomy | Mappings/aliases `bf8138b` and production pipeline `d88c8a1`; combined entities/run/render/repeat-import acceptance passes | Unsupported collection-rule mappings remain explicit gaps pending evidence |
 | G5 Configuration | `24ee34a`, `0803341`; explicit flag/environment/default, gateway and safe-error tests pass | Re-run final container combination after G3/G7 completion |
 | G6 Production and wiki review | [Read-only production review](production-publishing-review-2026-09.md); disposable/synthetic tests and [measured limits](wiki-performance-2026-09.md), integrated through `1da68cc` | Large-wiki performance remains open; no production upgrade or throughput claim |
-| G7 Maintainability and release | Provenance/CI `5313680`, `f4aae32`, `58e3aff`; shared validation/policy/result/journal packages; combined handoff checks pass | Assignment 09 has no implementation; final suite/container/demo rerun follows state wiring |
+| G7 Maintainability and release | Provenance/CI `5313680`, `f4aae32`, `58e3aff`; shared validation/policy/result/journal packages; pipeline responsibility extraction `38238f8`; combined handoff and local final suites pass | Final candidate container and disposable demo reruns remain; live destinations require designated environments |
 
 Forgejo demonstration acceptance is separate from workplace acceptance. The
 disposable walkthrough is being prepared; no live tenant is available, and no
@@ -35,6 +35,11 @@ personal Atlassian subscription is required to finish the local demonstration.
   e2e suite passed. All 34 commits over refreshed `origin/main` carry matching
   `Signed-off-by` trailers; the branch contains no merge commit or rewritten
   individual-agent history.
+- At `38238f8`, validated input/fetch, entity preparation, and primary output
+  gained explicit owners while `main.go` retained cancellation, sink ordering,
+  finalization, and exit control. Full uncached tests, vet, CLI build, focused
+  race tests and tagged offline e2e passed; independent code, QA and security
+  reviews found no remaining actionable regression.
 - The current Cactus exporter at repository revision `e5b70f8` generated a fresh
   synthetic artifact accepted by the combined CLI at `f817a36`. Finding,
   definition and occurrence IDs, the complete detection trace and source bytes
