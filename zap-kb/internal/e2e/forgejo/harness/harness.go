@@ -404,6 +404,7 @@ func Fixture(opts FixtureOptions) entities.EntitiesFile {
 		ef.Findings = append(ef.Findings, entities.Finding{
 			FindingID:    fid,
 			DefinitionID: "def-10038",
+			PluginID:     "10038",
 			Name:         fmt.Sprintf("CSP Header Not Set — /app/%d", i),
 			URL:          u,
 			Method:       "GET",
