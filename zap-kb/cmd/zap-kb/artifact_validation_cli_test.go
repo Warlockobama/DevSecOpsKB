@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapclient"
 )
 
 const validationSensitiveMarker = "SYNTHETIC_SENSITIVE_MARKER"
@@ -154,6 +157,52 @@ func TestCLIValidationAcceptsCompatibilityMatrix(t *testing.T) {
 				t.Fatal("Cactus detection trace was not preserved")
 			}
 		})
+	}
+}
+
+func TestCLIRunInputAlertsReachFlatOutputAndExplicitInputWins(t *testing.T) {
+	binary := buildTestCLI(t)
+	dir := t.TempDir()
+	runPath := filepath.Join(dir, "run.json")
+	artifact := runartifact.Artifact{
+		Schema: "zap-kb/run/v1",
+		Entities: entities.EntitiesFile{
+			SchemaVersion: "v1", GeneratedAt: "2026-09-19T12:00:00Z", SourceTool: "zap",
+			Definitions: []entities.Definition{}, Findings: []entities.Finding{}, Occurrences: []entities.Occurrence{},
+		},
+		Alerts: []zapclient.Alert{{Alert: "wrapper-alert", PluginID: "1", Risk: "Low", URL: "https://wrapper.invalid"}},
+	}
+	if err := runartifact.Write(runPath, artifact); err != nil {
+		t.Fatalf("write run artifact: %v", err)
+	}
+
+	readFlat := func(path string) []zapclient.Alert {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var alerts []zapclient.Alert
+		if err := json.Unmarshal(raw, &alerts); err != nil {
+			t.Fatalf("decode flat output: %v", err)
+		}
+		return alerts
+	}
+
+	fromWrapper := filepath.Join(dir, "wrapper-alerts.json")
+	runCLI(t, binary, nil, "-wizard=false", "-run-in="+runPath, "-format=flat", "-out="+fromWrapper)
+	if got := readFlat(fromWrapper); len(got) != 1 || got[0].Alert != "wrapper-alert" {
+		t.Fatalf("embedded run alerts changed: %+v", got)
+	}
+
+	explicitPath := filepath.Join(dir, "explicit-alerts.json")
+	if err := os.WriteFile(explicitPath, []byte(`[{"alert":"explicit-alert","pluginId":"2","risk":"High","url":"https://explicit.invalid"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fromExplicit := filepath.Join(dir, "explicit-output.json")
+	runCLI(t, binary, nil, "-wizard=false", "-run-in="+runPath, "-in="+explicitPath, "-format=flat", "-out="+fromExplicit)
+	if got := readFlat(fromExplicit); len(got) != 1 || got[0].Alert != "explicit-alert" {
+		t.Fatalf("explicit -in did not replace embedded run alerts: %+v", got)
 	}
 }
 

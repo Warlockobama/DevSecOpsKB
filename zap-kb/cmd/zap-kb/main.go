@@ -414,86 +414,22 @@ func runMain() {
 		}
 	}
 
-	var (
-		client *zapclient.Client
-		alerts []zapclient.Alert
-		entIn  entities.EntitiesFile
-		err    error
-	)
-	// If -run-in is provided, load entities and default labels/meta from it.
-	if strings.TrimSpace(runIn) != "" {
-		a, validation, rerr := runartifact.ReadValidated(runIn)
-		if rerr != nil {
-			fatalf("read -run-in: %v", rerr)
-		}
-		reportInputNormalizations("-run-in", validation)
-		entIn = a.Entities
-		if len(a.Alerts) > 0 {
-			alerts = append(alerts, a.Alerts...)
-		}
-		// adopt labels if not provided via flags
-		if strings.TrimSpace(scanLabel) == "" && strings.TrimSpace(a.Meta.ScanLabel) != "" {
-			scanLabel = a.Meta.ScanLabel
-		}
-		if strings.TrimSpace(siteLabel) == "" && strings.TrimSpace(a.Meta.SiteLabel) != "" {
-			siteLabel = a.Meta.SiteLabel
-		}
-		if strings.TrimSpace(zapBase) == "" && strings.TrimSpace(a.Meta.ZapBaseURL) != "" {
-			zapBase = a.Meta.ZapBaseURL
-		}
+	loaded, err := loadPipelineInput(runCtx, pipelineInputOptions{
+		RunIn: runIn, EntitiesIn: entitiesIn, AlertsIn: infile,
+		ZapURL: zapURL, APIKey: apiKey, BaseURL: baseURL, Count: count,
+		InitMode: initMode, AllPlugins: allPlugins, Plugins: plugins,
+		ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase,
+	})
+	if err != nil {
+		fatal(err)
 	}
-	fetchCtx, fetchCancel := context.WithTimeout(runCtx, 2*time.Minute)
-	defer fetchCancel()
-
-	// Decide if we should fetch alerts from ZAP API
-	// Fetch only when not explicitly in init/enrich-only modes and no explicit entities/plugin list is provided.
-	fetchAllowed := strings.TrimSpace(infile) == "" && strings.TrimSpace(runIn) == "" && !initMode && strings.TrimSpace(entitiesIn) == "" && !allPlugins && strings.TrimSpace(plugins) == ""
-
-	if strings.TrimSpace(infile) != "" {
-		// Read alerts from file and skip API calls
-		f, err := os.Open(infile)
-		if err != nil {
-			fatal("open -in file: operation failed (private details omitted)")
-		}
-		defer f.Close()
-		dec := json.NewDecoder(f)
-		if err := dec.Decode(&alerts); err != nil {
-			fatal("decode -in file: operation failed (private details omitted)")
-		}
-	} else if fetchAllowed { // fetch only when not enrich-only
-		// Fetch from ZAP API
-		client, err = zapclient.NewClient(zapURL, apiKey)
-		if err != nil {
-			fatal("new client: operation failed (private details omitted)")
-		}
-		// Default = all alerts; -count N restricts to first N
-		if count > 0 {
-			alerts, err = client.GetAlerts(fetchCtx, zapclient.AlertsFilter{
-				BaseURL: baseURL, Count: count, Start: 0, Recurse: true,
-			})
-		} else {
-			alerts, err = client.GetAllAlerts(fetchCtx, zapclient.AlertsFilter{
-				BaseURL: baseURL, Recurse: true,
-			})
-		}
-		if err != nil {
-			fatal("get alerts: operation failed (private details omitted)")
-		}
-	} else {
-		// Helpful note for offline init/enrich-only runs
-		if initMode || allPlugins || strings.TrimSpace(plugins) != "" || strings.TrimSpace(entitiesIn) != "" {
-			fmt.Println("Init/enrich-only mode: skipping ZAP API fetch")
-		}
-	}
-
-	// Optional input Entities for merge/enrich-only (overridden when -run-in used)
-	if strings.TrimSpace(entitiesIn) != "" && strings.TrimSpace(runIn) == "" {
-		var validation runartifact.ValidationResult
-		entIn, validation, err = runartifact.ReadEntities(entitiesIn)
-		if err != nil {
-			fatalf("read -entities-in: %v", err)
-		}
-		reportInputNormalizations("-entities-in", validation)
+	defer loaded.Cancel()
+	fetchCtx := loaded.DiscoveryCtx
+	client, alerts, entIn := loaded.Client, loaded.Alerts, loaded.Entities
+	fetchAllowed := loaded.FetchAllowed
+	scanLabel, siteLabel, zapBase = loaded.ScanLabel, loaded.SiteLabel, loaded.ZapBaseURL
+	if !fetchAllowed && (initMode || allPlugins || strings.TrimSpace(plugins) != "" || strings.TrimSpace(entitiesIn) != "") {
+		fmt.Println("Init/enrich-only mode: skipping ZAP API fetch")
 	}
 
 	// optional merge (flat alerts only)
@@ -523,189 +459,20 @@ func runMain() {
 			i, a.Alert, a.Risk, a.URL, a.Param, a.PluginID, a.CWEID.Int())
 	}
 
-	// Build entities model (or merge/enrich) if needed by chosen output
-	var ent entities.EntitiesFile
-	if format == "entities" || format == "both" || format == "obsidian" || runOut != "" {
-		if strings.TrimSpace(runIn) != "" || strings.TrimSpace(entitiesIn) != "" {
-			ent = entIn
-		}
-		// Single timestamp to stamp this generation and as observedAt for new occurrences
-		runGeneratedAt := strings.TrimSpace(genAt)
-		if runGeneratedAt == "" {
-			if len(alerts) > 0 {
-				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
-			} else if strings.TrimSpace(ent.GeneratedAt) != "" {
-				runGeneratedAt = ent.GeneratedAt
-			} else {
-				runGeneratedAt = time.Now().UTC().Format(time.RFC3339)
-			}
-		}
-		// #42: every scan must have a label so analysts can trace findings back to a
-		// specific run (audit, re-scan, accept-with-expiry). When the user did not
-		// pass -scan-label and we are about to ingest fresh alerts, retro-label the
-		// run with a derived "<source>-<UTC-timestamp>" tag and warn loudly. This is
-		// the "retro-label at import" path of the AC; reproducible runs should still
-		// pass an explicit -scan-label.
-		if strings.TrimSpace(scanLabel) == "" && len(alerts) > 0 {
-			derived := fmt.Sprintf("%s-%s", strings.TrimSpace(strings.ToLower(source)), time.Now().UTC().Format("20060102-150405"))
-			derived = strings.TrimPrefix(derived, "-")
-			scanLabel = derived
-			fmt.Fprintf(os.Stderr, "[warn] no -scan-label set; auto-derived %q for this run\n", derived)
-			fmt.Fprintf(os.Stderr, "[warn] Tip: pass -scan-label=<env>-<YYYYMMDD> for reproducible runs (e.g. prod-%s)\n", time.Now().UTC().Format("20060102"))
-		} else if strings.TrimSpace(scanLabel) == "" && (strings.TrimSpace(runIn) != "" || len(entIn.Occurrences) > 0) {
-			// No fresh alerts to label, but we're operating on existing entities.
-			// Emit the original advisory only — we cannot retro-label historical data.
-			fmt.Fprintln(os.Stderr, "[warn] no -scan-label set; occurrences from previous runs may not have a scan label")
-		}
-		if len(alerts) > 0 {
-			built := entities.BuildEntitiesWithOptions(alerts, entities.BuildOptions{
-				SourceTool:  source,
-				ScanLabel:   scanLabel,
-				GeneratedAt: runGeneratedAt,
-				ObservedAt:  runGeneratedAt,
-			})
-			if len(ent.Definitions) == 0 && len(ent.Findings) == 0 && len(ent.Occurrences) == 0 {
-				ent = built
-			} else {
-				ent = entities.MergeWithPolicy(ent, built, triagePolicy)
-			}
-		}
-
-		// Ensure definitions exist for explicit/all plugin IDs (or default-all when init mode)
-		var newDefs int
-		if strings.TrimSpace(plugins) != "" || allPlugins || initMode {
-			// Accept comma or space separators
-			var fields []string
-			ptrim := strings.TrimSpace(plugins)
-			if allPlugins || strings.EqualFold(ptrim, "all") || (initMode && ptrim == "") {
-				fields = zapmeta.ListAllPluginIDs(fetchCtx)
-			} else {
-				fields = strings.FieldsFunc(plugins, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
-			}
-			if len(fields) > 0 {
-				// Build an index for existing defs
-				defIndex := map[string]struct{}{}
-				for _, d := range ent.Definitions {
-					defIndex[strings.TrimSpace(d.DefinitionID)] = struct{}{}
-				}
-				for _, pid := range fields {
-					pid = strings.TrimSpace(pid)
-					if pid == "" {
-						continue
-					}
-					id := "def-" + pid
-					if _, ok := defIndex[id]; ok {
-						continue
-					}
-					// Add a stub definition; enrichment will fill detection/title.
-					ent.Definitions = append(ent.Definitions, entities.Definition{
-						DefinitionID: id,
-						PluginID:     pid,
-					})
-					defIndex[id] = struct{}{}
-					newDefs++
-				}
-			}
-		}
-		// optional override of generatedAt for stable diffs during iteration
-		ent.GeneratedAt = runGeneratedAt
-		// fill defaults if missing (e.g., plugins-only mode)
-		if strings.TrimSpace(ent.SchemaVersion) == "" {
-			ent.SchemaVersion = "v1"
-		}
-		if strings.TrimSpace(ent.SourceTool) == "" {
-			ent.SourceTool = source
-		}
-		if strings.TrimSpace(ent.GeneratedAt) == "" {
-			ent.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
-		}
-		var enrichCtx context.Context
-		var enrichCancel context.CancelFunc
-		if includeTraffic || includeDetect {
-			enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
-			defer enrichCancel()
-		}
-		if includeTraffic {
-			if enrichCtx == nil {
-				enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
-				defer enrichCancel()
-			}
-			if trafficScope == "all" {
-				_ = entities.EnrichAllTraffic(enrichCtx, client, &ent, trafficMax)
-			} else {
-				// Selective enrichment: honor per-issue, min risk, and global cap
-				_ = entities.EnrichTrafficSelective(enrichCtx, client, &ent, trafficMaxPerIssue, trafficMinRisk, trafficTotalMax, trafficMax)
-			}
-		}
-		if includeDetect {
-			if enrichCtx == nil {
-				enrichCtx, enrichCancel = context.WithTimeout(runCtx, 10*time.Minute)
-				defer enrichCancel()
-			}
-			entities.EnrichDetections(enrichCtx, &ent)
-			if strings.ToLower(strings.TrimSpace(detectDetails)) == "summary" {
-				entities.EnrichDetectionSummaries(enrichCtx, &ent)
-			}
-		}
-
-		// Resolve tool/custom origin before applying curated custom mappings. This
-		// keeps source-prefixed scanner rules separate from project-owned rules.
-		entities.NormalizeDefinitionOrigins(&ent)
-		entities.EnrichCustomTaxonomy(ent.Definitions)
-
-		// Enrich taxonomy (CWE→OWASP) from static map — always runs, best-effort
-		entities.EnrichTaxonomy(ent.Definitions)
-		if includeMITRE {
-			mitreCatalogs, err := entities.LoadMITRECatalogs(entities.MITRECachePaths{
-				CWE:    mitreCWECache,
-				CAPEC:  mitreCAPECCache,
-				ATTACK: mitreATTACKCache,
-			})
-			if err != nil {
-				fatal("load MITRE caches: operation failed (private details omitted)")
-			}
-			entities.EnrichMITREWithCatalogs(ent.Definitions, mitreCatalogs)
-		}
-		if includeCVSS {
-			entities.EnrichCVSS(&ent)
-		}
-		if zapAlertsOnly {
-			beforeDefs, beforeFindings, beforeOccurrences := len(ent.Definitions), len(ent.Findings), len(ent.Occurrences)
-			ent = entities.FilterZAPAlertsOnly(ent)
-			fmt.Printf("Filtered to ZAP scanner alerts: definitions %d->%d findings %d->%d occurrences %d->%d\n",
-				beforeDefs, len(ent.Definitions), beforeFindings, len(ent.Findings), beforeOccurrences, len(ent.Occurrences))
-		}
-		if dropped := entities.DropMismatchedTraffic(&ent); dropped > 0 {
-			fmt.Printf("Dropped mismatched traffic samples: %d\n", dropped)
-		}
-
-		// Normalize analyst status once before any output/render step so every
-		// surface uses the KB's canonical model.
-		entities.NormalizeAnalystStatuses(&ent)
-		entities.EnsureCollections(&ent)
-		if validation := entities.Validate(ent); !validation.OK() {
-			fatalf("validate entities: %v", validation.Err())
-		}
-
-		// Print a concise init/enrich summary when not fetching alerts
-		if fetchAllowed == false { // enrich-only / init flows
-			// detection stats
-			defsTotal := len(ent.Definitions)
-			detCount, srcCount, titled := 0, 0, 0
-			for _, d := range ent.Definitions {
-				if d.Detection != nil {
-					detCount++
-					if strings.TrimSpace(d.Detection.RuleSource) != "" || strings.TrimSpace(d.Detection.SourceURL) != "" {
-						srcCount++
-					}
-				}
-				if strings.TrimSpace(d.Alert) != "" || strings.TrimSpace(d.Name) != "" {
-					titled++
-				}
-			}
-			fmt.Printf("Init summary: defs total=%d new=%d detection=%d with-source=%d titled=%d\n", defsTotal, newDefs, detCount, srcCount, titled)
-		}
+	ent, nextScanLabel, err := buildPipelineEntities(runCtx, fetchCtx, client, alerts, entIn, entityPipelineOptions{
+		Format: format, RunOut: runOut, RunIn: runIn, EntitiesIn: entitiesIn,
+		GeneratedAt: genAt, Source: source, ScanLabel: scanLabel,
+		Plugins: plugins, AllPlugins: allPlugins, InitMode: initMode,
+		IncludeTraffic: includeTraffic, TrafficScope: trafficScope, TrafficMaxBytes: trafficMax,
+		TrafficMaxPerIssue: trafficMaxPerIssue, TrafficMinRisk: trafficMinRisk, TrafficTotalMax: trafficTotalMax,
+		IncludeDetection: includeDetect, DetectionDetails: detectDetails,
+		IncludeMITRE: includeMITRE, MITRECWECache: mitreCWECache, MITRECAPECCache: mitreCAPECCache, MITREATTACKCache: mitreATTACKCache,
+		IncludeCVSS: includeCVSS, ZAPAlertsOnly: zapAlertsOnly, FetchAllowed: fetchAllowed, TriagePolicy: triagePolicy,
+	})
+	if err != nil {
+		fatal(err)
 	}
+	scanLabel = nextScanLabel
 
 	// All emitted views derive from validated evidence, after identity creation.
 	if outputPolicy.Enabled() {
@@ -766,23 +533,11 @@ func runMain() {
 	results := &publishSummary.Publication
 	summarySaved, runSaved := false, false
 	var savedRunArtifact *runartifact.Artifact
-	outputErr := func() error {
-		switch format {
-		case "entities":
-			return jsondump.WritePretty(out, ent)
-		case "flat":
-			return jsondump.WritePretty(out, alerts)
-		case "both":
-			if err := jsondump.WritePretty(out, alerts); err != nil {
-				return err
-			}
-			return jsondump.WritePretty(out+".entities.json", ent)
-		case "obsidian":
-			return writeVaultSnapshot(vault, ent, obsidian.Options{ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase, JiraBaseURL: jiraBrowserURL, Redact: outputPolicy})
-		default:
-			return fmt.Errorf("unknown output format")
-		}
-	}()
+	outputErr := writePrimaryOutput(ent, alerts, primaryOutputOptions{
+		Format: format, Out: out, Vault: vault,
+		ScanLabel: scanLabel, SiteLabel: siteLabel, ZapBaseURL: zapBase,
+		JiraBaseURL: jiraBrowserURL, Redact: outputPolicy,
+	})
 	if outputErr != nil {
 		recordPublication(results, "local", "output", 0, 0, 0, outputErr, false)
 	}
