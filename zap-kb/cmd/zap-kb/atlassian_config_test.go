@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jira"
 )
 
 func fakeEnv(values map[string]string) func(string) string {
@@ -225,6 +227,22 @@ func TestResolveAtlassianConfig_URLDiagnosticsDoNotLeakSensitiveValues(t *testin
 			},
 			want: "userinfo is not allowed",
 		},
+		{
+			name: "query",
+			input: atlassianConfigInput{
+				JiraURL: "https://jira.example.test?token=SYNTHETIC-QUERY-TOKEN",
+				FlagSet: map[string]bool{"jira-url": true},
+			},
+			want: "query and fragment components are not allowed",
+		},
+		{
+			name: "fragment",
+			input: atlassianConfigInput{
+				ConfluenceURL: "https://confluence.example.test/wiki#SYNTHETIC-FRAGMENT-TOKEN",
+				FlagSet:       map[string]bool{"confluence-url": true},
+			},
+			want: "query and fragment components are not allowed",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,7 +254,7 @@ func TestResolveAtlassianConfig_URLDiagnosticsDoNotLeakSensitiveValues(t *testin
 			if !strings.Contains(text, tc.want) {
 				t.Fatalf("error %q does not explain the rejected setting", text)
 			}
-			for _, marker := range []string{"SYNTHETIC-URL-TOKEN", "SYNTHETIC-USERINFO-SECRET", "SYNTHETIC-QUERY-TOKEN"} {
+			for _, marker := range []string{"SYNTHETIC-URL-TOKEN", "SYNTHETIC-USERINFO-SECRET", "SYNTHETIC-QUERY-TOKEN", "SYNTHETIC-FRAGMENT-TOKEN"} {
 				if strings.Contains(text, marker) {
 					t.Fatalf("URL diagnostic leaked %q: %s", marker, text)
 				}
@@ -266,5 +284,33 @@ func TestResolveFlagEnv_WhitespaceEnvironmentIsUnset(t *testing.T) {
 	value, source := resolveFlagEnv("", false, "TEST_VALUE", fakeEnv(map[string]string{"TEST_VALUE": " \t "}))
 	if value != "" || source != "unset" {
 		t.Fatalf("whitespace env should be unset, got value=%q source=%q", value, source)
+	}
+}
+
+func TestApplyJiraRemoteReadinessKeepsEnabledConfluenceRequirements(t *testing.T) {
+	cfg := atlassianConfig{ConfluenceURL: "https://confluence.example.test/wiki"}
+	out := atlassianCheckOutput{
+		ConfigurationComplete: false,
+		Ready:                 false,
+		Missing:               []string{"CONFLUENCE_SPACE", "CONFLUENCE_TOKEN"},
+	}
+	report := jira.ReadinessReport{ConfigurationComplete: true, ChecksPassed: true}
+
+	got := applyJiraRemoteReadiness(out, cfg, report)
+	if got.Ready || got.ConfigurationComplete {
+		t.Fatalf("incomplete enabled Confluence sink reported ready: %+v", got)
+	}
+	if len(got.Missing) != 2 {
+		t.Fatalf("Confluence missing settings were discarded: %+v", got)
+	}
+}
+
+func TestApplyJiraRemoteReadinessAllowsJiraOnlyCheck(t *testing.T) {
+	out := atlassianCheckOutput{Missing: []string{"CONFLUENCE_URL", "CONFLUENCE_SPACE"}}
+	report := jira.ReadinessReport{ConfigurationComplete: true, ChecksPassed: true}
+
+	got := applyJiraRemoteReadiness(out, atlassianConfig{}, report)
+	if !got.Ready || !got.ConfigurationComplete || got.Missing != nil {
+		t.Fatalf("Jira-only remote check did not preserve Jira readiness: %+v", got)
 	}
 }

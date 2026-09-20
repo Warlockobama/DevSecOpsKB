@@ -74,13 +74,7 @@ func runAtlassianCheck(args []string) {
 			exitCLI(1)
 		}
 		report := jira.CheckReadiness(context.Background(), jira.Options{BaseURL: cfg.JiraURL, Username: cfg.JiraUser, APIToken: cfg.JiraToken, Deployment: cfg.JiraDeployment, ProjectKey: cfg.JiraProject, IssueType: issueType, Component: component, CreateFields: fields})
-		out.JiraRemote = &report
-		out.ConfigurationComplete = report.ConfigurationComplete
-		out.Checked = []string{"Jira configuration and bounded read-only permissions/create metadata; Confluence remote readiness and issue creation not checked"}
-		out.Ready = report.ChecksPassed
-		if strings.TrimSpace(cfg.ConfluenceURL) == "" {
-			out.Missing = nil
-		}
+		out = applyJiraRemoteReadiness(out, cfg, report)
 	}
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -92,4 +86,21 @@ func runAtlassianCheck(args []string) {
 	if !out.Ready {
 		exitCLI(1)
 	}
+}
+
+func applyJiraRemoteReadiness(out atlassianCheckOutput, cfg atlassianConfig, report jira.ReadinessReport) atlassianCheckOutput {
+	out.JiraRemote = &report
+	out.Checked = []string{"Jira configuration and bounded read-only permissions/create metadata; Confluence remote readiness and issue creation not checked"}
+	if strings.TrimSpace(cfg.ConfluenceURL) == "" {
+		out.Missing = nil
+		out.ConfigurationComplete = report.ConfigurationComplete
+		out.Ready = report.ChecksPassed
+		return out
+	}
+	// A configured Confluence destination participates in readiness even though
+	// remote checks currently cover only Jira. Never emit ready=true alongside
+	// missing Confluence settings.
+	out.ConfigurationComplete = len(out.Missing) == 0 && report.ConfigurationComplete
+	out.Ready = out.ConfigurationComplete && report.ChecksPassed
+	return out
 }

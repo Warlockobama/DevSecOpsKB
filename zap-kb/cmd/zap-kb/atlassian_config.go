@@ -230,6 +230,9 @@ func validateOptionalHTTPURL(label, value string) error {
 	if u.User != nil {
 		return fmt.Errorf("invalid %s: userinfo is not allowed; use the dedicated credential settings", label)
 	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("invalid %s: query and fragment components are not allowed", label)
+	}
 	return nil
 }
 
