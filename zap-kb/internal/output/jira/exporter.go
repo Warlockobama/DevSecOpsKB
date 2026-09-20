@@ -3,6 +3,7 @@ package jira
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -491,7 +492,7 @@ func findingHasOptInTag(f entities.Finding, tag string) bool {
 // Uses POST /rest/api/3/search/jql on Cloud, POST /rest/api/2/search on
 // Data Center — same body and response shape either way.
 func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, dc bool, findingID string, project ...string) (string, error) {
-	labels := []string{findingLabel(findingID), legacyFindingLabel(findingID)}
+	labels := uniqueLabels(findingLabel(findingID), historicalFindingLabel(findingID), legacyFindingLabel(findingID))
 	var quoted []string
 	for _, label := range labels {
 		quoted = append(quoted, quoteJQLString(label))
@@ -668,8 +669,13 @@ func truncateSummary(s string, max int) string {
 }
 
 // findingLabel returns the dedup label for a finding.
-// Uses hyphen separator — Jira labels cannot contain colons.
+// Common portable IDs retain the historical readable representation. IDs that
+// Jira cannot safely accept as labels use a bounded digest representation.
 func findingLabel(findingID string) string {
+	return jiraIdentityLabel("zap-finding-", findingID)
+}
+
+func historicalFindingLabel(findingID string) string {
 	return "zap-finding-" + findingID
 }
 
@@ -677,6 +683,42 @@ func findingLabel(findingID string) string {
 // exporter versions. Jira lookup still searches for it to avoid duplicates.
 func legacyFindingLabel(findingID string) string {
 	return "zap-finding:" + findingID
+}
+
+func jiraIdentityLabel(prefix, id string) string {
+	id = strings.TrimSpace(id)
+	candidate := prefix + id
+	if len(candidate) <= 255 && isPortableJiraLabel(candidate) {
+		return candidate
+	}
+	sum := sha256.Sum256([]byte(id))
+	return prefix + "sha256-" + fmt.Sprintf("%x", sum[:16])
+}
+
+func isPortableJiraLabel(label string) bool {
+	if label == "" {
+		return false
+	}
+	for _, r := range label {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func uniqueLabels(labels ...string) []string {
+	seen := make(map[string]struct{}, len(labels))
+	out := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if _, exists := seen[label]; exists {
+			continue
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	return out
 }
 
 // sanitizeLabel makes s safe for use as a Jira label:

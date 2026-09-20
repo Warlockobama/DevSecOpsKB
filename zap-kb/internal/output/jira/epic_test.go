@@ -16,6 +16,36 @@ func TestDefinitionLabel(t *testing.T) {
 	if got != "zap-definition-def-abc123" {
 		t.Errorf("got %q, want %q", got, "zap-definition-def-abc123")
 	}
+	unsafe := definitionLabel("definition with spaces")
+	if !strings.HasPrefix(unsafe, "zap-definition-sha256-") || len(unsafe) > 255 || !isPortableJiraLabel(unsafe) {
+		t.Fatalf("unsafe definition ID was not converted to a bounded Jira label: %q", unsafe)
+	}
+}
+
+func TestFindExistingEpicSearchesHistoricalUnsafeLabel(t *testing.T) {
+	var gotJQL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			JQL string `json:"jql"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotJQL = body.JQL
+		json.NewEncoder(w).Encode(map[string]any{"issues": []any{}})
+	}))
+	defer srv.Close()
+
+	id := "definition with spaces"
+	labels := uniqueLabels(definitionLabel(id), historicalDefinitionLabel(id))
+	if _, err := findExistingEpicByLabels(context.Background(), srv.Client(), "Basic test", srv.URL, labels); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range labels {
+		if !strings.Contains(gotJQL, quoteJQLString(want)) {
+			t.Errorf("search JQL missing compatibility label %q: %s", want, gotJQL)
+		}
+	}
 }
 
 func TestEpicSummary_PrefersAlertOverName(t *testing.T) {

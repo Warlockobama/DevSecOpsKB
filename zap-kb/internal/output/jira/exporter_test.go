@@ -289,6 +289,43 @@ func TestFindingLabel(t *testing.T) {
 	if label != "zap-finding-fin-abc123" {
 		t.Errorf("unexpected label: %s", label)
 	}
+	unsafe := "fin with spaces/and:punctuation"
+	got := findingLabel(unsafe)
+	if !strings.HasPrefix(got, "zap-finding-sha256-") || len(got) > 255 || !isPortableJiraLabel(got) {
+		t.Fatalf("unsafe ID was not converted to a bounded Jira label: %q", got)
+	}
+	if got != findingLabel(unsafe) || got == findingLabel(unsafe+"-different") {
+		t.Fatalf("digest label is not deterministic and collision-resistant: %q", got)
+	}
+	long := findingLabel(strings.Repeat("x", 400))
+	if len(long) > 255 || !strings.HasPrefix(long, "zap-finding-sha256-") {
+		t.Fatalf("long ID was not bounded: %q", long)
+	}
+}
+
+func TestFindExistingIssueSearchesHistoricalUnsafeLabels(t *testing.T) {
+	var gotJQL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			JQL string `json:"jql"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotJQL = body.JQL
+		json.NewEncoder(w).Encode(searchResponse(""))
+	}))
+	defer srv.Close()
+
+	id := "fin with spaces"
+	if _, err := findExistingIssue(context.Background(), srv.Client(), "Basic test", srv.URL, false, id); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{findingLabel(id), historicalFindingLabel(id), legacyFindingLabel(id)} {
+		if !strings.Contains(gotJQL, quoteJQLString(want)) {
+			t.Errorf("search JQL missing compatibility label %q: %s", want, gotJQL)
+		}
+	}
 }
 
 func TestSanitizeLabel(t *testing.T) {

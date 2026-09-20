@@ -13,10 +13,13 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
 )
 
-// definitionLabel returns the dedup label used to find or create an Epic
-// representing a single detection (Definition). Jira labels cannot contain
-// colons, so this mirrors findingLabel's hyphen convention.
+// definitionLabel returns the bounded dedup label used to find or create an
+// Epic representing a single detection (Definition).
 func definitionLabel(definitionID string) string {
+	return jiraIdentityLabel("zap-definition-", definitionID)
+}
+
+func historicalDefinitionLabel(definitionID string) string {
 	return "zap-definition-" + strings.TrimSpace(definitionID)
 }
 
@@ -202,9 +205,10 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 		return "", nil
 	}
 	label := definitionLabel(def.DefinitionID)
+	labels := uniqueLabels(label, historicalDefinitionLabel(def.DefinitionID))
 
 	// Search first to see if the Epic already exists.
-	if key, err := findExistingEpicByLabel(ctx, client, auth, base, label, opts.ProjectKey); err != nil {
+	if key, err := findExistingEpicByLabels(ctx, client, auth, base, labels, opts.ProjectKey); err != nil {
 		return "", fmt.Errorf("search epic: %w", err)
 	} else if key != "" {
 		return key, nil
@@ -241,15 +245,19 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 	req.Header.Set("Accept", "application/json")
 
 	return createOnce(client, req, func(ctx context.Context) (string, error) {
-		return findExistingEpicByLabel(ctx, client, auth, base, label, opts.ProjectKey)
+		return findExistingEpicByLabels(ctx, client, auth, base, labels, opts.ProjectKey)
 	})
 }
 
-// findExistingEpicByLabel returns the key of the first issue with the given
-// label, or "" when no match is found. Any issuetype matches — we rely on the
-// label (which we only apply to Epics) to scope the search.
-func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, label string, project ...string) (string, error) {
-	jql := "labels = " + quoteJQLString(label)
+// findExistingEpicByLabels returns the key of the first issue with any current
+// or historical dedup label. Any issue type matches because these labels are
+// applied only to detection epics.
+func findExistingEpicByLabels(ctx context.Context, client httpDoer, auth, base string, labels []string, project ...string) (string, error) {
+	quoted := make([]string, 0, len(labels))
+	for _, label := range labels {
+		quoted = append(quoted, quoteJQLString(label))
+	}
+	jql := "labels in (" + strings.Join(quoted, ", ") + ")"
 	if len(project) > 0 && strings.TrimSpace(project[0]) != "" {
 		jql = "project = " + quoteJQLString(project[0]) + " AND (" + jql + ")"
 	}
