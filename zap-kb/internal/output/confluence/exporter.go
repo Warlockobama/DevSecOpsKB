@@ -25,6 +25,7 @@ import (
 // This is a minimal helper aimed at pushing the KB index into Confluence Server/DC
 // via the REST API using a markdown macro wrapper.
 type Options struct {
+	Redact       entities.RedactOptions
 	BaseURL      string
 	Username     string
 	APIToken     string
@@ -38,6 +39,7 @@ type Options struct {
 
 // VaultOptions controls full-vault export to Confluence.
 type VaultOptions struct {
+	Redact            entities.RedactOptions
 	BaseURL           string
 	Username          string
 	APIToken          string
@@ -149,6 +151,7 @@ func (s *pageHashStore) save() error {
 // Content is wrapped in a markdown macro so existing markdown renders without conversion.
 // If a page with the same title already exists in the space, it is updated (upsert).
 func Export(ctx context.Context, vaultRoot string, opts Options) error {
+	ctx = withOutputPolicy(ctx, opts.Redact)
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" || strings.TrimSpace(opts.APIToken) == "" {
 		return fmt.Errorf("confluence export: missing required fields (base URL, space key, api token)")
 	}
@@ -162,7 +165,7 @@ func Export(ctx context.Context, vaultRoot string, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("read markdown: %w", err)
 	}
-	title := strings.TrimSpace(opts.TitlePrefix + " " + strings.TrimSuffix(page, filepath.Ext(page)))
+	title := strings.TrimSpace(entities.RedactText(opts.TitlePrefix, opts.Redact) + " " + strings.TrimSuffix(page, filepath.Ext(page)))
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "KB Index"
@@ -173,7 +176,7 @@ func Export(ctx context.Context, vaultRoot string, opts Options) error {
 	macro := mdToStorage(markdown)
 
 	if opts.DryRun {
-		fmt.Printf("[confluence] dry-run: would upsert %d bytes to %s (title=%q space=%q parent=%q)\n", len(bodyBytes), opts.BaseURL, title, opts.SpaceKey, strings.TrimSpace(opts.ParentPageID))
+		fmt.Printf("[confluence] dry-run: would upsert %d bytes\n", len(bodyBytes))
 		return nil
 	}
 
@@ -208,6 +211,10 @@ func Export(ctx context.Context, vaultRoot string, opts Options) error {
 // top-level "Findings" and "Occurrences" parent pages.
 // All pages are upserted in parallel (bounded by Concurrency).
 func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (VaultSummary, error) {
+	ctx = withOutputPolicy(ctx, opts.Redact)
+	opts.JiraStatusByKey = entities.RedactStringMap(opts.JiraStatusByKey, opts.Redact)
+	opts.JiraAssigneeByKey = entities.RedactStringMap(opts.JiraAssigneeByKey, opts.Redact)
+	opts.JiraBaseURL = entities.RedactText(opts.JiraBaseURL, opts.Redact)
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.SpaceKey) == "" ||
 		strings.TrimSpace(opts.APIToken) == "" {
 		return VaultSummary{}, fmt.Errorf("confluence vault export: missing required fields (base URL, space key, api token)")
@@ -307,7 +314,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		// via REST API. Triage is done by editing individual occurrence pages.
 		_, action, uerr := upsertPageCached(ctx, httpClient, auth, base, opts.SpaceKey, tp.title, storageBody, rootID, hs)
 		if uerr != nil {
-			fmt.Printf("[confluence] error upserting %s: %v\n", tp.title, uerr)
+			fmt.Printf("[confluence] error upserting: %s\n", synccore.SafeError(uerr))
 			summary.Errors++
 			continue
 		}
@@ -318,7 +325,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	if opts.Entities != nil {
 		_, postureAction, postureErr := upsertPostureSummary(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs)
 		if postureErr != nil {
-			fmt.Printf("[confluence] error upserting posture summary: %v\n", postureErr)
+			fmt.Printf("[confluence] error upserting posture summary: %s\n", synccore.SafeError(postureErr))
 			summary.Errors++
 		} else {
 			countAction(&summary, postureAction)
@@ -332,7 +339,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	if opts.Entities != nil {
 		_, scansAction, scansErr := upsertScansIndex(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs, opts.DryRun)
 		if scansErr != nil {
-			fmt.Printf("[confluence] error upserting scans index: %v\n", scansErr)
+			fmt.Printf("[confluence] error upserting scans index: %s\n", synccore.SafeError(scansErr))
 			summary.Errors++
 		} else {
 			countAction(&summary, scansAction)
@@ -370,7 +377,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 		// persist the hashes recorded so far so the next run can skip them.
 		upsertExportSummary(ctx, httpClient, auth, base, opts, rootID, hs, &summary)
 		if serr := hs.save(); serr != nil {
-			fmt.Printf("[confluence] warning: could not save hash store: %v\n", serr)
+			fmt.Printf("[confluence] warning: could not save hash store: %s\n", synccore.SafeError(serr))
 		}
 		return summary, nil
 	}
@@ -442,9 +449,9 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 	// Build definitionID → pageID map for hierarchical nesting
 	defPageIDs := make(map[string]string)
-	for i, r := range defResults {
+	for _, r := range defResults {
 		if r.err != nil {
-			fmt.Printf("[confluence] error upserting definition %s: %v\n", mdFiles[i], r.err)
+			fmt.Printf("[confluence] error upserting definition: %s\n", synccore.SafeError(r.err))
 			summary.Errors++
 		} else {
 			countAction(&summary, r.action)
@@ -480,7 +487,7 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 
 	// Persist updated hashes for next run.
 	if err := hs.save(); err != nil {
-		fmt.Printf("[confluence] warning: could not save hash store: %v\n", err)
+		fmt.Printf("[confluence] warning: could not save hash store: %s\n", synccore.SafeError(err))
 	}
 
 	// Phase 7: Upsert the "KB Export Summary" page as a child of root.
@@ -738,7 +745,7 @@ func upsertFindingsHierarchical(
 				if body, ferr2 := fetchPageStorageBody(ctx, client, auth, base, existingPageID); ferr2 == nil {
 					existingLog = extractAnalystLog(body)
 				} else {
-					fmt.Printf("[confluence] warning: could not fetch existing body for %q: %v\n", title, ferr2)
+					fmt.Printf("[confluence] warning: could not fetch existing body for: %s\n", synccore.SafeError(ferr2))
 				}
 				existingSig = fetchPageProperty(ctx, client, auth, base, existingPageID, "kb-state-sig")
 			}
@@ -778,7 +785,7 @@ func upsertFindingsHierarchical(
 			// Persist the state signature as a page property (invisible to users).
 			if uerr == nil && pageID != "" && act != "skipped" {
 				if perr := upsertPageProperty(ctx, client, auth, base, pageID, "kb-state-sig", currentSig); perr != nil {
-					fmt.Printf("[confluence] warning: could not store state sig for %q: %v\n", title, perr)
+					fmt.Printf("[confluence] warning: could not store state sig for: %s\n", synccore.SafeError(perr))
 				}
 			}
 			fid := ""
@@ -791,9 +798,9 @@ func upsertFindingsHierarchical(
 	wg.Wait()
 
 	findingPageIDs := make(map[string]string)
-	for i, r := range results {
+	for _, r := range results {
 		if r.err != nil {
-			fmt.Printf("[confluence] error upserting finding %s: %v\n", mdFiles[i], r.err)
+			fmt.Printf("[confluence] error upserting finding: %s\n", synccore.SafeError(r.err))
 			summary.Errors++
 		} else {
 			countAction(summary, r.action)
@@ -900,7 +907,7 @@ func upsertOccurrencesHierarchical(
 					applyLabels(ctx, client, auth, base, pageID, labels)
 				}
 				if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
-					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+					fmt.Printf("[confluence] warning: could not add kb-occurrence label to page: %s\n", synccore.SafeError(err))
 				}
 			}
 			results[i] = result{action: act, err: uerr}
@@ -908,9 +915,9 @@ func upsertOccurrencesHierarchical(
 	}
 	wg.Wait()
 
-	for i, r := range results {
+	for _, r := range results {
 		if r.err != nil {
-			fmt.Printf("[confluence] error upserting occurrence %s: %v\n", mdFiles[i], r.err)
+			fmt.Printf("[confluence] error upserting occurrence: %s\n", synccore.SafeError(r.err))
 			summary.Errors++
 		} else {
 			countAction(summary, r.action)
@@ -949,7 +956,7 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 	}
 	parentID, action, err := upsertPageCached(ctx, client, auth, base, spaceKey, parentTitle, parentStorageBody, grandParentID, hs)
 	if err != nil {
-		fmt.Printf("[confluence] error upserting %s parent: %v\n", parentTitle, err)
+		fmt.Printf("[confluence] error upserting: %s\n", synccore.SafeError(err))
 		summary.Errors++
 		return
 	}
@@ -1035,7 +1042,7 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 				}
 				if subdir == "occurrences" {
 					if err := addPageLabel(ctx, client, auth, base, pageID, "kb-occurrence"); err != nil {
-						fmt.Printf("[confluence] warning: could not add kb-occurrence label to page %s: %v\n", pageID, err)
+						fmt.Printf("[confluence] warning: could not add kb-occurrence label to page: %s\n", synccore.SafeError(err))
 					}
 				}
 			}
@@ -1044,9 +1051,9 @@ func upsertDir(ctx context.Context, client httpDoer, auth, base, spaceKey, vault
 	}
 	wg.Wait()
 
-	for i, r := range results {
+	for _, r := range results {
 		if r.err != nil {
-			fmt.Printf("[confluence] error upserting %s/%s: %v\n", subdir, mdFiles[i], r.err)
+			fmt.Printf("[confluence] error upserting: %s\n", synccore.SafeError(r.err))
 			summary.Errors++
 		} else {
 			countAction(summary, r.action)
@@ -1126,6 +1133,7 @@ func defTitleFromFilename(filename string) string {
 // upsertPage creates or updates a Confluence page. Returns (pageID, action, error).
 // action is "created", "updated", or "skipped".
 func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string) (string, string, error) {
+	storageBody = redactStoredBody(ctx, storageBody)
 	existingID, existingVersion, err := findPage(ctx, client, auth, base, spaceKey, title)
 	if err != nil {
 		return "", "", fmt.Errorf("find page %q: %w", title, err)
@@ -1225,6 +1233,7 @@ func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, titl
 // storage body hash is unchanged, it skips the API call and returns "skipped".
 // On any create/update, the hash is recorded.
 func upsertPageCached(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string, hs *pageHashStore) (string, string, error) {
+	storageBody = redactStoredBody(ctx, storageBody)
 	if hs != nil && hs.unchanged(title, storageBody) {
 		// Use cached page ID — zero API calls on the skip path only when the page still exists.
 		if cachedID := hs.cachedPageID(title); cachedID != "" {
@@ -3357,7 +3366,7 @@ func applyLabels(ctx context.Context, client httpDoer, auth, base, pageID string
 	req.Header.Set("Authorization", auth)
 	resp, err := doWithRetry(client, req, 3)
 	if err != nil {
-		fmt.Printf("[confluence] warning: failed to apply labels to page %s: %v\n", pageID, err)
+		fmt.Printf("[confluence] warning: failed to apply labels to page: %s\n", synccore.SafeError(err))
 		return
 	}
 	defer resp.Body.Close()

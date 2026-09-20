@@ -1,0 +1,24 @@
+name: zap-kb-container-jira-contract
+
+on:
+  workflow_dispatch:
+
+jobs:
+  container-jira-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: zap-kb
+    env:
+      CONTAINER_JIRA: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: zap-kb/go.mod
+
+      - name: Test publisher image against synthetic Jira
+        run: go test -tags container -count=1 -timeout 10m ./internal/e2e/jiracontainer

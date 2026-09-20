@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
 // definitionLabel returns the dedup label used to find or create an Epic
@@ -197,9 +196,7 @@ func buildEpicDescription(def *entities.Definition, ev epicEvidence) adfDoc {
 // creating one if none exists. Caching is handled by the caller — this function
 // always round-trips Jira when invoked (one search + at most one create).
 //
-// Returns ("", nil) when Epic creation fails in a recoverable way (project
-// doesn't allow the Epic issue type, missing permission, etc.). The caller
-// should fall back to flat finding creation and warn the user.
+// Rejections are returned to the caller and recorded as required-stage failures.
 func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base string, def *entities.Definition, ev epicEvidence, opts Options) (string, error) {
 	if def == nil {
 		return "", nil
@@ -207,7 +204,7 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 	label := definitionLabel(def.DefinitionID)
 
 	// Search first to see if the Epic already exists.
-	if key, err := findExistingEpicByLabel(ctx, client, auth, base, label); err != nil {
+	if key, err := findExistingEpicByLabel(ctx, client, auth, base, label, opts.ProjectKey); err != nil {
 		return "", fmt.Errorf("search epic: %w", err)
 	} else if key != "" {
 		return key, nil
@@ -243,37 +240,19 @@ func ensureEpicForDefinition(ctx context.Context, client httpDoer, auth, base st
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	// Raw variant: 400/403 are data here (soft fallback), not transport errors.
-	resp, err := synccore.DoWithRetryRaw(client, req, 3)
-	if err != nil {
-		return "", fmt.Errorf("post epic: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusForbidden {
-		// Project likely doesn't support this issue type or the user lacks
-		// permission. Return a soft failure so the caller can fall back.
-		io.Copy(io.Discard, resp.Body)
-		return "", nil
-	}
-	if resp.StatusCode != http.StatusCreated {
-		return "", jiraHTTPErr(resp)
-	}
-
-	var created struct {
-		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("decode epic response: %w", err)
-	}
-	return created.Key, nil
+	return createOnce(client, req, func(ctx context.Context) (string, error) {
+		return findExistingEpicByLabel(ctx, client, auth, base, label, opts.ProjectKey)
+	})
 }
 
 // findExistingEpicByLabel returns the key of the first issue with the given
 // label, or "" when no match is found. Any issuetype matches — we rely on the
 // label (which we only apply to Epics) to scope the search.
-func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, label string) (string, error) {
+func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, label string, project ...string) (string, error) {
 	jql := "labels = " + quoteJQLString(label)
+	if len(project) > 0 && strings.TrimSpace(project[0]) != "" {
+		jql = "project = " + quoteJQLString(project[0]) + " AND (" + jql + ")"
+	}
 	body := map[string]any{
 		"jql":        jql,
 		"maxResults": 1,
@@ -291,7 +270,7 @@ func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, l
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := synccore.DoWithRetryAs("jira", client, req, 3)
+	resp, err := doRequest(client, req, 3)
 	if err != nil {
 		return "", err
 	}
@@ -302,8 +281,16 @@ func findExistingEpicByLabel(ctx context.Context, client httpDoer, auth, base, l
 			Key string `json:"key"`
 		} `json:"issues"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&result); err != nil {
 		return "", err
+	}
+	if result.Issues == nil {
+		return "", fmt.Errorf("Jira search response omitted issues; refusing create")
+	}
+	for _, issue := range result.Issues {
+		if strings.TrimSpace(issue.Key) == "" {
+			return "", fmt.Errorf("Jira search response omitted issue key; refusing create")
+		}
 	}
 	if len(result.Issues) == 0 {
 		return "", nil

@@ -65,6 +65,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: zap-kb
@@ -75,4 +76,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GO_VERSION=1.24
-          provenance: false
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp || 'unknown' }}
+          provenance: true
+
+      - name: Record immutable image identity
+        if: github.event_name != 'pull_request'
+        run: |
+          {
+            echo "### zap-kb image"
+            echo
+            echo "- Source revision: \`${GITHUB_SHA}\`"
+            echo "- Immutable image: \`${IMAGE}@${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

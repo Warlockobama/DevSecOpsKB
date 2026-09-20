@@ -558,39 +558,53 @@ func EnrichDetectionSummaries(ctx context.Context, ef *EntitiesFile) {
 	}
 }
 
-// EnrichCustomTaxonomy applies static taxonomy overrides and false positive guidance
-// for custom/internal plugin IDs (e.g., authenticated-* rules) and well-known plugin IDs
-// that have FP guidance (e.g., CDM, CSP, CDJSF). Best-effort; never overwrites existing values.
+// EnrichCustomTaxonomy applies curated mappings to custom rules and false
+// positive guidance to known rules. Precedence is reviewed analyst/advisory
+// taxonomy, curated custom taxonomy, scanner-native taxonomy, then derived
+// labels. An unmapped custom rule retains imported taxonomy and receives a
+// separate gap tag because old artifacts do not reliably identify which fields
+// came from a scanner versus a human review.
 func EnrichCustomTaxonomy(defs []Definition) {
 	for i := range defs {
 		d := &defs[i]
 
-		// Apply custom taxonomy for authenticated-* and other internal rules.
-		if ct := zapmeta.LookupCustomTaxonomy(d.PluginID); ct != nil {
+		ct := zapmeta.LookupCustomTaxonomy(d.PluginID)
+		custom := IsCustomDefinition(d)
+		canApplyCurated := taxonomyCanApplyCurated(d.Taxonomy)
+		switch {
+		case custom && ct != nil && canApplyCurated:
 			if d.Taxonomy == nil {
 				d.Taxonomy = &Taxonomy{}
 			}
-			if d.Taxonomy.CWEID == 0 {
+			if ct.CWEID > 0 {
+				if d.Taxonomy.CWEID != ct.CWEID {
+					d.Taxonomy.CWEName = ""
+				}
 				d.Taxonomy.CWEID = ct.CWEID
-			}
-			if d.Taxonomy.CWEURI == "" {
 				d.Taxonomy.CWEURI = ct.CWEURI
 			}
-			if len(d.Taxonomy.CAPECIDs) == 0 {
+			if len(ct.CAPECIDs) > 0 {
 				ids := make([]int, len(ct.CAPECIDs))
 				copy(ids, ct.CAPECIDs)
 				d.Taxonomy.CAPECIDs = ids
+				d.Taxonomy.CAPEC = nil
 			}
-			if len(d.Taxonomy.ATTACK) == 0 {
+			if len(ct.ATTACK) > 0 {
 				atk := make([]string, len(ct.ATTACK))
 				copy(atk, ct.ATTACK)
 				d.Taxonomy.ATTACK = atk
+				d.Taxonomy.ATTACKTechniques = nil
+			} else {
+				removeLegacyCuratedATTACK(d.Taxonomy)
 			}
-			if len(d.Taxonomy.OWASPTop10) == 0 {
+			if len(ct.OWASPTop10) > 0 {
 				owasp := make([]string, len(ct.OWASPTop10))
 				copy(owasp, ct.OWASPTop10)
 				d.Taxonomy.OWASPTop10 = owasp
 			}
+			d.Taxonomy.MappingConfidence = "curated"
+		case custom && ct == nil:
+			markUnmappedCustomTaxonomy(d)
 		}
 
 		// Apply false positive guidance for well-known plugin IDs.
@@ -605,4 +619,82 @@ func EnrichCustomTaxonomy(defs []Definition) {
 			}
 		}
 	}
+}
+
+// UnmappedCustomRules returns stable input IDs for custom definitions without a
+// curated mapping. It reports gaps without rewriting any identity field.
+func UnmappedCustomRules(defs []Definition) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for i := range defs {
+		d := &defs[i]
+		id := strings.TrimSpace(d.PluginID)
+		if id == "" || !IsCustomDefinition(d) || zapmeta.LookupCustomTaxonomy(id) != nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func taxonomyCanApplyCurated(t *Taxonomy) bool {
+	if t == nil {
+		return true
+	}
+	if !hasTaxonomyClassification(t) {
+		return true
+	}
+	confidence := strings.ToLower(strings.TrimSpace(t.MappingConfidence))
+	switch confidence {
+	case "scanner-cwe", "curated", "curated-cwe-derived", "unmapped-custom":
+		return true
+	default:
+		// Empty, unknown, manual, analyst, advisory, and historical values are
+		// treated as imported ownership and retained. Older artifacts did not
+		// consistently record mapping provenance.
+		return false
+	}
+}
+
+func hasTaxonomyClassification(t *Taxonomy) bool {
+	return t.CWEID > 0 || strings.TrimSpace(t.CWEName) != "" || strings.TrimSpace(t.CWEURI) != "" ||
+		len(t.CAPECIDs) > 0 || len(t.CAPEC) > 0 || len(t.ATTACK) > 0 ||
+		len(t.ATTACKTechniques) > 0 || len(t.OWASPTop10) > 0 || len(t.NIST80053) > 0
+}
+
+func markUnmappedCustomTaxonomy(d *Definition) {
+	if d.Taxonomy == nil {
+		d.Taxonomy = &Taxonomy{}
+	}
+	for _, tag := range d.Taxonomy.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), "taxonomy-unmapped-custom") {
+			return
+		}
+	}
+	d.Taxonomy.Tags = append(d.Taxonomy.Tags, "taxonomy-unmapped-custom")
+}
+
+// removeLegacyCuratedATTACK removes only the old generated T1078 mapping. The
+// migration is deliberately narrow: unknown or analyst-owned confidence values
+// keep their ATT&CK data.
+func removeLegacyCuratedATTACK(t *Taxonomy) {
+	if !strings.EqualFold(strings.TrimSpace(t.MappingConfidence), "curated") || len(t.ATTACK) != 1 ||
+		!strings.EqualFold(strings.TrimSpace(t.ATTACK[0]), "T1078") {
+		return
+	}
+	t.ATTACK = nil
+	t.ATTACKTechniques = nil
+	sources := t.Sources[:0]
+	for _, source := range t.Sources {
+		if strings.EqualFold(strings.TrimSpace(source.Name), "MITRE ATT&CK") {
+			continue
+		}
+		sources = append(sources, source)
+	}
+	t.Sources = sources
 }

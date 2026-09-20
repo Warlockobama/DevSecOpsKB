@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -10,19 +11,17 @@ import (
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/confluence"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/jsondump"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/obsidian"
-	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/runartifact"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/zapmeta"
 )
 
 type jiraSyncContext struct {
-	Format           string
-	Out              string
-	EntitiesIn       string
-	RunIn            string
-	RunInputArtifact *runartifact.Artifact
+	Format string
+	Out    string
 }
 
 type confluencePublishOptions struct {
+	Context           context.Context
+	Redact            entities.RedactOptions
 	BaseURL           string
 	Username          string
 	APIToken          string
@@ -122,21 +121,10 @@ func persistJiraEntities(ctx jiraSyncContext, ent entities.EntitiesFile) (string
 	case "both":
 		return writeEntitiesFile(strings.TrimSpace(ctx.Out)+".entities.json", ent)
 	case "obsidian":
-		if art := ctx.RunInputArtifact; art != nil && strings.TrimSpace(ctx.RunIn) != "" {
-			updated := *art
-			updated.Entities = ent
-			if err := runartifact.Write(ctx.RunIn, updated); err != nil {
-				return "", err
-			}
-			return ctx.RunIn, nil
-		}
-		if path := strings.TrimSpace(ctx.RunIn); path != "" {
-			return writeEntitiesFile(path, ent)
-		}
-		if path := strings.TrimSpace(ctx.EntitiesIn); path != "" {
-			return writeEntitiesFile(path, ent)
-		}
-		return "", fmt.Errorf("persistJiraEntities: obsidian format requires -run-in or -entities-in to persist finding ticket keys safely")
+		// The vault and optional -run-out are derived outputs. Producer-owned
+		// -run-in and -entities-in artifacts are immutable; publication refs are
+		// persisted by publicationstate.Store instead.
+		return "", nil
 	}
 	return "", nil
 }
@@ -171,14 +159,27 @@ func writeVaultSnapshot(root string, ent entities.EntitiesFile, opts obsidian.Op
 }
 
 func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opts confluencePublishOptions) (confluence.VaultSummary, error) {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.TrimSpace(opts.BaseURL) == "" {
 		return confluence.VaultSummary{}, nil
 	}
 	if strings.TrimSpace(vault) == "" {
 		return confluence.VaultSummary{}, fmt.Errorf("vault path is required for Confluence export")
 	}
-	if strings.TrimSpace(format) != "obsidian" {
+	sourceVault := vault
+	tmp, tmpErr := os.MkdirTemp("", "confluence-output-")
+	if tmpErr != nil {
+		return confluence.VaultSummary{}, fmt.Errorf("cannot create Confluence snapshot")
+	}
+	defer os.RemoveAll(tmp)
+	vault = tmp
+	{
 		if err := writeVaultSnapshot(vault, ent, obsidian.Options{
+			Redact:            opts.Redact,
+			CarryForwardRoot:  sourceVault,
 			ScanLabel:         opts.ScanLabel,
 			SiteLabel:         opts.SiteLabel,
 			ZapBaseURL:        opts.ZapBaseURL,
@@ -191,9 +192,10 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 		}
 	}
 	if opts.Full {
-		confCtx, confCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		confCtx, confCancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer confCancel()
 		sum, err := confluence.ExportVault(confCtx, vault, confluence.VaultOptions{
+			Redact:            opts.Redact,
 			BaseURL:           opts.BaseURL,
 			Username:          opts.Username,
 			APIToken:          opts.APIToken,
@@ -210,14 +212,15 @@ func publishConfluenceVault(vault, format string, ent entities.EntitiesFile, opt
 			Entities:          &ent,
 		})
 		if err != nil {
-			return confluence.VaultSummary{}, fmt.Errorf("confluence vault export: %w", err)
+			return sum, fmt.Errorf("confluence vault export: %w", err)
 		}
 		fmt.Printf("Confluence: created=%d updated=%d skipped=%d errors=%d\n", sum.Created, sum.Updated, sum.Skipped, sum.Errors)
 		return sum, nil
 	}
-	confCtx, confCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	confCtx, confCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer confCancel()
 	if err := confluence.Export(confCtx, vault, confluence.Options{
+		Redact:       opts.Redact,
 		BaseURL:      opts.BaseURL,
 		Username:     opts.Username,
 		APIToken:     opts.APIToken,

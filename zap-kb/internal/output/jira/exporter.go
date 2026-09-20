@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
@@ -57,6 +58,10 @@ type Options struct {
 	// create. When the owner is set but no mapping exists, the issue is
 	// created unassigned and a stderr warning is emitted (#61).
 	UsernameMap map[string]string
+	// CreateFields supplies project-specific fields on new finding issues only.
+	// Reserved identity, evidence and workflow fields cannot be overridden.
+	// A null value omits an optional default such as priority.
+	CreateFields map[string]any
 }
 
 // httpDoer is an alias for synccore.HTTPDoer, kept so this package's
@@ -65,12 +70,14 @@ type httpDoer = synccore.HTTPDoer
 
 // Summary reports the outcome of an export run.
 type Summary struct {
-	Created    int
-	Skipped    int // already existed
-	Errors     int
-	TicketKeys map[string]string // findingID → Jira issue key (KAN-42)
+	Diagnostics []publication.Diagnostic
+	DryRun      bool
+	Created     int
+	Skipped     int // already existed
+	Errors      int
+	TicketKeys  map[string]string // findingID → Jira issue key (KAN-42)
 	// EpicKeys maps definitionID → Epic issue key when DetectionEpic is on.
-	// Empty when the feature is disabled or Epic creation failed gracefully.
+	// Empty when the feature is disabled or failed (see Diagnostics).
 	EpicKeys map[string]string
 	// Relinked counts existing findings whose `parent` field was retroactively
 	// set to a newly-created or pre-existing detection Epic. Useful when an
@@ -82,16 +89,22 @@ type Summary struct {
 // Findings that already have a matching issue (by label zap-finding:<findingID>) are skipped.
 // Issues are created in parallel up to opts.Concurrency.
 func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summary, error) {
+	if err := ValidateCreateFields(opts.CreateFields); err != nil {
+		return Summary{}, err
+	}
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.ProjectKey) == "" ||
 		strings.TrimSpace(opts.APIToken) == "" {
 		return Summary{}, fmt.Errorf("jira export: missing required fields (base URL, project key, api token)")
 	}
 	dc := isDataCenter(opts.Deployment)
+	var diagnostics []publication.Diagnostic
+	epicErrors := 0
 	if opts.DetectionEpic && dc {
 		// Data Center classic projects link Epic children via the per-instance
 		// "Epic Link" custom field, not the Cloud `parent` field — creating the
-		// link would 400. Fall back to flat findings rather than half-publish.
-		fmt.Println("[jira] warning: -jira-detection-epic is not supported on Jira Data Center; creating flat findings")
+		// link would 400. Record the unsupported request and continue findings.
+		diagnostics = append(diagnostics, publication.Diagnostic{Stage: "epic", Category: "unsupported", Message: "Detection epics require Cloud; Data Center Epic Link configuration is not supported"})
+		epicErrors++
 		opts.DetectionEpic = false
 	}
 
@@ -155,7 +168,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	}
 
 	if len(candidates) == 0 {
-		return Summary{}, nil
+		return Summary{Errors: epicErrors, Diagnostics: diagnostics, DryRun: opts.DryRun}, nil
 	}
 
 	if opts.DryRun {
@@ -176,12 +189,12 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 					f.DefinitionID, epicSummary(def), definitionLabel(f.DefinitionID))
 			}
 		}
-		return Summary{Created: len(candidates)}, nil
+		return Summary{Skipped: len(candidates), DryRun: true, Errors: epicErrors, Diagnostics: diagnostics}, nil
 	}
 
 	// Detection Epics (opt-in). Resolve one Epic key per distinct definition
 	// among the candidates so findings can be linked via `parent` below.
-	// Failures are logged but never block finding creation — fall back to flat.
+	// Failures remain required-stage failures while finding creation proceeds.
 	epicKeys := make(map[string]string)
 	if opts.DetectionEpic {
 		// Pre-bucket findings + occurrences by definitionId so the Epic body
@@ -205,11 +218,13 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			ev := buildEpicEvidence(findingsByDef[f.DefinitionID], ef.Occurrences)
 			key, err := ensureEpicForDefinition(ctx, httpClient, auth, base, defByID[f.DefinitionID], ev, opts)
 			if err != nil {
-				fmt.Printf("[jira] warning: epic ensure failed for %s: %v (falling back to flat)\n", f.DefinitionID, err)
+				diagnostics = append(diagnostics, diagnostic("epic", f.FindingID, err))
+				epicErrors++
 				continue
 			}
 			if key == "" {
-				fmt.Printf("[jira] warning: project does not accept detection epic for %s — creating flat findings instead\n", f.DefinitionID)
+				diagnostics = append(diagnostics, publication.Diagnostic{FindingID: f.FindingID, Stage: "epic", Category: "rejected", Message: "Requested detection epic could not be resolved"})
+				epicErrors++
 				continue
 			}
 			epicKeys[f.DefinitionID] = key
@@ -233,7 +248,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				key, err := findExistingIssue(ctx, httpClient, auth, base, dc, f.FindingID)
+				key, err := findExistingIssue(ctx, httpClient, auth, base, dc, f.FindingID, opts.ProjectKey)
 				dedupResults[i] = dedupResult{idx: i, exists: key != "", issueKey: key, err: err}
 			}(i, f)
 		}
@@ -250,8 +265,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	var skipped, dedupErrors int
 	for i, r := range dedupResults {
 		if r.err != nil {
-			fmt.Printf("[jira] warning: dedup check failed for finding %s: %v (skipping create to avoid duplicates; will retry next run)\n",
-				candidates[i].FindingID, r.err)
+			diagnostics = append(diagnostics, diagnostic("lookup", candidates[i].FindingID, r.err))
 			dedupErrors++
 			continue
 		}
@@ -291,7 +305,10 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 				defer func() { <-relinkSem }()
 				updated, err := ensureIssueParent(ctx, httpClient, auth, base, issueKey, epic)
 				if err != nil {
-					fmt.Printf("[jira] warning: could not relink %s to epic %s: %v\n", issueKey, epic, err)
+					relinkMu.Lock()
+					diagnostics = append(diagnostics, diagnostic("parent", fid, err))
+					epicErrors++
+					relinkMu.Unlock()
 					return
 				}
 				if updated {
@@ -331,6 +348,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 	for _, r := range createResults {
 		if r.err != nil {
 			errCount++
+			diagnostics = append(diagnostics, diagnostic("create", r.findingID, r.err))
 		} else {
 			created++
 			if r.issueKey != "" {
@@ -338,7 +356,7 @@ func Export(ctx context.Context, ef entities.EntitiesFile, opts Options) (Summar
 			}
 		}
 	}
-	return Summary{Created: created, Skipped: skipped, Errors: errCount + dedupErrors, TicketKeys: ticketKeys, EpicKeys: epicKeys, Relinked: relinked}, nil
+	return Summary{Created: created, Skipped: skipped, Errors: errCount + dedupErrors + epicErrors, Diagnostics: diagnostics, TicketKeys: ticketKeys, EpicKeys: epicKeys, Relinked: relinked}, nil
 }
 
 // ensureIssueParent reads the current `parent` field on issueKey and PUTs an
@@ -472,13 +490,16 @@ func findingHasOptInTag(f entities.Finding, tag string) bool {
 // Returns the issue key if found, empty string if not found.
 // Uses POST /rest/api/3/search/jql on Cloud, POST /rest/api/2/search on
 // Data Center — same body and response shape either way.
-func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, dc bool, findingID string) (string, error) {
+func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, dc bool, findingID string, project ...string) (string, error) {
 	labels := []string{findingLabel(findingID), legacyFindingLabel(findingID)}
 	var quoted []string
 	for _, label := range labels {
 		quoted = append(quoted, quoteJQLString(label))
 	}
 	jql := fmt.Sprintf("labels in (%s)", strings.Join(quoted, ", "))
+	if len(project) > 0 && strings.TrimSpace(project[0]) != "" {
+		jql = "project = " + quoteJQLString(project[0]) + " AND (" + jql + ")"
+	}
 
 	body := map[string]any{
 		"jql":        jql,
@@ -498,7 +519,7 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := synccore.DoWithRetryAs("jira", client, req, 3)
+	resp, err := doRequest(client, req, 3)
 	if err != nil {
 		return "", err
 	}
@@ -509,8 +530,16 @@ func findExistingIssue(ctx context.Context, client httpDoer, auth, base string, 
 			Key string `json:"key"`
 		} `json:"issues"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1024*1024)).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode search: %w", err)
+	}
+	if result.Issues == nil {
+		return "", fmt.Errorf("Jira search response omitted issues; refusing create")
+	}
+	for _, issue := range result.Issues {
+		if strings.TrimSpace(issue.Key) == "" {
+			return "", fmt.Errorf("Jira search response omitted issue key; refusing create")
+		}
 	}
 	if len(result.Issues) > 0 {
 		return result.Issues[0].Key, nil
@@ -560,6 +589,9 @@ func createIssue(ctx context.Context, client httpDoer, auth, base string, dc boo
 		"labels":      labels,
 		"description": description,
 	}
+	if issueTypeID.MatchString(issueType) {
+		fields["issuetype"] = map[string]string{"id": issueType}
+	}
 	if strings.TrimSpace(opts.Component) != "" {
 		fields["components"] = []map[string]string{{"name": opts.Component}}
 	}
@@ -590,6 +622,13 @@ func createIssue(ctx context.Context, client httpDoer, auth, base string, dc boo
 		}
 	}
 
+	for field, value := range opts.CreateFields {
+		if value == nil {
+			delete(fields, field)
+		} else {
+			fields[field] = value
+		}
+	}
 	body := map[string]any{"fields": fields}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -604,23 +643,9 @@ func createIssue(ctx context.Context, client httpDoer, auth, base string, dc boo
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := synccore.DoWithRetryRaw(client, req, 3)
-	if err != nil {
-		return "", fmt.Errorf("post issue: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		return "", jiraHTTPErr(resp)
-	}
-
-	var created struct {
-		Key string `json:"key"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("decode create response: %w", err)
-	}
-	return created.Key, nil
+	return createOnce(client, req, func(ctx context.Context) (string, error) {
+		return findExistingIssue(ctx, client, auth, base, dc, f.FindingID, opts.ProjectKey)
+	})
 }
 
 // issueSummary returns a concise Jira issue summary for a Finding.
@@ -680,10 +705,4 @@ func sanitizeLabel(s string) string {
 		}
 	}
 	return result
-}
-
-// jiraHTTPErr returns a descriptive, credential-redacted error for a non-2xx
-// response. Retry/backoff and redaction mechanics live in synccore.
-func jiraHTTPErr(resp *http.Response) error {
-	return synccore.HTTPError("jira", resp)
 }

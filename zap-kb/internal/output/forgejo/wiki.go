@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,10 @@ import (
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
+
+// ErrWikiDisabled identifies the safe, operator-actionable repository setting
+// failure without requiring callers to expose repository names or API details.
+var ErrWikiDisabled = errors.New("wiki is not enabled")
 
 // WikiOptions controls publishing the Obsidian markdown vault to a Forgejo wiki.
 type WikiOptions struct {
@@ -32,11 +37,14 @@ type WikiOptions struct {
 
 // WikiSummary reports what the wiki export did.
 type WikiSummary struct {
-	Created int
-	Updated int
-	Skipped int
-	Errors  int
-	Pruned  int
+	DurationMS int64
+	Requests   int
+	Phases     []WikiPhaseMetric
+	Created    int
+	Updated    int
+	Skipped    int
+	Errors     int
+	Pruned     int
 	// LinkFixes counts pages re-PATCHed by the second pass because the
 	// server-issued sub_url for a linked page differed from the client-side
 	// escaping used on first publish.
@@ -79,13 +87,14 @@ var wikiSubdirs = []string{"definitions", "findings", "occurrences"}
 // pages (see rewriteVaultLinks). Publishing is two-pass: pages are upserted
 // with link targets taken from the pre-publish listing's server-issued
 // sub_urls (client-side escaping only for pages that don't exist yet), then
-// the page list is re-fetched and any page whose links differ under the
+// when a target was absent or an upsert failed, the page list is re-fetched
+// and any page whose links differ under the
 // post-publish sub_urls is PATCHed — the server's page-name escaping is the
 // only authoritative source for addressing hierarchical titles
 // ("Findings/fin-1"), and rendering with known sub_urls up front keeps
 // steady-state re-publishes byte-identical (skipped, no git churn). Pages are
 // upserted in parallel up to opts.Concurrency.
-func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSummary, error) {
+func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (summary WikiSummary, resultErr error) {
 	if strings.TrimSpace(opts.BaseURL) == "" || strings.TrimSpace(opts.Token) == "" ||
 		strings.TrimSpace(opts.Owner) == "" || strings.TrimSpace(opts.Repo) == "" {
 		return WikiSummary{}, fmt.Errorf("forgejo wiki: missing required fields (base URL, token, owner, repo)")
@@ -105,6 +114,17 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		msg = "DevSecOpsKB publish"
 	}
 	c := newClient(defaultHTTP(opts.Timeout, opts.RequestDelay), opts.BaseURL, opts.Token, opts.Owner, opts.Repo)
+	metrics := &wikiRecorder{}
+	c.wikiMetrics = metrics
+	started := time.Now()
+	defer func() {
+		metrics.end()
+		summary.DurationMS = time.Since(started).Milliseconds()
+		summary.Phases = append([]WikiPhaseMetric(nil), metrics.phases...)
+		for _, phase := range summary.Phases {
+			summary.Requests += phase.Requests
+		}
+	}()
 
 	// Preflight: a repo without its wiki enabled 404s every wiki call, which
 	// would otherwise surface as N per-page errors. Fail hard with a clear
@@ -112,9 +132,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	// unset wiki_branch (see ensureWikiReady) — without it every wiki write
 	// "fails" with 404 even though the content was committed.
 	if !opts.DryRun {
+		metrics.begin("preflight")
 		if err := c.ensureWikiReady(ctx); err != nil {
 			return WikiSummary{}, fmt.Errorf("forgejo wiki: %w", err)
 		}
+		metrics.end()
 	}
 
 	// Collect (pageName → file path) for every page to publish. pageNames maps
@@ -166,10 +188,9 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	}
 
 	var (
-		summary WikiSummary
-		mu      sync.Mutex
-		wg      sync.WaitGroup
-		sem     = make(chan struct{}, concurrency)
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, concurrency)
 	)
 
 	// Discover existing pages once. Pages are addressed by the SERVER-issued
@@ -178,12 +199,20 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	// scheme ("Findings%2Ffin-1.-") that url.PathEscape cannot reproduce, so
 	// guessing the URL makes every existence probe 404 and every re-publish
 	// collide with "wiki page already exists".
+	metrics.begin("discovery")
 	existing, err := c.listWikiPages(ctx)
 	if err != nil {
 		if isWikiBranchBug(err) {
 			return summary, fmt.Errorf("forgejo wiki: %s: %w", wikiBranchBugAdvice, err)
 		}
 		return summary, fmt.Errorf("forgejo wiki: list pages: %w", err)
+	}
+	needsLinkDiscovery := false
+	for _, p := range allPages {
+		if existing[p.name] == "" {
+			needsLinkDiscovery = true
+			break
+		}
 	}
 
 	// Render links with the server-issued sub_urls already known from the
@@ -198,6 +227,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 		return escapePageName(name)
 	}
+	metrics.begin("upsert")
 
 	// Canary: publish the first page serially. A server hit by the Gitea 1.22
 	// wiki_branch bug fails EVERY write the same way — one descriptive hard
@@ -209,7 +239,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		content, err := readVaultMarkdown(p.path)
 		if err != nil {
 			summary.Errors++
-			fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
+			fmt.Printf("[forgejo wiki] error reading: %s\n", synccore.SafeError(err))
 		} else {
 			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
 			action, err := c.upsertWikiPage(ctx, p.name, content, msg, existing)
@@ -218,11 +248,11 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 				return summary, fmt.Errorf("forgejo wiki: %s: %w", wikiBranchBugAdvice, err)
 			case err != nil && ctx.Err() != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] publish stopped: %v\n", ctx.Err())
+				fmt.Printf("[forgejo wiki] publish stopped: %s\n", synccore.SafeError(ctx.Err()))
 				return summary, nil
 			case err != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
+				fmt.Printf("[forgejo wiki] error upserting: %s\n", synccore.SafeError(err))
 			case action == "created":
 				summary.Created++
 			case action == "updated":
@@ -233,23 +263,32 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}
 	}
 
+publishPages:
 	for _, p := range pages {
+		// Acquire before starting the goroutine: a canceled pass must stop
+		// scheduling work rather than allocate a goroutine for every wiki page.
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break publishPages
+		}
 		wg.Add(1)
 		go func(p page) {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
 				return
 			}
-			defer func() { <-sem }()
 
 			content, err := readVaultMarkdown(p.path)
 			if err != nil {
 				mu.Lock()
 				summary.Errors++
 				mu.Unlock()
-				fmt.Printf("[forgejo wiki] error reading %s: %v\n", p.path, err)
+				fmt.Printf("[forgejo wiki] error reading: %s\n", synccore.SafeError(err))
 				return
 			}
 			content = rewriteVaultLinks(content, p.relDir, pageNames, linkFor)
@@ -261,7 +300,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 				return
 			case err != nil:
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] error upserting %q: %v\n", p.name, err)
+				fmt.Printf("[forgejo wiki] error upserting: %s\n", synccore.SafeError(err))
 			case action == "created":
 				summary.Created++
 			case action == "updated":
@@ -272,58 +311,70 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		}(p)
 	}
 	wg.Wait()
+	metrics.end()
 	if err := ctx.Err(); err != nil {
 		summary.Errors++
-		fmt.Printf("[forgejo wiki] publish stopped: %v\n", err)
+		fmt.Printf("[forgejo wiki] publish stopped: %s\n", synccore.SafeError(err))
 		return summary, nil
 	}
 
-	// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
-	// pages just created, re-render every page's links against those tokens,
-	// and PATCH the pages whose content changed. On servers whose page-name
-	// escaping matches url.PathEscape this finds nothing and costs one listing
-	// call; on servers with a divergent scheme it is the only way hierarchical
-	// cross-links ("Findings/fin-1") resolve instead of 404ing.
-	subURLs, lerr := c.listWikiPages(ctx)
-	if lerr != nil {
-		summary.Errors++
-		fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %v\n", lerr)
-	} else {
-		linkForSub := func(name string) string {
-			if su := subURLs[name]; su != "" {
-				return su
+	// Existing page content is still fetched on EVERY run; there is no cache
+	// to invalidate or hash manifest to trust. If every desired page was in
+	// the initial authoritative listing and all upserts succeeded, pass 1
+	// already used the final target names. Skip the second full traversal and
+	// re-render. A missing target or error retains discovery, including a
+	// concurrently created target whose POST collided. This is a per-pass
+	// snapshot, not an atomic transaction: a concurrent rename/delete can still
+	// require the next run, as it could after the old second listing too.
+	if needsLinkDiscovery || summary.Errors > 0 {
+		metrics.begin("link-repair")
+		// Pass 2: link repair. Re-list to obtain server-issued sub_urls for the
+		// pages just created, re-render every page's links against those tokens,
+		// and PATCH the pages whose content changed. On servers whose page-name
+		// escaping matches url.PathEscape this finds nothing and costs one listing
+		// call; on servers with a divergent scheme it is the only way hierarchical
+		// cross-links ("Findings/fin-1") resolve instead of 404ing.
+		subURLs, lerr := c.listWikiPages(ctx)
+		if lerr != nil {
+			summary.Errors++
+			fmt.Printf("[forgejo wiki] error listing pages for link repair (links may use client-side escaping): %s\n", synccore.SafeError(lerr))
+		} else {
+			linkForSub := func(name string) string {
+				if su := subURLs[name]; su != "" {
+					return su
+				}
+				return escapePageName(name)
 			}
-			return escapePageName(name)
-		}
-		for _, p := range allPages {
-			if err := ctx.Err(); err != nil {
-				summary.Errors++
-				fmt.Printf("[forgejo wiki] link repair stopped: %v\n", err)
-				break
-			}
-			su := subURLs[p.name]
-			if su == "" {
-				continue // page never landed; already counted as an error
-			}
-			raw, rerr := readVaultMarkdown(p.path)
-			if rerr != nil {
-				continue // unreadable file was already counted in pass 1
-			}
-			pass1 := rewriteVaultLinks(raw, p.relDir, pageNames, linkFor)
-			pass2 := rewriteVaultLinks(raw, p.relDir, pageNames, linkForSub)
-			if pass2 == pass1 {
-				continue
-			}
-			if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
-				summary.Errors++
-				if ctx.Err() != nil {
-					fmt.Printf("[forgejo wiki] link repair stopped: %v\n", ctx.Err())
+			for _, p := range allPages {
+				if err := ctx.Err(); err != nil {
+					summary.Errors++
+					fmt.Printf("[forgejo wiki] link repair stopped: %s\n", synccore.SafeError(err))
 					break
 				}
-				fmt.Printf("[forgejo wiki] error repairing links on %q: %v\n", p.name, perr)
-				continue
+				su := subURLs[p.name]
+				if su == "" {
+					continue // page never landed; already counted as an error
+				}
+				raw, rerr := readVaultMarkdown(p.path)
+				if rerr != nil {
+					continue // unreadable file was already counted in pass 1
+				}
+				pass1 := rewriteVaultLinks(raw, p.relDir, pageNames, linkFor)
+				pass2 := rewriteVaultLinks(raw, p.relDir, pageNames, linkForSub)
+				if pass2 == pass1 {
+					continue
+				}
+				if perr := c.patchWikiPage(ctx, su, p.name, pass2, msg); perr != nil {
+					summary.Errors++
+					if ctx.Err() != nil {
+						fmt.Printf("[forgejo wiki] link repair stopped: %s\n", synccore.SafeError(ctx.Err()))
+						break
+					}
+					fmt.Printf("[forgejo wiki] error repairing links on: %s\n", synccore.SafeError(perr))
+					continue
+				}
+				summary.LinkFixes++
 			}
-			summary.LinkFixes++
 		}
 	}
 
@@ -332,6 +383,7 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 	// touched. Candidates come from the pre-publish listing (pages created this
 	// run are current by definition). Sorted for deterministic output.
 	if opts.Prune {
+		metrics.begin("prune")
 		var stale []string
 		for title := range existing {
 			if !publishedNames[title] && isEntityWikiPage(title) {
@@ -342,16 +394,16 @@ func ExportWiki(ctx context.Context, vaultRoot string, opts WikiOptions) (WikiSu
 		for _, title := range stale {
 			if err := ctx.Err(); err != nil {
 				summary.Errors++
-				fmt.Printf("[forgejo wiki] prune stopped: %v\n", err)
+				fmt.Printf("[forgejo wiki] prune stopped: %s\n", synccore.SafeError(err))
 				break
 			}
 			if derr := c.deleteWikiPage(ctx, existing[title]); derr != nil {
 				summary.Errors++
 				if ctx.Err() != nil {
-					fmt.Printf("[forgejo wiki] prune stopped: %v\n", ctx.Err())
+					fmt.Printf("[forgejo wiki] prune stopped: %s\n", synccore.SafeError(ctx.Err()))
 					break
 				}
-				fmt.Printf("[forgejo wiki] error pruning %q: %v\n", title, derr)
+				fmt.Printf("[forgejo wiki] error pruning: %s\n", synccore.SafeError(derr))
 				continue
 			}
 			summary.Pruned++
@@ -375,7 +427,7 @@ func (c *client) deleteWikiPage(ctx context.Context, subURL string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	resp, err := c.doWikiRequest(req, false)
 	if err != nil {
 		return err
 	}
@@ -399,7 +451,7 @@ func (c *client) listWikiPages(ctx context.Context) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
+		resp, err := c.doWikiRequest(req, true)
 		if err != nil {
 			return nil, err
 		}
@@ -481,7 +533,7 @@ func (c *client) upsertWikiPage(ctx context.Context, name, content, message stri
 	if err != nil {
 		return "", err
 	}
-	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	resp, err := c.doWikiRequest(req, false)
 	if err != nil {
 		return "", err
 	}
@@ -504,7 +556,7 @@ func (c *client) patchWikiPage(ctx context.Context, subURL, title, content, mess
 	if err != nil {
 		return err
 	}
-	resp, err := synccore.DoWithRetry(c.http, req, 3)
+	resp, err := c.doWikiRequest(req, false)
 	if err != nil {
 		return err
 	}
@@ -522,7 +574,7 @@ func (c *client) getWikiPageBySubURL(ctx context.Context, subURL string) (string
 	if err != nil {
 		return "", err
 	}
-	resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
+	resp, err := c.doWikiRequest(req, true)
 	if err != nil {
 		return "", err
 	}
@@ -554,7 +606,7 @@ func (c *client) ensureWikiReady(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	resp, err := synccore.DoWithRetryRaw(c.http, req, 3)
+	resp, err := c.doWikiRequest(req, true)
 	if err != nil {
 		return fmt.Errorf("preflight repo check: %w", err)
 	}
@@ -572,7 +624,7 @@ func (c *client) ensureWikiReady(ctx context.Context) error {
 		return fmt.Errorf("decode repo: %w", err)
 	}
 	if !repo.HasWiki {
-		return fmt.Errorf("wiki is not enabled on %s/%s — enable it in repo settings (has_wiki) or via PATCH /repos/%s/%s", c.owner, c.repo, c.owner, c.repo)
+		return fmt.Errorf("%w on %s/%s — enable it in repo settings (has_wiki) or via PATCH /repos/%s/%s", ErrWikiDisabled, c.owner, c.repo, c.owner, c.repo)
 	}
 	return nil
 }

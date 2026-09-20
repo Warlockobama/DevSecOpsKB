@@ -20,11 +20,12 @@ import (
 // Auth uses a personal access token via the "Authorization: token <PAT>" header
 // (Forgejo/Gitea convention), unlike Jira's HTTP Basic.
 type client struct {
-	http  synccore.HTTPDoer
-	base  string // e.g. https://forge.example.com (no trailing slash, no /api/v1)
-	token string
-	owner string
-	repo  string
+	http        synccore.HTTPDoer
+	base        string // e.g. https://forge.example.com (no trailing slash, no /api/v1)
+	token       string
+	owner       string
+	repo        string
+	wikiMetrics *wikiRecorder // optional; populated only by ExportWiki
 }
 
 // repoAPI returns the /api/v1/repos/{owner}/{repo} prefix for issue/label calls.

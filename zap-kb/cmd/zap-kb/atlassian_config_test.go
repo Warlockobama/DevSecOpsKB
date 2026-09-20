@@ -154,3 +154,117 @@ func TestWriteAtlassianPublishSummary_RedactedCountsAndSources(t *testing.T) {
 		t.Fatalf("publish summary missing expected counts/source labels: %s", text)
 	}
 }
+
+func TestResolveAtlassianConfig_ExplicitEmptyDisablesEnvironmentDestination(t *testing.T) {
+	cfg, err := resolveAtlassianConfigStrict(atlassianConfigInput{
+		ConfluenceURL: "",
+		FlagSet:       map[string]bool{"confluence-url": true},
+	}, fakeEnv(map[string]string{"CONFLUENCE_URL": "https://tenant.atlassian.net/wiki"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConfluenceURL != "" || cfg.ConfluenceURLSource != "flag" {
+		t.Fatalf("explicit empty flag must disable the env destination, got %#v", cfg)
+	}
+}
+
+func TestResolveAtlassianConfig_ExplicitEmptyJiraCredentialsDoNotUseSharedFallback(t *testing.T) {
+	cfg, err := resolveAtlassianConfigStrict(atlassianConfigInput{
+		JiraUser:  "",
+		JiraToken: "",
+		FlagSet: map[string]bool{
+			"jira-user":  true,
+			"jira-token": true,
+		},
+	}, fakeEnv(map[string]string{
+		"CONFLUENCE_USER":  "shared@example.test",
+		"CONFLUENCE_TOKEN": "shared-secret",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JiraUser != "" || cfg.JiraToken != "" || cfg.JiraUserSource != "flag" || cfg.JiraTokenSource != "flag" {
+		t.Fatalf("explicit empty Jira credentials must not fall back: %#v", cfg)
+	}
+}
+
+func TestResolveAtlassianConfig_RejectsMalformedURLAndInvalidDeployment(t *testing.T) {
+	if _, err := resolveAtlassianConfigStrict(atlassianConfigInput{
+		JiraURL: "not a url",
+		FlagSet: map[string]bool{"jira-url": true},
+	}, fakeEnv(nil)); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("malformed URL should be rejected, got %v", err)
+	}
+	if _, err := resolveAtlassianConfigStrict(atlassianConfigInput{
+		JiraDeployment: "moon-base",
+		FlagSet:        map[string]bool{"jira-deployment": true},
+	}, fakeEnv(nil)); err == nil || !strings.Contains(err.Error(), "JIRA_DEPLOYMENT") {
+		t.Fatalf("invalid deployment should be rejected, got %v", err)
+	}
+}
+
+func TestResolveAtlassianConfig_URLDiagnosticsDoNotLeakSensitiveValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		input atlassianConfigInput
+		want  string
+	}{
+		{
+			name: "malformed URL",
+			input: atlassianConfigInput{
+				JiraURL: "malformed-SYNTHETIC-URL-TOKEN",
+				FlagSet: map[string]bool{"jira-url": true},
+			},
+			want: "expected an absolute http or https URL",
+		},
+		{
+			name: "userinfo",
+			input: atlassianConfigInput{
+				ConfluenceURL: "https://operator:SYNTHETIC-USERINFO-SECRET@confluence.example.test/wiki?token=SYNTHETIC-QUERY-TOKEN",
+				FlagSet:       map[string]bool{"confluence-url": true},
+			},
+			want: "userinfo is not allowed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := resolveAtlassianConfigStrict(tc.input, fakeEnv(nil))
+			if err == nil {
+				t.Fatal("expected URL validation error")
+			}
+			text := err.Error()
+			if !strings.Contains(text, tc.want) {
+				t.Fatalf("error %q does not explain the rejected setting", text)
+			}
+			for _, marker := range []string{"SYNTHETIC-URL-TOKEN", "SYNTHETIC-USERINFO-SECRET", "SYNTHETIC-QUERY-TOKEN"} {
+				if strings.Contains(text, marker) {
+					t.Fatalf("URL diagnostic leaked %q: %s", marker, text)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveAtlassianConfig_ExplicitCloudGateway(t *testing.T) {
+	cfg, err := resolveAtlassianConfigStrict(atlassianConfigInput{
+		JiraURL:        "https://api.atlassian.com/ex/jira/cloud-id",
+		JiraDeployment: "cloud",
+		FlagSet: map[string]bool{
+			"jira-url":        true,
+			"jira-deployment": true,
+		},
+	}, fakeEnv(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.JiraDeployment != "cloud" || cfg.JiraDeploymentSource != "flag" {
+		t.Fatalf("explicit cloud gateway selection was not preserved: %#v", cfg)
+	}
+}
+
+func TestResolveFlagEnv_WhitespaceEnvironmentIsUnset(t *testing.T) {
+	value, source := resolveFlagEnv("", false, "TEST_VALUE", fakeEnv(map[string]string{"TEST_VALUE": " \t "}))
+	if value != "" || source != "unset" {
+		t.Fatalf("whitespace env should be unset, got value=%q source=%q", value, source)
+	}
+}

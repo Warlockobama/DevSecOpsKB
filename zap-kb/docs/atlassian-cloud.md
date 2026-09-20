@@ -16,9 +16,42 @@ Confluence and Jira REST APIs.
 - `JIRA_SERVER_ID`: optional Confluence application-link UUID for rendering the live Jira Issues macro.
 - `JIRA_SERVER_NAME`: optional Confluence application-link display name for rendering the live Jira Issues macro.
 
-Flags override environment variables. URL, space, and project values only use
-their matching environment variables; the CLI does not infer Jira URL from
-Confluence URL.
+## Configuration precedence
+
+Each advertised setting resolves in this order: an explicit flag, its matching
+environment variable, then the built-in default (where one exists). Whitespace
+environment values are treated as unset. A supplied empty flag is deliberate:
+for example, `-jira-url=` disables `JIRA_URL` for that invocation rather than
+silently using it. The same rule prevents an explicit empty Jira credential
+flag from using the shared Confluence credential fallback. This makes an
+environment-configured destination easy to turn off in a local or container
+command.
+
+| Flag | Environment variable | Default |
+|---|---|---|
+| `-zap-url` | `ZAP_URL` | `http://127.0.0.1:8090` |
+| `-api-key` | `ZAP_API_KEY` | unset |
+| `-confluence-url` | `CONFLUENCE_URL` | unset |
+| `-confluence-space` | `CONFLUENCE_SPACE` | unset |
+| `-confluence-user` | `CONFLUENCE_USER` | unset |
+| `-confluence-token` | `CONFLUENCE_TOKEN` | unset |
+| `-confluence-deployment` | `CONFLUENCE_DEPLOYMENT` | `auto` |
+| `-jira-url` | `JIRA_URL` | unset |
+| `-jira-project` | `JIRA_PROJECT` | unset |
+| `-jira-user` | `JIRA_USER` | falls back to Confluence user when unset |
+| `-jira-token` | `JIRA_API_TOKEN` | falls back to Confluence token when unset |
+| `-jira-deployment` | `JIRA_DEPLOYMENT` | `auto` |
+| `-jira-server-id` | `JIRA_SERVER_ID` | unset |
+| `-jira-server-name` | `JIRA_SERVER_NAME` | unset |
+| `-forgejo-token` | `FORGEJO_TOKEN` | unset |
+
+URL, space, and project values only use their matching environment variables;
+the CLI does not infer Jira URL from Confluence URL. URLs must be absolute
+`http` or `https` URLs. Deployment values must be `auto`, `cloud`, or
+`datacenter` (with `dc` and `server` retained as aliases); an invalid explicit
+value fails before network work begins. A destination with no resolved URL is
+disabled. `atlassian check` prints the non-secret source labels for its targets
+and credentials, never their credential values.
 
 ## Self-Hosted (Data Center / Server)
 

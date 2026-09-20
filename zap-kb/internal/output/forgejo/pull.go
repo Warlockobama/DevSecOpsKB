@@ -129,7 +129,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 	for _, ref := range refs {
 		hit := statusCache[ref.number]
 		if hit.err != nil {
-			fmt.Printf("[forgejo pull] warning: #%d: %v\n", ref.number, hit.err)
+			fmt.Printf("[forgejo pull] warning: #: %s\n", synccore.SafeError(hit.err))
 			res.Errors++
 			continue
 		}

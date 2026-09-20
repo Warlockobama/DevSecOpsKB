@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publication"
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/synccore"
 )
 
@@ -37,6 +38,7 @@ type PullResult struct {
 
 // PullStatusResult bundles the updated EntitiesFile with the operation summary.
 type PullStatusResult struct {
+	Diagnostics  []publication.Diagnostic
 	Updated      entities.EntitiesFile
 	Result       PullResult
 	RawStatuses  map[string]string // Jira issue key -> raw Jira status name
@@ -155,16 +157,25 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 	wg.Wait()
 
 	var res PullResult
+	var diagnostics []publication.Diagnostic
 	rawStatuses := make(map[string]string)
 	rawAssignees := make(map[string]string)
 	for _, r := range results {
+		findingID := ""
+		if r.ref.kind == "finding" {
+			findingID = ef.Findings[r.ref.idx].FindingID
+		} else {
+			findingID = ef.Occurrences[r.ref.idx].FindingID
+		}
 		if r.err != nil {
-			fmt.Printf("[jira pull] warning: %s: %v\n", r.ref.key, r.err)
+			diagnostics = append(diagnostics, diagnostic("pull", findingID, r.err))
+			fmt.Printf("[jira pull] warning: %s\n", synccore.SafeError(r.err))
 			res.Errors++
 			continue
 		}
 		if !r.found {
 			res.NotFound++
+			diagnostics = append(diagnostics, publication.Diagnostic{Stage: "pull", FindingID: findingID, HTTPStatus: 404, Category: "not_found", Message: "Referenced Jira issue is missing or not visible to this account"})
 			continue
 		}
 		if strings.TrimSpace(r.raw) != "" {
@@ -233,7 +244,7 @@ func PullStatus(ctx context.Context, ef entities.EntitiesFile, opts PullOptions)
 			}
 		}
 	}
-	return PullStatusResult{Updated: ef, Result: res, RawStatuses: rawStatuses, RawAssignees: rawAssignees, SyncedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+	return PullStatusResult{Diagnostics: diagnostics, Updated: ef, Result: res, RawStatuses: rawStatuses, RawAssignees: rawAssignees, SyncedAt: time.Now().UTC().Format(time.RFC3339)}, nil
 }
 
 // fetchJiraFields retrieves the Jira issue status and assignee for the given

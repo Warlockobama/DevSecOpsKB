@@ -175,7 +175,7 @@ func TestBuildEpicDescription_OmitsRollupWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestEnsureEpicForDefinition_SoftFallbackOn400(t *testing.T) {
+func TestEnsureEpicForDefinition_ReportsRejectionOn400(t *testing.T) {
 	// A 400/403 on Epic create means the project doesn't support the issue
 	// type (or the user lacks permission). That must surface as ("", nil) so
 	// the exporter falls back to flat findings — regression test for the dead
@@ -196,10 +196,10 @@ func TestEnsureEpicForDefinition_SoftFallbackOn400(t *testing.T) {
 
 	def := &entities.Definition{DefinitionID: "def-1", PluginID: "10020", Alert: "XFO Missing"}
 	key, err := ensureEpicForDefinition(context.Background(), srv.Client(), "Basic dTp0", srv.URL, def, epicEvidence{}, Options{ProjectKey: "SEC"})
-	if err != nil {
-		t.Fatalf("expected soft fallback (nil error) on 400, got: %v", err)
+	if err == nil {
+		t.Fatal("expected explicit epic rejection on 400")
 	}
 	if key != "" {
-		t.Fatalf("expected empty epic key on soft fallback, got %q", key)
+		t.Fatalf("expected empty epic key on rejected create, got %q", key)
 	}
 }

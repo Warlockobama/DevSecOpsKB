@@ -19,8 +19,10 @@ func TestDefinitionOriginValue(t *testing.T) {
 		{name: "explicit custom", origin: DefinitionOriginCustom, pluginID: "10001", want: DefinitionOriginCustom},
 		{name: "numeric plugin defaults to tool", pluginID: "10001", want: DefinitionOriginTool},
 		{name: "zap numeric plugin remains tool", origin: DefinitionOriginTool, pluginID: "zap-10038", want: DefinitionOriginTool},
+		{name: "zap numeric plugin without origin remains tool", pluginID: "zap-10038", want: DefinitionOriginTool},
 		{name: "zap custom plugin prefix", pluginID: "zap-authz-rule", want: DefinitionOriginCustom},
 		{name: "zap custom plugin overrides imported tool", origin: DefinitionOriginTool, pluginID: "zap-legacy-ftp-surface", want: DefinitionOriginCustom},
+		{name: "custom marker overrides imported tool", origin: DefinitionOriginTool, pluginID: "custom-nuclei-auth-basket-items-enumeration", want: DefinitionOriginCustom},
 		{name: "custom detection source", pluginID: "10001", det: &Detection{RuleSource: "custom"}, want: DefinitionOriginCustom},
 		{name: "custom detection source overrides imported tool", origin: DefinitionOriginTool, pluginID: "10001", det: &Detection{RuleSource: "custom"}, want: DefinitionOriginCustom},
 	}

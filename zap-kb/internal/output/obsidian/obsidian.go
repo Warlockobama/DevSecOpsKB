@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	neturl "net/url"
@@ -17,6 +18,10 @@ import (
 )
 
 type Options struct {
+	// Redact is applied after analyst carry-forward, before any Markdown is emitted.
+	Redact entities.RedactOptions
+	// CarryForwardRoot supplies only matching entity analyst metadata to a fresh snapshot.
+	CarryForwardRoot string
 	// Optional human-friendly label for this run/session. Printed in INDEX and
 	// added to frontmatter of findings/occurrences as scan.label.
 	ScanLabel string
@@ -65,6 +70,30 @@ type Options struct {
 //	  findings/{findingId}.md
 //	  occurrences/{occurrenceId}.md
 func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
+	// Finding and occurrence IDs become filenames, and plugin IDs prefix
+	// definition filenames. Guard the public package boundary before reading or
+	// deleting any existing vault content so callers outside the CLI cannot turn
+	// graph identities into paths.
+	if validation := entities.ValidateIdentityPathSafety(ef); !validation.OK() {
+		return fmt.Errorf("validate identities: %w", validation.Err())
+	}
+	if opts.Redact.Enabled() {
+		raw, err := json.Marshal(ef)
+		if err != nil {
+			return fmt.Errorf("cannot copy output entities")
+		}
+		var cp entities.EntitiesFile
+		if err := json.Unmarshal(raw, &cp); err != nil {
+			return fmt.Errorf("cannot copy output entities")
+		}
+		ef = cp
+		opts.SiteLabel = entities.RedactText(opts.SiteLabel, opts.Redact)
+		opts.ZapBaseURL = entities.RedactText(opts.ZapBaseURL, opts.Redact)
+		opts.JiraBaseURL = entities.RedactText(opts.JiraBaseURL, opts.Redact)
+		opts.JiraStatusByKey = entities.RedactStringMap(opts.JiraStatusByKey, opts.Redact)
+		opts.JiraAssigneeByKey = entities.RedactStringMap(opts.JiraAssigneeByKey, opts.Redact)
+	}
+
 	defDir := filepath.Join(root, "definitions")
 	findDir := filepath.Join(root, "findings")
 	occDir := filepath.Join(root, "occurrences")
@@ -82,11 +111,19 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 	// should start from the input entities file, not from stale local markdown.
 	existingOccMeta := map[string]occMeta{}
 	if opts.CarryForwardOccurrenceMeta {
-		existingOccMeta = loadOccurrenceMeta(occDir)
+		metaDir := occDir
+		if opts.CarryForwardRoot != "" {
+			metaDir = filepath.Join(opts.CarryForwardRoot, "occurrences")
+		}
+		existingOccMeta = loadOccurrenceMeta(metaDir)
 	}
 	existingFindingMeta := map[string]*entities.Analyst{}
 	if opts.CarryForwardFindingMeta {
-		existingFindingMeta = loadFindingMeta(findDir)
+		metaDir := findDir
+		if opts.CarryForwardRoot != "" {
+			metaDir = filepath.Join(opts.CarryForwardRoot, "findings")
+		}
+		existingFindingMeta = loadFindingMeta(metaDir)
 	}
 
 	// Clear entity subdirs so stale pages from previous runs (e.g. definitions that are
@@ -111,6 +148,12 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			ef.Findings[i].Analyst = mergeFindingAnalyst(ef.Findings[i].Analyst, prior)
 		}
+	}
+
+	entities.RedactEntities(&ef, opts.Redact)
+	for id, meta := range existingOccMeta {
+		entities.RedactOutput(meta.Analyst, opts.Redact)
+		existingOccMeta[id] = meta
 	}
 
 	// Index by ids for quick joins.
@@ -973,6 +1016,10 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			ruleTitle = firstNonEmpty(d.Alert, d.Name, d.PluginID)
 		}
 
+		findingScanLabel := opts.ScanLabel
+		if len(occs) > 0 {
+			findingScanLabel = firstNonEmpty(occs[0].ScanLabel, findingScanLabel)
+		}
 		issueSummaries = append(issueSummaries, issueSummary{
 			FindingID:       strings.TrimSpace(f.FindingID),
 			Link:            filepath.ToSlash(filepath.Join("findings", f.FindingID+".md")),
@@ -985,7 +1032,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			StatusOverview:  statusSummary,
 			RuleTitle:       ruleTitle,
 			ObservedAt:      lastSeen,
-			ScanLabel:       fallbackString(firstNonEmpty(occs[0].ScanLabel, opts.ScanLabel), ""),
+			ScanLabel:       findingScanLabel,
 			PluginID:        strings.TrimSpace(f.PluginID),
 			TuningCandidate: tuningCandidate,
 			TuningScans:     tuningScans,
@@ -1322,7 +1369,7 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		var b strings.Builder
 		var triageSection strings.Builder
 		var domainSection strings.Builder
-		b.WriteString("# Index\n\n")
+		b.WriteString("# DevSecOpsKB\n\n")
 
 		scanName := strings.TrimSpace(opts.ScanLabel)
 		if len(scanLabels) == 1 {
@@ -1359,16 +1406,11 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 		b.WriteString(summaryLine + "\n")
 		b.WriteString("\n")
 
-		b.WriteString("## Quick navigation\n")
-		b.WriteString("- [Triage board](triage-board.md)\n")
-		fmt.Fprintf(&b, "- [%s](issues.md)\n", findNounP)
-		b.WriteString("- [Occurrences](occurrences.md)\n")
-		b.WriteString("- [Rules](rules.md)\n")
-		b.WriteString("- [By domain](by-domain.md)\n")
-		b.WriteString("- [Alias Legend](LEGEND.md)\n")
-		b.WriteString("- [Triage Workflow Guide](TRIAGE-GUIDE.md)\n")
-		b.WriteString("- [Scans](by-scan.md)\n")
-		b.WriteString("- [Executive Summary](EXECUTIVE-SUMMARY.md)\n")
+		b.WriteString("## Explore\n")
+		b.WriteString("- History: [Scans](by-scan.md) | [By domain](by-domain.md)\n")
+		fmt.Fprintf(&b, "- Evidence: [Rules](rules.md) | [%s](issues.md) | [Occurrences](occurrences.md)\n", findNounP)
+		b.WriteString("- Workflow: [Triage board](triage-board.md) | [Guide](TRIAGE-GUIDE.md)\n")
+		b.WriteString("- Overview: [Executive summary](EXECUTIVE-SUMMARY.md) | [Dashboard](DASHBOARD.md) | [Alias legend](LEGEND.md)\n")
 		b.WriteString("\n")
 
 		trackerIssueCounts := map[string]int{}
@@ -1427,6 +1469,9 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			}
 			b.WriteString("\n")
 		}
+		// Home stops after the actionable queue. Detailed evidence tables are
+		// emitted below into their dedicated drill-down pages.
+		landingContent := b.String()
 
 		// operationalPluginIDs holds plugin IDs for tool-health rules that are
 		// not actionable findings for the target application.
@@ -1690,17 +1735,22 @@ func WriteVault(root string, ef entities.EntitiesFile, opts Options) error {
 			b.WriteString("\n")
 		}
 
-		indexContent := b.String()
-		if err := os.WriteFile(index, []byte(indexContent), 0o644); err != nil {
+		fullIndexContent := b.String()
+		if err := os.WriteFile(index, []byte(landingContent), 0o644); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "issues.md", findNounP, extractMarkdownSection(indexContent, findNounP)); err != nil {
+		findingsContent := extractMarkdownSection(fullIndexContent, findNounP)
+		operationalContent := extractMarkdownSection(fullIndexContent, "Operational / Tool info")
+		if strings.TrimSpace(operationalContent) != "" {
+			findingsContent += "\n" + operationalContent
+		}
+		if err := writeSectionPage(root, "issues.md", findNounP, findingsContent); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(indexContent, "Occurrences")); err != nil {
+		if err := writeSectionPage(root, "occurrences.md", "Occurrences", extractMarkdownSection(fullIndexContent, "Occurrences")); err != nil {
 			return err
 		}
-		if err := writeSectionPage(root, "rules.md", "Rules", extractMarkdownSection(indexContent, "Rules")); err != nil {
+		if err := writeSectionPage(root, "rules.md", "Rules", extractMarkdownSection(fullIndexContent, "Rules")); err != nil {
 			return err
 		}
 		// Companion pages for quick navigation

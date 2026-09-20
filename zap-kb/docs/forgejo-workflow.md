@@ -60,9 +60,9 @@ additional labels, and the workflow labels above.
 - By default the publish performs a **read-only** status pull: it reports
   mapped statuses but does not mutate KB analyst fields (Forgejo stays the
   source of truth).
-- With `-forgejo-sync-kb-status` the mapped status is written back into
-  `analyst.status` and persisted to the entities file — use this only when a
-  downstream consumer needs KB-side status snapshots.
+- With `-forgejo-sync-kb-status` the mapped status is written into explicit
+  derived outputs (`-out`, `-run-out`, or the generated vault). The immutable
+  `-entities-in`/`-run-in` source is never rewritten.
 - Issue bodies are machine-owned and refreshed on every run (evidence,
   occurrence counts, wiki links). Analyst commentary belongs in comments.
 - A finding that recurs after its issue was closed gets the issue

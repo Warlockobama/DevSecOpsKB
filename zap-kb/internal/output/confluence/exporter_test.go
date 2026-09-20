@@ -124,7 +124,7 @@ func TestExport_UpdateExistingPage(t *testing.T) {
 	}
 }
 
-func TestExport_ErrorBodyCaptured(t *testing.T) {
+func TestExport_ErrorBodyOmitted(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
@@ -132,7 +132,7 @@ func TestExport_ErrorBodyCaptured(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"message":"space does not exist"}`))
+		w.Write([]byte(`{"message":"PRIVATE_SERVER_MARKER"}`))
 	}))
 	defer srv.Close()
 
@@ -148,8 +148,8 @@ func TestExport_ErrorBodyCaptured(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "space does not exist") {
-		t.Errorf("expected error body in message, got: %v", err)
+	if strings.Contains(err.Error(), "PRIVATE_SERVER_MARKER") || !strings.Contains(err.Error(), "http 400") {
+		t.Errorf("expected safe HTTP diagnostic, got: %v", err)
 	}
 }
 

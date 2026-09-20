@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "v1",
+  "generatedAt": "2026-09-12T12:01:00Z",
+  "sourceTool": "zap",
+  "producerExtension": {"revision": "synthetic-v1"},
+  "definitions": [
+    {
+      "definitionId": "def-10038",
+      "pluginId": "10038",
+      "name": "Content Security Policy Header Not Set",
+      "wascid": "15"
+    }
+  ],
+  "findings": [],
+  "occurrences": []
+}

@@ -228,6 +228,11 @@ func warnOccurrenceStatusDivergence(ef *EntitiesFile) {
 // exercise the auto-reopen gate without dragging the suppression machinery in.
 func mergeCore(base, add EntitiesFile, policy config.TriagePolicy) EntitiesFile {
 	out := base
+	// A provenance claim survives only when both inputs make the same claim.
+	// Never upgrade unstamped or mixed-policy evidence by inheriting the first.
+	if base.ExportPolicy != add.ExportPolicy {
+		out.ExportPolicy = ""
+	}
 
 	// Index base definitions by id
 	defByID := make(map[string]int, len(out.Definitions))

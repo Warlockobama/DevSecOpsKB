@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,12 +133,30 @@ func (e *Env) CreateRepo(t *testing.T, wantWiki bool) string {
 	return name
 }
 
+// SetRepoPrivate changes repository visibility for a bounded visual review.
+// Disposable demo repositories may be made public only on loopback instances.
+func (e *Env) SetRepoPrivate(t *testing.T, repo string, private bool) {
+	t.Helper()
+	if err := e.apiJSON(context.Background(), http.MethodPatch,
+		"/api/v1/repos/"+e.Owner+"/"+repo, map[string]any{"private": private}, nil); err != nil {
+		t.Fatalf("harness: set repository private=%v: %v", private, err)
+	}
+}
+
 // Issue is the subset of a Forgejo issue the tests assert on.
 type Issue struct {
-	Number int64  `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	State  string `json:"state"`
+	Number int64   `json:"number"`
+	Title  string  `json:"title"`
+	Body   string  `json:"body"`
+	State  string  `json:"state"`
+	Labels []Label `json:"labels"`
+}
+
+// Label is the stable subset used to verify that publisher-owned label updates
+// do not discard an analyst decision.
+type Label struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // ListIssues returns all issues (open+closed) of a repo.
@@ -156,6 +175,22 @@ func (e *Env) ListIssues(t *testing.T, repo string) []Issue {
 			return all
 		}
 		page++
+	}
+}
+
+// AddIssueLabel creates a repository label and applies it to one issue. The
+// label models an analyst-owned decision that must survive a later publish.
+func (e *Env) AddIssueLabel(t *testing.T, repo string, number int64, name string) {
+	t.Helper()
+	var label Label
+	if err := e.apiJSON(context.Background(), http.MethodPost,
+		"/api/v1/repos/"+e.Owner+"/"+repo+"/labels",
+		map[string]string{"name": name, "color": "6a737d", "description": "demo analyst decision"}, &label); err != nil {
+		t.Fatalf("harness: create issue label %q: %v", name, err)
+	}
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d/labels", e.Owner, repo, number)
+	if err := e.apiJSON(context.Background(), http.MethodPost, path, map[string]any{"labels": []int64{label.ID}}, nil); err != nil {
+		t.Fatalf("harness: apply issue label %q: %v", name, err)
 	}
 }
 
@@ -179,10 +214,19 @@ func MarkerFindingID(body string) string {
 // GetWikiPage fetches a wiki page's decoded content ("" + false when missing).
 func (e *Env) GetWikiPage(t *testing.T, repo, page string) (string, bool) {
 	t.Helper()
+	pagePath := url.PathEscape(page)
+	for _, candidate := range e.ListWikiPages(t, repo) {
+		if candidate.Title == page {
+			// Hierarchical page paths are Forgejo-version-specific. Use the
+			// server-issued sub_url rather than guessing its slash escaping.
+			pagePath = candidate.SubURL
+			break
+		}
+	}
 	var resp struct {
 		ContentBase64 string `json:"content_base64"`
 	}
-	path := "/api/v1/repos/" + e.Owner + "/" + repo + "/wiki/page/" + url.PathEscape(page)
+	path := "/api/v1/repos/" + e.Owner + "/" + repo + "/wiki/page/" + pagePath
 	err := e.apiJSON(context.Background(), http.MethodGet, path, nil, &resp)
 	if err != nil {
 		if strings.Contains(err.Error(), "http 404") {
@@ -195,6 +239,29 @@ func (e *Env) GetWikiPage(t *testing.T, repo, page string) (string, bool) {
 		t.Fatalf("harness: decode wiki page %q: %v", page, derr)
 	}
 	return raw, true
+}
+
+// WikiPage is the server-owned title/address pair returned by wiki discovery.
+type WikiPage struct {
+	Title  string `json:"title"`
+	SubURL string `json:"sub_url"`
+}
+
+// ListWikiPages discovers all wiki titles and their authoritative server paths.
+func (e *Env) ListWikiPages(t *testing.T, repo string) []WikiPage {
+	t.Helper()
+	var all []WikiPage
+	for page := 1; ; page++ {
+		var batch []WikiPage
+		path := fmt.Sprintf("/api/v1/repos/%s/%s/wiki/pages?limit=50&page=%d", e.Owner, repo, page)
+		if err := e.apiJSON(context.Background(), http.MethodGet, path, nil, &batch); err != nil {
+			t.Fatalf("harness: list wiki pages: %v", err)
+		}
+		all = append(all, batch...)
+		if len(batch) < 50 {
+			return all
+		}
+	}
 }
 
 // EditWikiPage overwrites a wiki page out-of-band (simulating a human edit in
@@ -337,6 +404,7 @@ func Fixture(opts FixtureOptions) entities.EntitiesFile {
 		ef.Findings = append(ef.Findings, entities.Finding{
 			FindingID:    fid,
 			DefinitionID: "def-10038",
+			PluginID:     "10038",
 			Name:         fmt.Sprintf("CSP Header Not Set — /app/%d", i),
 			URL:          u,
 			Method:       "GET",
@@ -419,7 +487,11 @@ func Binary(t *testing.T) string {
 			binErr = err
 			return
 		}
-		binPath = filepath.Join(dir, "zap-kb")
+		binaryName := "zap-kb"
+		if runtime.GOOS == "windows" {
+			binaryName += ".exe"
+		}
+		binPath = filepath.Join(dir, binaryName)
 		cmd := exec.Command("go", "build", "-o", binPath, "github.com/Warlockobama/DevSecOpsKB/zap-kb/cmd/zap-kb")
 		out, err := cmd.CombinedOutput()
 		if err != nil {

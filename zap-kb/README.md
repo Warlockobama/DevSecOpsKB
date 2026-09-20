@@ -8,6 +8,11 @@ The module can:
 - Enrich definitions with MITRE taxonomy references, estimated CVSS, and optional detection references from ZAP docs/GitHub.
 - Publish an Obsidian vault with findings, occurrences, and definitions.
 
+For the shortest end-to-end path, use the [firing-range demonstration and
+workplace pilot](docs/demo-and-workplace-pilot.md). Its disposable check publishes
+a retained run artifact to real local Forgejo issues and wiki pages, reads both
+back, and verifies identical and changed replay behavior.
+
 ## Quick Start
 1. Install Go: https://golang.org/dl/
 2. From the `zap-kb` directory:
@@ -47,6 +52,10 @@ Key flags:
 - `-wizard`: Launch the interactive quickstart wizard (enabled by default when no other flags are set and the terminal is interactive).
 - `-run-out`: Write a pipeline-friendly run artifact JSON (entities + meta [+alerts]).
 - `-run-in`: Read a run artifact (or bare entities JSON) and reuse its entities and labels.
+- `-publication-state-dir`: Store confirmed Jira/Forgejo references separately
+  from immutable `-entities-in`/`-run-in` inputs. Defaults beside the selected
+  derived output, then beside the input when no output path exists; set it
+  explicitly for shared-volume deployments.
 - `-zip-out`: Zip outputs into one artifact (includes `-run-out`, entity/alerts JSON, and Obsidian dir if generated).
 - `-redact`: Redact sensitive details in outputs. Comma/space list supported: `domain,query,cookies,auth,headers,body`.
  - Prune-only (vault maintenance): `-prune-scan <label>` deletes occurrence notes in the Obsidian vault matching a `scan.label`, optionally narrowed by `-prune-site <domain label>`. Use `-prune-vault` to target a specific vault; add `-prune-dry-run` to preview.
@@ -56,8 +65,8 @@ Examples:
 - Initialize all known plugin definitions without fetching alerts:
   `go run ./cmd/zap-kb -init -format entities -out docs/data/entities.init.json -all-plugins -include-detection`
 
-- Merge existing entities with fresh alerts:
-  `go run ./cmd/zap-kb -format entities -entities-in docs/data/entities.json -out docs/data/entities.json`
+- Merge existing entities with fresh alerts into a derived artifact:
+  `go run ./cmd/zap-kb -format entities -entities-in docs/data/entities.json -out docs/data/entities.enriched.json`
 
 - Publish an Obsidian vault:
   `go run ./cmd/zap-kb -format obsidian -entities-in docs/data/entities.json -obsidian-dir docs/obsidian`
@@ -101,6 +110,11 @@ Environment variables used by the script:
 - `ZAP_URL` (maps to `-zap-url`)
 - `ZAP_API_KEY` (maps to `-api-key`)
 
+Explicit flags take precedence over environment variables, which take
+precedence over built-in defaults. See [Atlassian configuration
+precedence](docs/atlassian-cloud.md#configuration-precedence) for the complete
+advertised setting table, including empty-flag behavior.
+
 Python helper `scripts/flatten_report.py` converts ZAP's JSON-plus report (site -> alerts -> instances) into the flat alert list accepted by `zap-kb -in`. It also supports on-the-fly filtering:
 
 ```bash
@@ -128,6 +142,11 @@ See `docs/schema/entities-v1.md` for the entities schema and how definitions, fi
 Publishing (or pruning) also generates `DASHBOARD.md` in the vault with vault‑wide summaries (by scan, severity, domains, and top rules), complementing the workflow-aware `INDEX.md`. The index now highlights issues by status, provides a complete issue list, and includes an occurrence feed alongside the historical scan/domain sections.
 
 ## CI Integration
+
+The maintained suite/event map and the immutable release/rollback procedure
+are in [docs/ci-and-release.md](docs/ci-and-release.md). Use `zap-kb -version`
+to read the source revision embedded in a binary or running container.
+
 There are two ways to populate the KB in a pipeline after your ZAP stage:
 
 - Online (recommended): connect to the running ZAP instance via API and fetch alerts directly.
@@ -165,6 +184,7 @@ captures the normalized entities and run metadata:
 
 Notes:
 - `-run-in` accepts both the wrapper `run.json` and a bare `entities.json` for convenience.
+- Both import forms are validated before output files or destinations are touched; see the [input compatibility matrix](docs/schema/input-validation.md).
 - When present, run metadata (scan/site labels, zap-base) is applied to Obsidian output.
 - To ship a single file from your pipeline, add `-zip-out out/run.zip`.
 - Use `-redact domain,cookies,auth` if your artifacts leave the build network.

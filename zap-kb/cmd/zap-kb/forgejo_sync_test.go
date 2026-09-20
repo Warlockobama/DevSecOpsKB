@@ -2,12 +2,30 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/entities"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/forgejo"
+	"github.com/Warlockobama/DevSecOpsKB/zap-kb/internal/output/publicationstate"
 )
+
+func TestSafeForgejoWikiErrorPreservesSafeOperatorGuidance(t *testing.T) {
+	got := safeForgejoWikiError(forgejo.ErrWikiDisabled)
+	if got != "wiki is not enabled; enable it in repository settings (has_wiki)" {
+		t.Fatalf("safe wiki error = %q", got)
+	}
+	if got := safeForgejoWikiError(errors.New("private backend detail")); got != "operation failed; private details omitted" {
+		t.Fatalf("generic safe wiki error = %q", got)
+	}
+}
 
 func TestForgejoRedactOptions(t *testing.T) {
 	// Default (empty flag value) enables credential + secrets scrubbing.
@@ -26,8 +44,8 @@ func TestForgejoRedactOptions(t *testing.T) {
 	}
 	// Custom list is honored.
 	ro, on = forgejoRedactOptions("domain,body")
-	if !on || !ro.Domain || !ro.Body || ro.Auth {
-		t.Fatalf("custom = (%+v, %v), want domain+body only", ro, on)
+	if !on || !ro.Domain || !ro.Body || !ro.Auth || !ro.Cookies || !ro.Headers || !ro.Secrets {
+		t.Fatalf("custom = (%+v, %v), want domain+body plus protective defaults", ro, on)
 	}
 }
 
@@ -226,5 +244,77 @@ func TestRunForgejoPublish_WikiOnlySkipsIssues(t *testing.T) {
 	})
 	if failures != 0 {
 		t.Fatalf("failures=%d, want 0 (issues skipped, wiki off — nothing should be contacted)", failures)
+	}
+}
+
+func TestRunForgejoPublish_SourceArrivalCannotBeOverwritten(t *testing.T) {
+	created := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
+			json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "name": "kb-finding"}, {"id": 2, "name": "risk/high"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues"):
+			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			close(created)
+			<-release
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"number": 7})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7"):
+			json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": []any{}})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	old := testEntitiesFile()
+	old.SourceTool = "zap"
+	old.Findings[0].Risk = "High"
+	old.Findings[0].Name = "CSP Header Not Set"
+	newer := old
+	newer.GeneratedAt = "2026-04-06T13:00:00Z"
+	newer.Occurrences = []entities.Occurrence{{
+		OccurrenceID: "occ-new", FindingID: "fin-1", DefinitionID: "def-1", URL: old.Findings[0].URL,
+	}}
+
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "entities.json")
+	oldRaw, _ := json.Marshal(old)
+	newRaw, _ := json.Marshal(newer)
+	if err := os.WriteFile(inputPath, oldRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := publicationstate.Store{Dir: filepath.Join(dir, "publication-state")}
+	destination := publicationstate.Destination("forgejo", srv.URL, "acme/kb")
+	done := make(chan int, 1)
+	go func() {
+		done <- runForgejoPublish(&old, forgejoPublishOptions{
+			BaseURL: srv.URL, Token: "token", Owner: "acme", Repo: "kb", MinRisk: "medium",
+			Issues: true, Redact: "off", Format: "obsidian", StateStore: &store, StateDestination: destination,
+		})
+	}()
+	<-created
+	if err := os.WriteFile(inputPath, newRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if failures := <-done; failures != 0 {
+		t.Fatalf("publication failures = %d", failures)
+	}
+	gotRaw, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotRaw) != string(newRaw) {
+		t.Fatal("publisher overwrote the newer producer input")
+	}
+	if err := store.Apply(destination, &newer); err != nil {
+		t.Fatalf("apply state: %v", err)
+	}
+	if len(newer.Occurrences) != 1 || newer.Findings[0].Analyst == nil || !containsString(newer.Findings[0].Analyst.TicketRefs, "acme/kb#7") {
+		t.Fatalf("new evidence or confirmed reference lost: %+v", newer)
 	}
 }

@@ -22,7 +22,9 @@ jobs:
           go-version-file: zap-kb/go.mod
 
       - name: Tidy
-        run: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Format check
         run: |
@@ -35,17 +37,22 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test (unit)
-        run: go test ./...
+      - name: Test (Go packages)
+        run: make test
 
-      - name: Test (e2e tagged)
+      - name: Test (offline integration)
+        run: make test-offline-e2e
+
+      # This target scopes the CLI contract suite explicitly.  New contract
+      # tests from the reliability work automatically become required here.
+      - name: Test (CLI contract)
+        run: make test-cli-contract
+
+      - name: Test (synthetic wiki scale)
+        run: make test-wiki-scale
+
+      - name: Build and show provenance
         run: |
-          if [ -d e2e ]; then
-            go test -tags e2e ./e2e
-          else
-            echo "No top-level e2e package found; skipping tagged e2e tests."
-          fi
-
-      - name: Build
-        run: go build ./...
+          make build VERSION=ci REVISION="${GITHUB_SHA}"
+          ./bin/zap-kb -version | grep -F "revision=${GITHUB_SHA}"
 
