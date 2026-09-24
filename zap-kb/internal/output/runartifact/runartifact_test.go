@@ -62,6 +62,7 @@ func TestReadValidatedCompatibilityFixtures(t *testing.T) {
 		normalizations int
 	}{
 		{name: "declared empty entities", fixture: "valid-empty-entities.json", format: FormatEntities},
+		{name: "Forgejo publisher fixture", fixture: "valid-forgejo-publisher-e2e.json", format: FormatEntities},
 		{name: "definitions only legacy scalar", fixture: "valid-definitions-only-legacy.json", format: FormatEntities, normalizations: 1},
 		{name: "Cactus wrapper", fixture: "valid-cactus-run.json", format: FormatRunWrapper},
 		{name: "firing range wrapper", fixture: "valid-firing-range-run.json", format: FormatRunWrapper, normalizations: 5},
@@ -82,6 +83,16 @@ func TestReadValidatedCompatibilityFixtures(t *testing.T) {
 				t.Fatal("validated collections must be declared, non-nil slices")
 			}
 		})
+	}
+}
+
+func TestForgejoPublisherFixtureContainsEligibleFinding(t *testing.T) {
+	ent, _, err := ReadEntities(validationFixture("valid-forgejo-publisher-e2e.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ent.Findings) != 1 || ent.Findings[0].Risk != "High" || len(ent.Occurrences) != 1 {
+		t.Fatalf("fixture must exercise one high-risk finding and occurrence: %+v", ent)
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +84,22 @@ func runCase(t *testing.T, ctx context.Context, module, prefix, network, publish
 		"-scan-label", "container-jira-contract", "-generated-at", "2026-09-12T00:00:00Z",
 	}
 	_, exitCode := runDockerExit(ctx, module, args...)
+	// The publisher intentionally writes private 0600 files as uid 65532. Give
+	// ownership of this disposable bind mount back to the test runner so Linux
+	// CI can inspect and remove the artifacts without changing the image user.
+	if runtime.GOOS != "windows" {
+		owner := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+		restore := []string{"run", "--rm", "--network", "none", "--user", "0:0", "--mount", outputMount,
+			"--entrypoint", "/bin/chown", publisherImage, "-R", owner, "/output"}
+		restored := false
+		t.Cleanup(func() {
+			if !restored {
+				runDockerBestEffort(context.Background(), module, restore...)
+			}
+		})
+		runDocker(t, ctx, module, restore...)
+		restored = true
+	}
 	if wantOK && exitCode != 0 {
 		t.Fatalf("publisher exit=%d, want 0", exitCode)
 	}

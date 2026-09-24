@@ -23,7 +23,7 @@ func defaultPublicationStateDir(explicit string, inputs ...string) string {
 	return ".zap-kb-publication-state"
 }
 
-// validateImmutableInputPaths rejects an output that names the same file as a
+// validateImmutableInputPaths rejects outputs that could overwrite or remove a
 // producer-owned input. It resolves absolute paths, symlinked parents, and
 // existing hard links before any local output or remote publication begins.
 func validateImmutableInputPaths(inputs, outputs map[string]string) error {
@@ -44,9 +44,47 @@ func validateImmutableInputPaths(inputs, outputs map[string]string) error {
 			if same {
 				return fmt.Errorf("%s output aliases immutable %s input", outputName, inputName)
 			}
+			if outputName == "-obsidian-dir" {
+				inside, err := pathWithinDirectory(inputPath, outputPath)
+				if err != nil {
+					return fmt.Errorf("validate %s and %s paths: %w", inputName, outputName, err)
+				}
+				if inside {
+					return fmt.Errorf("%s output contains immutable %s input", outputName, inputName)
+				}
+			}
 		}
 	}
 	return nil
+}
+
+func pathWithinDirectory(path, dir string) (bool, error) {
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return false, err
+	}
+	absDir, err := filepath.Abs(filepath.Clean(dir))
+	if err != nil {
+		return false, err
+	}
+	if isWithinDirectory(absPath, absDir) {
+		return true, nil
+	}
+	resolvedPath, err := canonicalPath(path)
+	if err != nil {
+		return false, err
+	}
+	resolvedDir, err := canonicalPath(dir)
+	if err != nil {
+		return false, err
+	}
+	return isWithinDirectory(resolvedPath, resolvedDir), nil
+}
+
+func isWithinDirectory(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != "." && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func samePath(a, b string) (bool, error) {
