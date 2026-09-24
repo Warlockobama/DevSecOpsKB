@@ -37,6 +37,53 @@ func TestValidateImmutableInputPathsRejectsHardLinkAlias(t *testing.T) {
 	}
 }
 
+func TestCLIRejectsInputInsideVaultBeforeMutation(t *testing.T) {
+	vault := filepath.Join(t.TempDir(), "vault")
+	input := filepath.Join(vault, "definitions", "source.json")
+	if err := os.MkdirAll(filepath.Dir(input), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(testEntitiesFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(input, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"zap-kb", "-wizard=false", "-init", "-entities-in=" + input, "-format=obsidian", "-obsidian-dir=" + vault}
+	if code := executeCLI(runMain); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	got, err := os.ReadFile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw) {
+		t.Fatal("vault generation changed immutable input")
+	}
+}
+
+func TestValidateImmutableInputPathsRejectsSymlinkedVaultAncestor(t *testing.T) {
+	dir := t.TempDir()
+	vault := filepath.Join(dir, "vault")
+	if err := os.MkdirAll(filepath.Join(vault, "definitions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(vault, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	input := filepath.Join(vault, "definitions", "source.json")
+	if err := os.WriteFile(input, []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImmutableInputPaths(map[string]string{"-entities-in": input}, map[string]string{"-obsidian-dir": alias}); err == nil {
+		t.Fatal("expected symlinked vault ancestor rejection")
+	}
+}
+
 func TestDefaultPublicationStateDirUsesInputSibling(t *testing.T) {
 	input := filepath.Join("ingest", "entities.json")
 	want := filepath.Join("ingest", ".zap-kb-publication-state")

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "v1",
+  "sourceTool": "e2e",
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "definitions": [
+    {
+      "definitionId": "def-10038",
+      "pluginId": "10038",
+      "name": "CSP Header Not Set"
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "fin-e2e0001",
+      "definitionId": "def-10038",
+      "pluginId": "10038",
+      "name": "CSP /a",
+      "url": "https://t/a",
+      "method": "GET",
+      "risk": "High",
+      "occurrenceCount": 1
+    }
+  ],
+  "occurrences": [
+    {
+      "occurrenceId": "occ-e2e0001",
+      "findingId": "fin-e2e0001",
+      "definitionId": "def-10038",
+      "url": "https://t/a",
+      "method": "GET",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "scanLabel": "e2e"
+    }
+  ]
+}

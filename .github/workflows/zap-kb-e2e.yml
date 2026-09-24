@@ -131,12 +131,10 @@ jobs:
 
       - name: Seed ingest volume with a fixture
         run: |
-          cat > /tmp/entities.json <<'EOF'
-          {"schemaVersion":"v1","sourceTool":"e2e","generatedAt":"2026-01-01T00:00:00Z",
-           "definitions":[{"definitionId":"def-10038","pluginId":"10038","name":"CSP Header Not Set"}],
-           "findings":[{"findingId":"fin-e2e0001","definitionId":"def-10038","name":"CSP /a","url":"https://t/a","method":"GET","risk":"High","occurrences":1}],
-           "occurrences":[{"occurrenceId":"occ-e2e0001","findingId":"fin-e2e0001","definitionId":"def-10038","url":"https://t/a","observedAt":"2026-01-01T00:00:00Z","scanLabel":"e2e"}]}
-          EOF
+          cp zap-kb/testdata/validation/valid-forgejo-publisher-e2e.json /tmp/entities.json
+          docker run --rm --mount type=bind,src=/tmp/entities.json,dst=/tmp/entities.json,readonly \
+            ghcr.io/warlockobama/devsecopskb:e2e \
+            -wizard=false -entities-in=/tmp/entities.json -format=entities -out=/tmp/validated-entities.json
           kubectl -n devsecops-kb apply -f - <<'EOF'
           apiVersion: v1
           kind: Pod
