@@ -2093,9 +2093,9 @@ func TestFindingProperties_FieldOrder(t *testing.T) {
 	f := ei.finds["fin-order"]
 	out := prependFindingProperties("BODY", f, &ei, "", nil, nil, "", "", "")
 
-	// #19 canonical primary order: Severity, Confidence, Definition, CWE, OWASP Top 10, URL, Method, Occurrences.
+	// #19 canonical primary order: Severity, Confidence, Definition, CWE, OWASP Top 10, URL, Method, per-export Occurrences.
 	// Last Seen / Domain / WASC are supplementary and follow.
-	order := []string{"Severity", "Confidence", "Definition", "CWE", "OWASP Top 10", "URL", "Method", "Occurrences", "Last Seen"}
+	order := []string{"Severity", "Confidence", "Definition", "CWE", "OWASP Top 10", "URL", "Method", "Occurrences in this export", "Last Seen"}
 	positions := make(map[string]int, len(order))
 	for _, field := range order {
 		positions[field] = strings.Index(out, "<th>"+field+"</th>")

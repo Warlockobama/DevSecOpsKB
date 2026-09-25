@@ -1,6 +1,10 @@
 package confluence
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -55,6 +59,143 @@ func TestBuildScanRows_AggregatesByLabel(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected (unlabeled) bucket for occurrence with empty ScanLabel")
+	}
+}
+
+func TestScansIndexPreservesRemoteRunsAndSkipsRerun(t *testing.T) {
+	remoteBody := buildScansIndexBody([]scanRow{{Label: "earlier", First: "2026-04-01T00:00:00Z", Last: "2026-04-01T00:00:00Z", Findings: 1, Definitions: 1, URLs: 1, Occurrences: 1}})
+	version := 1
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": "page-1", "version": map[string]int{"number": version}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/page-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": remoteBody}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/content/page-1":
+			var payload struct {
+				Version struct {
+					Number int `json:"number"`
+				} `json:"version"`
+				Body struct {
+					Storage struct {
+						Value string `json:"value"`
+					} `json:"storage"`
+				} `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Version.Number != version+1 {
+				t.Errorf("invalid update: %v, version %d", err, payload.Version.Number)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			remoteBody = payload.Body.Storage.Value
+			version++
+			puts++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	current := &entities.EntitiesFile{
+		Findings:    []entities.Finding{{FindingID: "new-finding", DefinitionID: "new-definition", URL: "https://example.test/new"}},
+		Occurrences: []entities.Occurrence{{FindingID: "new-finding", ScanLabel: "new-run", ObservedAt: "2026-04-02T00:00:00Z"}},
+	}
+	for run := 0; run < 2; run++ {
+		_, action, err := upsertScansIndex(context.Background(), srv.Client(), "Basic test", srv.URL, "KB", "root", current, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"updated", "skipped"}[run]; action != want {
+			t.Fatalf("run %d action = %q, want %q", run, action, want)
+		}
+	}
+	rows, err := parseScansIndexBody(remoteBody)
+	if err != nil || len(rows) != 2 || puts != 1 {
+		t.Fatalf("remote scans = %+v, puts=%d, err=%v", rows, puts, err)
+	}
+}
+
+func TestUpsertPageCachedSkipsUnchangedRemoteWithoutLocalCache(t *testing.T) {
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": "definition-1", "version": map[string]int{"number": 3}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/definition-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": "<p>unchanged</p>"}}})
+		case r.Method == http.MethodPut:
+			puts++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	_, action, err := upsertPageCached(context.Background(), srv.Client(), "Basic test", srv.URL, "KB", "Definition", "<p>unchanged</p>", "parent", nil)
+	if err != nil || action != "skipped" || puts != 0 {
+		t.Fatalf("action=%q puts=%d err=%v", action, puts, err)
+	}
+}
+
+func TestScansIndexRemergesAfterVersionConflict(t *testing.T) {
+	remoteBody := buildScansIndexBody([]scanRow{{Label: "old", Last: "2026-04-01", Findings: 1}})
+	version := 1
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": "page-1", "version": map[string]int{"number": version}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content/page-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": remoteBody}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/rest/api/content/page-1":
+			puts++
+			if puts == 1 {
+				remoteBody = buildScansIndexBody([]scanRow{{Label: "old", Last: "2026-04-01", Findings: 1}, {Label: "concurrent", Last: "2026-04-02", Findings: 1}})
+				version++
+				w.WriteHeader(http.StatusConflict)
+				return
+			}
+			var payload struct {
+				Body struct {
+					Storage struct {
+						Value string `json:"value"`
+					} `json:"storage"`
+				} `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			remoteBody = payload.Body.Storage.Value
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	current := &entities.EntitiesFile{
+		Findings:    []entities.Finding{{FindingID: "f", DefinitionID: "d", URL: "https://example.test"}},
+		Occurrences: []entities.Occurrence{{FindingID: "f", ScanLabel: "new", ObservedAt: "2026-04-03"}},
+	}
+	_, action, err := upsertScansIndex(context.Background(), srv.Client(), "Basic test", srv.URL, "KB", "root", current, nil, false)
+	if err != nil || action != "updated" || puts != 2 {
+		t.Fatalf("action=%q puts=%d err=%v", action, puts, err)
+	}
+	rows, err := parseScansIndexBody(remoteBody)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("concurrent row lost: rows=%+v err=%v", rows, err)
+	}
+}
+
+func TestJiraClosedStatusRequiresRecurrenceReview(t *testing.T) {
+	for _, status := range []string{"Done", "Closed", "Fixed", "Resolved", "Completed"} {
+		if !jiraStatusNeedsRecurrenceReview(status) {
+			t.Fatalf("status %q not flagged", status)
+		}
+	}
+	if jiraStatusNeedsRecurrenceReview("In Progress") {
+		t.Fatal("open issue flagged as recurrence")
 	}
 }
 

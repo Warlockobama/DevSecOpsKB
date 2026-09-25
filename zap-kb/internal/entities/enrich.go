@@ -14,6 +14,11 @@ import (
 
 const minTrafficSnippetBytes = 1024
 
+// No captured HTTP body may be persisted without a hard upper bound. A
+// high-risk response can be useful evidence, but it must not turn one scan
+// occurrence into an unbounded Confluence page.
+const maxTrafficSnippetBytes = 16 * 1024
+
 // EnrichFirstTraffic populates Request/Response snippets for the first occurrence per Finding.
 // It uses ZAP's core/view/message with the occurrence SourceID (history id).
 // maxBody controls the max bytes captured into BodySnippet.
@@ -214,7 +219,7 @@ func trafficRequestSnippet(body string, max int) string {
 
 func trafficResponseSnippet(body, risk string, max int) string {
 	if severityCode(risk) >= severityCode("high") {
-		return body
+		return truncateUTF8(body, maxTrafficSnippetBytes)
 	}
 	return truncateUTF8(body, trafficSnippetLimit(max))
 }
@@ -244,8 +249,8 @@ func DropMismatchedTraffic(ef *EntitiesFile) int {
 }
 
 func trafficSnippetLimit(max int) int {
-	if max <= 0 {
-		return max
+	if max <= 0 || max > maxTrafficSnippetBytes {
+		return maxTrafficSnippetBytes
 	}
 	if max < minTrafficSnippetBytes {
 		return minTrafficSnippetBytes

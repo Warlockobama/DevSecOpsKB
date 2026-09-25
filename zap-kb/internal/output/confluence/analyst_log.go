@@ -325,7 +325,7 @@ func buildLogEntry(f *entities.Finding, ei *entityIndex, jiraBaseURL string, jir
 
 	writeRow("Published", escapeHTML(publishedAt))
 	writeRow("Risk", riskStatusMacro(risk))
-	writeRow("Occurrences", fmt.Sprintf("%d", f.Occurrences))
+	writeRow("Occurrences in this export", fmt.Sprintf("%d", f.Occurrences))
 	writeRow("Last seen", escapeHTML(lastSeen))
 
 	// Jira case: linked if we have a URL, plain text otherwise

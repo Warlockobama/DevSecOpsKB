@@ -7,12 +7,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -422,11 +425,10 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			// Enrich with entity metadata
 			def := ei.defByFilename(fname)
 			storageBody := mdToStorageWithTitles(content, titleMap)
-			defFindingCount := 0
-			if def != nil {
-				defFindingCount = ei.defFindingCount[def.DefinitionID]
-			}
-			storageBody = prependDefProperties(storageBody, def, opts.JiraBaseURL, defFindingCount)
+			// A fresh scan cannot know the number of open findings across
+			// earlier runs. Do not publish its local count as an all-time
+			// "Open Findings" metric on the durable definition page.
+			storageBody = prependDefProperties(storageBody, def, opts.JiraBaseURL, 0)
 
 			// Route custom definitions to the "Custom Detections" folder.
 			parentID := defsID
@@ -609,17 +611,135 @@ func buildScansIndexBody(rows []scanRow) string {
 	return b.String()
 }
 
+var scanTableRow = regexp.MustCompile(`(?s)<tr>(.*?)</tr>`)
+var scanTableCell = regexp.MustCompile(`(?s)<td>(.*?)</td>`)
+
+// parseScansIndexBody reads only the table format emitted by this publisher.
+// Unknown formats fail closed: a new run must not erase remote scan history.
+func parseScansIndexBody(body string) ([]scanRow, error) {
+	if strings.Contains(body, "No scans recorded yet.") {
+		return nil, nil
+	}
+	if !strings.Contains(body, "<table>") {
+		return nil, fmt.Errorf("unrecognized Scans page format")
+	}
+	var rows []scanRow
+	for _, match := range scanTableRow.FindAllStringSubmatch(body, -1) {
+		cells := scanTableCell.FindAllStringSubmatch(match[1], -1)
+		if len(cells) == 0 { // heading row
+			continue
+		}
+		if len(cells) != 7 {
+			return nil, fmt.Errorf("invalid Scans row: %d cells", len(cells))
+		}
+		values := make([]string, len(cells))
+		for i := range cells {
+			values[i] = html.UnescapeString(cells[i][1])
+		}
+		findings, err1 := strconv.Atoi(values[3])
+		definitions, err2 := strconv.Atoi(values[4])
+		urls, err3 := strconv.Atoi(values[5])
+		occurrences, err4 := strconv.Atoi(values[6])
+		if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+			return nil, fmt.Errorf("invalid Scans row counts")
+		}
+		rows = append(rows, scanRow{Label: values[0], First: values[1], Last: values[2], Findings: findings, Definitions: definitions, URLs: urls, Occurrences: occurrences})
+	}
+	return rows, nil
+}
+
+func mergeScanRows(existing, current []scanRow) []scanRow {
+	byLabel := make(map[string]scanRow, len(existing)+len(current))
+	for _, row := range existing {
+		byLabel[row.Label] = row
+	}
+	for _, row := range current {
+		byLabel[row.Label] = row // identical reruns replace, never double-count
+	}
+	rows := make([]scanRow, 0, len(byLabel))
+	for _, row := range byLabel {
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Last != rows[j].Last {
+			return rows[i].Last > rows[j].Last
+		}
+		return rows[i].Label < rows[j].Label
+	})
+	return rows
+}
+
 // upsertScansIndex writes (or dry-logs) the "Scans" index page as a child of rootID.
 // Returns ("", "skipped", nil) when there are zero occurrences so we don't churn
 // the page on empty exports.
 func upsertScansIndex(ctx context.Context, client httpDoer, auth, base, spaceKey, rootID string, ef *entities.EntitiesFile, hs *pageHashStore, dryRun bool) (string, string, error) {
 	rows := buildScanRows(ef)
-	body := buildScansIndexBody(rows)
 	if dryRun {
 		fmt.Printf("[confluence] dry-run: Scans index — %d distinct scan label(s)\n", len(rows))
 		return "", "skipped", nil
 	}
-	return upsertPageCached(ctx, client, auth, base, spaceKey, "Scans", body, rootID, hs)
+	if len(rows) == 0 {
+		return "", "skipped", nil
+	}
+	// The remote Scans page is the durable state. Re-read and re-merge after
+	// version conflicts so concurrent runs cannot silently drop each other.
+	for attempt := 0; attempt < 3; attempt++ {
+		id, version, err := findPage(ctx, client, auth, base, spaceKey, "Scans")
+		if err != nil {
+			return "", "", err
+		}
+		if id == "" {
+			id, action, createErr := upsertPage(ctx, client, auth, base, spaceKey, "Scans", buildScansIndexBody(rows), rootID)
+			if createErr == nil {
+				return id, action, nil
+			}
+			// A concurrent publisher may have created the page between lookup
+			// and POST. Reconcile from the remote page before reporting failure.
+			if found, _, lookupErr := findPage(ctx, client, auth, base, spaceKey, "Scans"); lookupErr == nil && found != "" {
+				continue
+			}
+			return "", "", createErr
+		}
+		remoteBody, err := fetchPageStorageBody(ctx, client, auth, base, id)
+		if err != nil {
+			return "", "", err
+		}
+		existing, err := parseScansIndexBody(remoteBody)
+		if err != nil {
+			return "", "", err
+		}
+		body := buildScansIndexBody(mergeScanRows(existing, rows))
+		if body == remoteBody {
+			return id, "skipped", nil
+		}
+		payload := map[string]any{
+			"id": id, "type": "page", "title": "Scans",
+			"space":   map[string]string{"key": spaceKey},
+			"version": map[string]int{"number": version + 1},
+			"body":    map[string]any{"storage": map[string]string{"value": body, "representation": "storage"}},
+		}
+		if rootID != "" {
+			payload["ancestors"] = []map[string]string{{"id": rootID}}
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return "", "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, base+"/rest/api/content/"+id, bytes.NewReader(data))
+		if err != nil {
+			return "", "", err
+		}
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Content-Type", "application/json")
+		if err := doRequest(client, req); err != nil {
+			if strings.Contains(err.Error(), "http 409") {
+				continue
+			}
+			return "", "", err
+		}
+		return id, "updated", nil
+	}
+	return "", "", fmt.Errorf("Scans page changed concurrently; retry publication")
 }
 
 // upsertExportSummary writes (or dry-logs) the "KB Export Summary" page as a child of rootID.
@@ -644,7 +764,7 @@ func buildExportSummaryBody(exportedAt time.Time, defs, findings, occurrences in
 	var b strings.Builder
 	b.WriteString("<h1>KB Export Summary</h1>")
 	b.WriteString(fmt.Sprintf("<p><strong>Export timestamp (UTC):</strong> %s</p>", exportedAt.Format(time.RFC3339)))
-	b.WriteString("<h2>Entity counts</h2>")
+	b.WriteString("<h2>Entity counts in this export</h2>")
 	b.WriteString("<table><tbody>")
 	b.WriteString(fmt.Sprintf("<tr><th>Definitions</th><td>%d</td></tr>", defs))
 	b.WriteString(fmt.Sprintf("<tr><th>Findings</th><td>%d</td></tr>", findings))
@@ -770,6 +890,9 @@ func upsertFindingsHierarchical(
 			// Analyst log is injected into prependFindingProperties so it sits
 			// directly after the properties table — the first thing an analyst sees.
 			storageBody = prependFindingProperties(storageBody, f, ei, jiraBaseURL, jiraStatusByKey, jiraAssigneeByKey, jiraStatusSynced, analystLogSection, changelogSection)
+			if jiraStatusNeedsRecurrenceReview(jiraStatus) && f != nil && len(ei.findingScans[f.FindingID]) > 0 {
+				storageBody = `<ac:structured-macro ac:name="warning"><ac:rich-text-body><p>This finding was observed while its linked Jira issue is closed. Review the new occurrence and decide whether the Jira issue should be reopened.</p></ac:rich-text-body></ac:structured-macro>` + storageBody
+			}
 
 			labels := findingLabels(f)
 
@@ -810,6 +933,15 @@ func upsertFindingsHierarchical(
 		}
 	}
 	return findingPageIDs
+}
+
+func jiraStatusNeedsRecurrenceReview(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "closed", "fixed", "resolved", "completed":
+		return true
+	default:
+		return false
+	}
 }
 
 // upsertOccurrencesHierarchical upserts occurrence pages as children of their finding pages.
@@ -1132,7 +1264,7 @@ func defTitleFromFilename(filename string) string {
 
 // upsertPage creates or updates a Confluence page. Returns (pageID, action, error).
 // action is "created", "updated", or "skipped".
-func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string) (string, string, error) {
+func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, title, storageBody, parentID string, skipUnchanged ...bool) (string, string, error) {
 	storageBody = redactStoredBody(ctx, storageBody)
 	existingID, existingVersion, err := findPage(ctx, client, auth, base, spaceKey, title)
 	if err != nil {
@@ -1152,6 +1284,11 @@ func upsertPage(ctx context.Context, client httpDoer, auth, base, spaceKey, titl
 	}
 
 	if existingID != "" {
+		if len(skipUnchanged) > 0 && skipUnchanged[0] {
+			if remoteBody, readErr := fetchPageStorageBody(ctx, client, auth, base, existingID); readErr == nil && remoteBody == storageBody {
+				return existingID, "skipped", nil
+			}
+		}
 		// Update
 		body["id"] = existingID
 		body["version"] = map[string]int{"number": existingVersion + 1}
@@ -1259,8 +1396,8 @@ func upsertPageCached(ctx context.Context, client httpDoer, auth, base, spaceKey
 		}
 		// Page doesn't exist yet despite hash match (edge case) — fall through.
 	}
-	id, action, err := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID)
-	if err == nil && hs != nil && (action == "created" || action == "updated") {
+	id, action, err := upsertPage(ctx, client, auth, base, spaceKey, title, storageBody, parentID, true)
+	if err == nil && hs != nil {
 		hs.record(title, storageBody, id)
 	}
 	return id, action, err
@@ -2295,7 +2432,7 @@ func prependDefProperties(storageBody string, def *entities.Definition, jiraBase
 
 // prependFindingProperties adds a Page Properties macro to finding pages.
 // Canonical primary field order (#19): Severity, Confidence, Definition (linked),
-// CWE, OWASP Top 10, URL, Method, Occurrences. Supplementary fields (WASC, Domain,
+// CWE, OWASP Top 10, URL, Method, Occurrences in this export. Supplementary fields (WASC, Domain,
 // Last/First Seen, Owner, Analyst Cases, Tags, Updated, Notes,
 // Source Tool, Scans) follow. Status is intentionally omitted — Jira owns the
 // workflow state and is shown in the Jira workflow section below.
@@ -2348,8 +2485,8 @@ func prependFindingProperties(storageBody string, f *entities.Finding, ei *entit
 	// 7. Method
 	props = append(props, [2]string{"Method", escapeHTML(f.Method)})
 
-	// 8. Occurrences
-	props = append(props, [2]string{"Occurrences", fmt.Sprintf("%d", f.Occurrences)})
+	// 8. Occurrences in the current export, not the historical remote KB
+	props = append(props, [2]string{"Occurrences in this export", fmt.Sprintf("%d", f.Occurrences)})
 
 	// --- Supplementary fields ---
 	if def != nil && def.WASCID > 0 {
