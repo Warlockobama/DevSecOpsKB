@@ -303,6 +303,11 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	}
 
 	for _, tp := range topPages {
+		// The entity-aware Scans index is merged from remote history below.
+		// Publishing the current-run by-scan.md first would erase that history.
+		if tp.title == "Scans" && opts.Entities != nil {
+			continue
+		}
 		content, ferr := readMarkdownFile(filepath.Join(vaultRoot, tp.file))
 		if ferr != nil {
 			continue // skip missing files
@@ -332,20 +337,6 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 			summary.Errors++
 		} else {
 			countAction(&summary, postureAction)
-		}
-	}
-
-	// Phase 2c (#42): Upsert "Scans" index page so analysts can audit which run
-	// produced which findings. Aggregates per-label counts (findings, occurrences,
-	// distinct URLs) and first/last seen. Skipped silently when EntitiesFile is
-	// unavailable so legacy callers degrade cleanly.
-	if opts.Entities != nil {
-		_, scansAction, scansErr := upsertScansIndex(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs, opts.DryRun)
-		if scansErr != nil {
-			fmt.Printf("[confluence] error upserting scans index: %s\n", synccore.SafeError(scansErr))
-			summary.Errors++
-		} else {
-			countAction(&summary, scansAction)
 		}
 	}
 
@@ -485,6 +476,17 @@ func ExportVault(ctx context.Context, vaultRoot string, opts VaultOptions) (Vaul
 	} else {
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "findings", "Findings", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
 		upsertDir(ctx, httpClient, auth, base, opts.SpaceKey, vaultRoot, "occurrences", "Occurrences", rootID, concurrency, &ei, titleMap, opts.JiraBaseURL, opts.JiraStatusByKey, opts.JiraAssigneeByKey, opts.JiraStatusSynced, &summary, hs)
+	}
+	// Publish the cumulative index only after its finding and occurrence pages.
+	// A failed page write must not advertise a fully published scan.
+	if opts.Entities != nil && summary.Errors == 0 {
+		_, scansAction, scansErr := upsertScansIndex(ctx, httpClient, auth, base, opts.SpaceKey, rootID, opts.Entities, hs, opts.DryRun)
+		if scansErr != nil {
+			fmt.Printf("[confluence] error upserting scans index: %s\n", synccore.SafeError(scansErr))
+			summary.Errors++
+		} else {
+			countAction(&summary, scansAction)
+		}
 	}
 
 	// Persist updated hashes for next run.
