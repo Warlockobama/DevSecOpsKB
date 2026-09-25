@@ -19,6 +19,16 @@ func TestTrafficResponseSnippetHighRiskKeepsFullBody(t *testing.T) {
 	}
 }
 
+func TestTrafficResponseSnippetHighRiskHasHardCeiling(t *testing.T) {
+	body := strings.Repeat("x", maxTrafficSnippetBytes+100)
+	if got := trafficResponseSnippet(body, "High", 2048); len(got) != maxTrafficSnippetBytes {
+		t.Fatalf("high-risk response length = %d, want %d", len(got), maxTrafficSnippetBytes)
+	}
+	if got := trafficResponseSnippet(body, "Medium", 0); len(got) != maxTrafficSnippetBytes {
+		t.Fatalf("zero-configured limit response length = %d, want %d", len(got), maxTrafficSnippetBytes)
+	}
+}
+
 func TestTrafficSnippetLimitHasMinimumFloor(t *testing.T) {
 	body := strings.Repeat("a", minTrafficSnippetBytes+100)
 	got := trafficRequestSnippet(body, 128)

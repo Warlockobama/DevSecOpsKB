@@ -74,6 +74,21 @@ Behavior flags: `-include-mitre` (default on), `-include-traffic`,
 `-confluence-full`, `-jira-min-risk`, `-jira-detection-epic`,
 `-{jira,confluence}-dry-run`, `-publish-summary-out`. Full list: `docker run --rm zap-kb:atlassian -h`.
 
+For a disposable CI workspace, publish each completed ZAP scan directly with a
+unique `-scan-label` and `-confluence-full`. Do not pass an earlier KB file via
+`-entities-in`: that selects enrich-only input and skips the live ZAP fetch.
+The Atlassian exporters look up existing Jira findings and Confluence pages
+remotely; the Scans page retains earlier scan rows across runs. An identical
+scan-label rerun replaces that scan's row rather than adding another run.
+Definition pages omit an all-time open-finding count until a Jira-backed count
+is available; finding and export-summary counts are explicitly per export.
+
+HTTP traffic is stored as code blocks. `-traffic-max-bytes` defaults to 2048
+for ordinary request/response snippets, and all captured bodies now have a
+hard 16 KiB ceiling (including high/critical responses and `0` input).
+The occurrence-count controls apply in `-traffic-scope first`; `all` enriches
+every occurrence. Use both the scope and count controls for bounded CI runs.
+
 ## Examples
 
 ### ZAP input — two ways
