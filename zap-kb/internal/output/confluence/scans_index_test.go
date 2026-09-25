@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -196,6 +198,97 @@ func TestJiraClosedStatusRequiresRecurrenceReview(t *testing.T) {
 	}
 	if jiraStatusNeedsRecurrenceReview("In Progress") {
 		t.Fatal("open issue flagged as recurrence")
+	}
+}
+
+func TestExportVaultDoesNotReplaceRemoteScansWithCurrentMarkdown(t *testing.T) {
+	type page struct {
+		id, body string
+		version  int
+	}
+	pages := map[string]*page{
+		"Scans": {id: "existing-scans", body: buildScansIndexBody([]scanRow{{Label: "prior", Last: "2026-04-01", Findings: 1}}), version: 1},
+	}
+	const currentLabel = "current"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/content":
+			title := r.URL.Query().Get("title")
+			if p := pages[title]; p != nil {
+				_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"id": p.id, "version": map[string]int{"number": p.version}}}})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}})
+			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/api/content/"):
+			for _, p := range pages {
+				if r.URL.Path == "/rest/api/content/"+p.id {
+					_ = json.NewEncoder(w).Encode(map[string]any{"body": map[string]any{"storage": map[string]string{"value": p.body}}})
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/content":
+			var payload struct {
+				Title string `json:"title"`
+				Body  struct {
+					Storage struct {
+						Value string `json:"value"`
+					} `json:"storage"`
+				} `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload.Title == "Scans" {
+				t.Error("Scans should already exist")
+			}
+			p := &page{id: "page-" + payload.Title, body: payload.Body.Storage.Value, version: 1}
+			pages[payload.Title] = p
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": p.id})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/rest/api/content/"):
+			var payload struct {
+				Title string `json:"title"`
+				Body  struct {
+					Storage struct {
+						Value string `json:"value"`
+					} `json:"storage"`
+				} `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			p := pages[payload.Title]
+			if p == nil {
+				t.Errorf("unknown page update: %q", payload.Title)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			p.body = payload.Body.Storage.Value
+			p.version++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "INDEX.md"), []byte("# KB Index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "by-scan.md"), []byte("# Scans\n\nOnly the current scan"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "definitions"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ef := &entities.EntitiesFile{
+		Findings:    []entities.Finding{{FindingID: "f", DefinitionID: "d", URL: "https://example.test"}},
+		Occurrences: []entities.Occurrence{{FindingID: "f", ScanLabel: currentLabel, ObservedAt: "2026-04-02"}},
+	}
+	summary, err := ExportVault(context.Background(), dir, VaultOptions{BaseURL: srv.URL, Username: "user", APIToken: "token", SpaceKey: "KB", Entities: ef})
+	if err != nil || summary.Errors != 0 {
+		t.Fatalf("ExportVault: summary=%+v err=%v", summary, err)
+	}
+	rows, err := parseScansIndexBody(pages["Scans"].body)
+	if err != nil || len(rows) != 2 || strings.Contains(pages["Scans"].body, "Only the current scan") {
+		t.Fatalf("Scans history overwritten: rows=%+v err=%v", rows, err)
 	}
 }
 
